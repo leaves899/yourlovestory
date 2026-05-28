@@ -55,7 +55,6 @@ def main():
         "slug": args.slug,
         "gender": args.gender,
         "description": args.description,
-        "intimate_enabled": False,
         "version": "v1",
         "created_at": now,
         "updated_at": now

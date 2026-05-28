@@ -14,15 +14,20 @@
 2. **环境描写** - 场景氛围、空间细节
 3. **动作描写** - 行为动作、身体语言
 
-**示例**：
+三个维度应自然融入叙事，不使用标注符号。
+
+**正确示例**：
 ```markdown
 心跳声在耳边放大，我攥紧手机站在咖啡厅门口。
+雨刚停，空气中还带着潮湿的凉意。
+手指不自觉地握紧又松开。
+```
 
-（心理：紧张期待）→（环境：咖啡厅门口）→（动作：攥紧手机）
-
-窗外的雨声、手中的咖啡余温、屏幕上的对话框——每一个细节都被放大。
-
-（心理：细腻感知）→（环境：雨天细节）→（动作：握咖啡）
+**错误示例**（标注过于刻意）：
+```markdown
+心跳声在耳边放大。紧张感从胸口蔓延。
+雨后的街道湿漉漉的，空气中带着泥土的气息。
+手指不自觉地攥紧了手机。
 ```
 
 ---
@@ -206,15 +211,20 @@ Each narrative passage should contain all three dimensions:
 2. **Environment** - Scene atmosphere, spatial details
 3. **Action** - Behaviors, body language
 
-**Example**:
+All three should be naturally woven into the narrative without labels.
+
+**Correct**:
 ```markdown
 My heartbeat amplified in my ears as I stood outside the cafe, gripping my phone.
+Rain had just stopped, the air still carrying that damp coolness.
+My fingers tightened and loosened unconsciously.
+```
 
-(Psychology: nervous anticipation) → (Environment: cafe entrance) → (Action: gripping phone)
-
-The rain outside, the warmth of coffee in my hand, the chat dialog on screen — every detail was amplified.
-
-(Psychology: delicate perception) → (Environment: rainy day details) → (Action: holding coffee)
+**Incorrect** (labels feel mechanical):
+```markdown
+(Psychology: nervous anticipation)
+(Environment: rain-soaked street)
+(Action: gripping phone)
 ```
 
 ---
