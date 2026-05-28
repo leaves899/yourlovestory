@@ -1,8 +1,11 @@
 {
   "name": "{{CHARACTER_NAME}}",
   "nickname": "{{CHARACTER_NICKNAME}}",
-  "version": "1.0.0",
+  "slug": "{{SLUG}}",
+  "gender": "unknown",
+  "description": "",
+  "intimate_enabled": false,
+  "version": "v1",
   "created_at": "{{TIMESTAMP}}",
-  "last_updated": "{{TIMESTAMP}}",
-  "intimate_enabled": false
+  "updated_at": "{{TIMESTAMP}}"
 }

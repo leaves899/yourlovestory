@@ -54,6 +54,16 @@ claude skill add ./day
 claude skill run create-crush
 ```
 
+### 试用 Demo / Try the Demo
+
+不想从零开始？导入示例角色看看效果：
+
+```bash
+python scripts/import_demo.py
+```
+
+导入后查看 `crushes/example/` 下的文件，了解角色数据结构和 Day 写作格式。如需重新导入，使用 `python scripts/import_demo.py --force`。
+
 ---
 
 ## 目录结构
@@ -61,13 +71,16 @@ claude skill run create-crush
 ```
 yourcrush/
 ├── .claude/skills/       # Claude Code Skills
-│   ├── create-crush/     # 角色创建工具
+│   ├── onboard/          # 新手引导
+│   ├── create-crush/     # 角色蒸馏
+│   ├── create-user/      # 用户档案
 │   ├── day/              # 日常写作
 │   └── progress/         # 进度追踪
 ├── crushes/              # 角色数据
 │   └── TEMPLATE/         # 空白模板
 ├── docs/                 # 文档
-└── scripts/              # 辅助脚本
+├── scripts/              # 辅助脚本
+└── examples/             # 示例数据
 ```
 
 ---
