@@ -310,14 +310,19 @@ async function loadFiles(files) {
   }
 
   const dayReadPromises = dayFiles.map(async ({ file, slug }) => {
-    const content = await readFile(file);
-    const parsed = parseFilename(file.name);
-    crushes[slug].days.push({
-      ...parsed,
-      filename: file.name,
-      content,
-      title: extractTitle(content)
-    });
+    try {
+      const content = await readFile(file);
+      const parsed = parseFilename(file.name);
+      if (!crushes[slug]) crushes[slug] = { meta: null, days: [] };
+      crushes[slug].days.push({
+        ...parsed,
+        filename: file.name,
+        content,
+        title: extractTitle(content)
+      });
+    } catch (e) {
+      console.warn(`无法读取: ${file.name}: ${e.message}`);
+    }
   });
   await Promise.all(dayReadPromises);
 
@@ -372,7 +377,7 @@ function updateSlugSelector() {
   sel.style.display = '';
   sel.innerHTML = slugs.map(s => {
     const meta = state.crushes[s].meta;
-    const label = meta ? `${s}（${meta.nickname || meta.name}）` : s;
+    const label = meta ? `${s}（${escapeHtml(meta.nickname || meta.name)}）` : s;
     return `<option value="${s}">${label}</option>`;
   }).join('');
   sel.onchange = () => selectSlug(sel.value);
@@ -407,6 +412,7 @@ function renderSidebar() {
 function selectDay(idx) {
   state.currentDayIdx = idx;
   const crush = state.crushes[state.currentSlug];
+  if (!crush || !crush.days) return;
   const day = crush.days[idx];
   if (!day) return;
   document.querySelectorAll('#day-list li').forEach((li, i) => {
