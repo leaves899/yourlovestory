@@ -280,13 +280,14 @@ async function loadFiles(files) {
   const dayFiles = [];
 
   for (const f of files) {
-    const path = f.webkitRelativePath || f.name;
-    if (path.includes('/memories/chats/') && /^day\d+.*\.md$/i.test(f.name)) {
+    const rawPath = f.webkitRelativePath || f.name;
+    const path = rawPath.replace(/\\/g, '/');
+    if ((path.includes('/memories/chats/') || path.includes('/chats/')) && /^day\d+.*\.md$/i.test(f.name)) {
       const slug = extractSlug(path);
       if (!crushes[slug]) crushes[slug] = { meta: null, days: [] };
       dayFiles.push({ file: f, slug });
     }
-    if (f.name === 'meta.json' && !path.includes('TEMPLATE')) {
+    if (f.name === 'meta.json' && !path.includes('/TEMPLATE/')) {
       const slug = extractSlug(path);
       metaFiles[slug] = f;
     }
@@ -337,10 +338,21 @@ async function loadFiles(files) {
 }
 
 function extractSlug(path) {
-  const parts = path.split('/');
+  const parts = path.replace(/\\/g, '/').split('/');
   const crushIdx = parts.indexOf('crushes');
-  if (crushIdx >= 0 && parts[crushIdx + 1]) return parts[crushIdx + 1];
-  return parts[0] || 'unknown';
+  if (crushIdx >= 0 && parts[crushIdx + 1]) {
+    const candidate = parts[crushIdx + 1];
+    if (candidate !== 'chats' && candidate !== 'memories' && candidate !== 'crushes') {
+      return candidate;
+    }
+  }
+  for (let i = parts.length - 1; i > 0; i--) {
+    const name = parts[i];
+    if (name && name !== 'chats' && name !== 'memories' && name !== 'crushes' && !name.endsWith('.md') && !/^\d+$/.test(name)) {
+      return name;
+    }
+  }
+  return parts[parts.length - 1] || 'unknown';
 }
 
 function readFile(file) {
@@ -454,13 +466,15 @@ function renderBlock(block) {
     }
     return `<h${level}>${renderInline(text)}</h${level}>`;
   }
-  if (block.includes('|') && block.includes('---')) return renderTable(block);
+  const lines = block.split('\n');
+  const hasSeparator = lines.some(l => /^\|?[\s:-]+\|/.test(l));
+  if (block.includes('|') && hasSeparator) return renderTable(block);
   if (/^[-*]\s+/m.test(block)) {
     const items = block.split('\n').filter(l => /^[-*]\s+/.test(l));
     return '<ul>' + items.map(li => `<li>${renderInline(li.replace(/^[-*]\s+/, ''))}</li>`).join('') + '</ul>';
   }
-  const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-  return lines.map(l => `<p>${renderInline(l)}</p>`).join('');
+  const paraLines = block.split('\n').map(l => l.trim()).filter(Boolean);
+  return paraLines.map(l => `<p>${renderInline(l)}</p>`).join('');
 }
 
 function renderTable(block) {
@@ -535,9 +549,10 @@ document.addEventListener('keydown', (e) => {
 try {
   const lastSlug = localStorage.getItem('day-reader-slug');
   const lastIdx = localStorage.getItem('day-reader-idx');
-  if (lastSlug && lastIdx !== null && state.crushes[lastSlug]) {
+  const idx = parseInt(lastIdx, 10);
+  if (lastSlug && !isNaN(idx) && state.crushes[lastSlug]) {
     selectSlug(lastSlug);
-    selectDay(parseInt(lastIdx, 10));
+    selectDay(idx);
   }
 } catch {}
 </script>
