@@ -1,0 +1,8 @@
+{
+  "name": "{{CHARACTER_NAME}}",
+  "nickname": "{{CHARACTER_NICKNAME}}",
+  "version": "1.0.0",
+  "created_at": "{{TIMESTAMP}}",
+  "last_updated": "{{TIMESTAMP}}",
+  "intimate_enabled": false
+}

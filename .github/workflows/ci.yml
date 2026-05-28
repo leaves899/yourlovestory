@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for private info
+        run: |
+          grep -r "欢欢" . --include="*.py" --include="*.md" --include="*.yml" && exit 1 || exit 0
+          grep -r "huanhuan" . --include="*.py" --include="*.md" --include="*.yml" && exit 1 || exit 0
+          grep -r "许予柔" . --include="*.py" --include="*.md" --include="*.yml" && exit 1 || exit 0
+          grep -rE "Day [0-9]" . --include="*.py" --include="*.md" --include="*.yml" && exit 1 || exit 0
+      - name: Python syntax check
+        run: |
+          find . -name "*.py" -exec python -m py_compile {} \;
+
+  test-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Test toggle_intimate.py --help
+        run: |
+          cd scripts && python toggle_intimate.py --help
+      - name: Test init_template.py --help
+        run: |
+          cd scripts && python init_template.py --help
+
+  markdown-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check docs markdown format
+        run: |
+          for f in docs/*.md; do
+            if [ -f "$f" ]; then
+              # Check for empty title lines
+              grep -qE "^#\s*$" "$f" && echo "Empty title in $f" && exit 1 || true
+              # Check for trailing whitespace
+              grep -qE "\s+$" "$f" && echo "Trailing whitespace in $f" && exit 1 || true
+            fi
+          done
+      - name: Check README.md structure
+        run: |
+          if [ -f README.md ]; then
+            grep -qE "^#\s+" README.md || (echo "README missing title" && exit 1)
+            grep -qE "^##\s+" README.md || (echo "README missing sections" && exit 1)
+          fi
