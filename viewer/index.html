@@ -338,7 +338,7 @@ async function loadFiles(files) {
 }
 
 function extractSlug(path) {
-  const parts = path.replace(/\\/g, '/').split('/');
+  const parts = path.split('/');
   const crushIdx = parts.indexOf('crushes');
   if (crushIdx >= 0 && parts[crushIdx + 1]) {
     const candidate = parts[crushIdx + 1];

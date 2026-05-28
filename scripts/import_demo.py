@@ -35,6 +35,8 @@ def main():
         return 1
 
     try:
+        if target_dir.exists() and args.force:
+            shutil.rmtree(target_dir)
         shutil.copytree(demo_source, target_dir, dirs_exist_ok=True)
     except Exception as e:
         print(f"Error: Failed to import demo: {e}")
