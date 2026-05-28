@@ -407,6 +407,83 @@ def generate_context_md(slug: str, status: dict, last_days: list,
     lines.append('6. **对话符合 persona**：嘴硬、短句、害羞但不拒绝、边说边做')
     lines.append('7. **时间标签**：## HH:MM · 事件 格式')
     lines.append('8. **结尾**：关系进展记录表 + 亲密记录汇总 + 信物状态 + 优思明记录')
+
+    # 用户性格参考
+    user_profile_path = project_root / 'user' / 'profile.md'
+    user_style_path = project_root / 'user' / 'writing_style.md'
+
+    if user_profile_path.exists():
+        user_profile_content = user_profile_path.read_text(encoding='utf-8')
+        # 提取关键字段
+        mbti = ''
+        personality = ''
+        attachment_style = ''
+        speech_habits = ''
+        view_on_love = ''
+        dislikes = ''
+
+        for line in user_profile_content.split('\n'):
+            if line.startswith('- **MBTI**') and ':' in line:
+                mbti = line.split(':', 1)[1].strip()
+            elif line.startswith('- **性格标签**') and ':' in line:
+                personality = line.split(':', 1)[1].strip()
+            elif line.startswith('- **依恋类型**') and ':' in line:
+                attachment_style = line.split(':', 1)[1].strip()
+            elif line.startswith('- **语气词**') and ':' in line:
+                speech_habits = line.split(':', 1)[1].strip()
+            elif line.startswith('- **对暗恋的看法**') and ':' in line:
+                view_on_love = line.split(':', 1)[1].strip()
+            elif line.startswith('- **雷区**') and ':' in line:
+                dislikes = line.split(':', 1)[1].strip()
+
+        has_user_profile = mbti or personality or attachment_style
+        if has_user_profile:
+            lines.append('9. **用户性格参考**：')
+            if mbti or personality:
+                lines.append(f'   - 类型：{mbti} · {personality}')
+            if speech_habits:
+                lines.append(f'   - 说话习惯：{speech_habits}')
+            if attachment_style:
+                lines.append(f'   - 依恋类型：{attachment_style}')
+            if view_on_love:
+                lines.append(f'   - 恋爱观：{view_on_love}')
+            if dislikes:
+                lines.append(f'   - 雷区：{dislikes}')
+
+    if user_style_path.exists():
+        user_style_content = user_style_path.read_text(encoding='utf-8')
+        perspective = ''
+        emotional_intensity = ''
+        pacing = ''
+        likes = ''
+        dislikes = ''
+
+        for line in user_style_content.split('\n'):
+            if line.startswith('- **人称**') and ':' in line:
+                perspective = line.split(':', 1)[1].strip()
+            elif line.startswith('- **情感浓度**') and ':' in line:
+                emotional_intensity = line.split(':', 1)[1].strip()
+            elif line.startswith('- **剧情节奏**') and ':' in line:
+                pacing = line.split(':', 1)[1].strip()
+            elif line.startswith('- **喜欢的元素**') and ':' in line:
+                likes = line.split(':', 1)[1].strip()
+            elif line.startswith('- **讨厌的元素**') and ':' in line:
+                dislikes = line.split(':', 1)[1].strip()
+
+        has_user_style = perspective or emotional_intensity or pacing or likes or dislikes
+        if has_user_style:
+            lines.append('10. **用户写作风格**：')
+            if perspective:
+                lines.append(f'   - 视角：{perspective}')
+            if emotional_intensity:
+                lines.append(f'   - 情感浓度：{emotional_intensity}')
+            if pacing:
+                lines.append(f'   - 节奏：{pacing}')
+            if likes:
+                lines.append(f'   - 喜欢：{likes}')
+            if dislikes:
+                lines.append(f'   - 讨厌：{dislikes}')
+
     lines.append('')
 
     return '\n'.join(lines)

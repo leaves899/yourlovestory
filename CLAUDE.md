@@ -18,11 +18,15 @@ yourcrush/
 │   ├── create-crush/        # 角色蒸馏工具链
 │   │   ├── tools/           # Python 解析器（22个）
 │   │   └── prompts/         # Prompt 模板（11个）
+│   ├── create-user/         # 用户档案创建
 │   ├── day/                 # 日常写作 Skill
 │   ├── analyze/             # 心理分析
 │   └── progress/            # 进展追踪
 ├── crushes/                 # 角色数据
 │   └── TEMPLATE/            # 空白角色模板
+├── user/                    # 用户性格档案
+│   ├── profile.md          # 用户性格主档案
+│   └── writing_style.md    # 写作风格偏好
 ├── docs/                    # 项目文档（中英双语）
 ├── scripts/                 # 辅助脚本
 │   ├── init_template.py     # 初始化角色模板
