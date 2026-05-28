@@ -11,16 +11,6 @@ yourcrush 是一个模拟恋爱叙事写作工具链，用于将暗恋对象蒸�
 
 ## 一键部署命令
 
-复制以下内容给 agent即可自动部署：
-
-```bash
-git clone https://github.com/leaves899/yourlovestory.git && cd yourlovestory && claude skill add ./day && claude skill run create-crush
-```
-
----
-
-## 一键部署命令
-
 将以下内容复制给 agent，即可自动完成部署：
 
 ```bash
