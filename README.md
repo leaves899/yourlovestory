@@ -1,36 +1,31 @@
-# yourcrush / 暗恋对象
+# yourcrush / 恋爱日记
 
-> 把暗恋对象蒸馏成 AI 写作技能，生成你和暗恋对象可能的生活
+> 模拟表白成功后和 crush 的幸福生活，记录你们一起的日子
 
-*把 ta 聊天记录里的语气、习惯、那些没说出口的话，变成一个会回你消息的 AI。*
+*把那些心动瞬间、甜蜜日常、拌嘴吵架，都变成可以反复阅读的故事。*
 
 [English README](#english-version) | [快速开始](#快速开始) | [文档](docs/) | [贡献](CONTRIBUTING.md)
 
 ---
 
-## 你还记得那个不敢表白的人吗？
+## 你还记得表白成功那天吗？
 
-暗恋是什么感觉？
+是她答应那一刻心跳几乎停掉的狂喜，是第一次牵手时掌心出汗的紧张，是意识到「嗯，她是我女朋友了」时的难以置信。
 
-是打完「在干嘛」之后盯着对话框等半天的紧张，是把每条消息都反复看三遍的雀跃，是明明很喜欢却只能装作朋友的克制。
-
-**yourcrush** 把这些都记录下来，变成一个会回你消息的 AI——不是爽文式的完美情人，而是那个真实的、有点作的、让你又爱又恨的 ta。
+**yourcrush** 把这些都记录下来——不是偶像剧，而是你们真实的、有点傻的、让人反复心动的日常。
 
 ---
 
 ## 核心功能
 
-### 角色蒸馏 / Character Distillation
-导入微信/QQ 聊天记录（或手动描述），生成专属 AI Skill，保留 ta 的说话语气、性格特点、你们之间的独特回忆。
+### 角色创建 / Character Creation
+输入你们的故事背景、她的性格、你们的相处模式，生成专属 AI Skill。
 
 ### 日常叙事 / Daily Writing
 以 Day 为单位记录你们的生活——不是流水账，而是有心理描写、有温度的叙事文本。
 
-### 对话模拟 / Dialogue Simulation
-在关键场景（告白、约会、冲突）前先「彩排」一遍，看看 ta 会怎么回应。
-
-### 暗恋心理分析 / Psychology Analysis
-帮你理清这段关系的现状、卡点、和下一步可行的方向。
+### 进度追踪 / Progress Tracking
+记录你们关系的发展脉络，从确定关系到一起生活。
 
 ---
 
@@ -45,21 +40,19 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/yourusername/yourcrush.git
-cd yourcrush
+git clone https://github.com/leaves899/yourlovestory.git
+cd yourlovestory
 
-# 安装 Claude Code Skill（如果你还没有 crush skill）
+# 安装 Claude Code Skill
 claude skill add ./day
 ```
 
-### 创建你的第一个角色
+### 创建你的第一个故事
 
 ```bash
 # 启动交互式创建流程
 claude skill run create-crush
 ```
-
-系统会问你几个问题（花名、基本信息、性格画像），没有聊天记录也能直接开始。
 
 ---
 
@@ -68,11 +61,9 @@ claude skill run create-crush
 ```
 yourcrush/
 ├── .claude/skills/       # Claude Code Skills
-│   ├── create-crush/     # 角色蒸馏工具
+│   ├── create-crush/     # 角色创建工具
 │   ├── day/              # 日常写作
-│   ├── confess/          # 告白模拟器
-│   ├── date/             # 约会模拟器
-│   └── analyze/          # 心理分析
+│   └── progress/         # 进度追踪
 ├── crushes/              # 角色数据
 │   └── TEMPLATE/         # 空白模板
 ├── docs/                 # 文档
@@ -84,7 +75,7 @@ yourcrush/
 ## 隐私声明
 
 1. **所有数据存储在本地**——我们不收集任何数据
-2. 聊天记录只用于生成你的私人 Skill，**不会**上传到任何服务器
+2. 角色信息只用于生成你的私人 Skill，**不会**上传到任何服务器
 3. 导出的 Skill 文件是你个人的财产
 4. 如果你选择开源，风险自负
 
@@ -106,16 +97,12 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 本项目采用 [MIT 许可证](LICENSE) 开源。
 
----
-
-## Star 趋势
-
-[![Star趋势](https://api.star-history.com/svg?repos=yourusername/yourcrush&type=Timeline)](https://star-history.com/#yourusername/yourcrush&Timeline)
+致谢：本项目参考了 [crush-skills](https://github.com/xiaoheizi8/crush-skills) 的设计思路与实现方式，感谢其开源贡献。
 
 ---
 
 <p align="center">
-  <sub>Made with ❤️ for anyone who has ever had a crush</sub>
+  <sub>Made with ❤️ for anyone who is in love</sub>
 </p>
 
 ---
@@ -124,24 +111,23 @@ Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 # yourcrush
 
-> Distill your crush into an AI-powered writing skill, generate the life you could have together
+> Simulate the happy life with your crush after the confession, record your days together
 
-*Turn their chat habits, quirks, and unspoken words into an AI that actually talks like them.*
+*Turn those heart-fluttering moments, sweet daily life, and playful quarrels into stories you can read over and over.*
 
 ---
 
 ### Core Features
 
-- **Character Distillation** — Import chat logs (WeChat/QQ) or describe manually to create a unique AI Skill
+- **Character Creation** — Input your story background, her personality, your interaction patterns to create a unique AI Skill
 - **Daily Writing** — Record your life together with psychological depth and narrative warmth
-- **Dialogue Simulation** — Rehearse confessions, dates, and difficult conversations
-- **Psychology Analysis** — Get clarity on relationship status, blockers, and next steps
+- **Progress Tracking** — Track the development of your relationship
 
 ### Quick Start
 
 ```bash
-git clone https://github.com/yourusername/yourcrush.git
-cd yourcrush
+git clone https://github.com/leaves899/yourlovestory.git
+cd yourlovestory
 claude skill add ./day
 claude skill run create-crush
 ```
@@ -153,3 +139,5 @@ All data stays local. No server, no tracking, no collection.
 ### License
 
 MIT — see [LICENSE](LICENSE)
+
+Acknowledgments: This project references [crush-skills](https://github.com/xiaoheizi8/crush-skills) for design ideas and implementation, thanks to their open source contribution.
