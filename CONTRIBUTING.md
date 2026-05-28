@@ -60,7 +60,7 @@ pytest
 ```bash
 # 本地 lint 检查
 python -m py_compile your_script.py
-grep -r "欢欢\|huanhuan\|许予柔" . --include="*.py" --include="*.md"
+grep -r "小明\|xiaoming\|李薇" . --include="*.py" --include="*.md"
 ```
 
 ---

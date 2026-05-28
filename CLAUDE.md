@@ -19,8 +19,6 @@ yourcrush/
 │   │   ├── tools/           # Python 解析器（22个）
 │   │   └── prompts/         # Prompt 模板（11个）
 │   ├── day/                 # 日常写作 Skill
-│   ├── confess/             # 告白模拟器
-│   ├── date/                # 约会模拟器
 │   ├── analyze/             # 心理分析
 │   └── progress/            # 进展追踪
 ├── crushes/                 # 角色数据
@@ -83,7 +81,7 @@ python scripts/toggle_intimate.py --slug "角色slug" --status
 
 ### 禁止事项
 
-- 禁止在代码中添加真实人物信息（欢欢、huanhuan、许予柔）
+- 禁止在代码中添加真实人物信息（小明、xiaoming、李薇）
 - 禁止硬编码 Day 数字或具体日期
 - 禁止使用破折号「——」（写作标准）
 - 禁止过度使用省略号「...」（写作标准）
@@ -92,7 +90,7 @@ python scripts/toggle_intimate.py --slug "角色slug" --status
 
 提交前运行：
 ```bash
-grep -r "欢欢\|huanhuan\|许予柔" . --include="*.py" --include="*.md"
+grep -r "小明\|xiaoming\|李薇" . --include="*.py" --include="*.md"
 ```
 
 应返回空（CONTRIBUTING.md 和 ci.yml 中的检测模式除外）。

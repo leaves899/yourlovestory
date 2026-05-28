@@ -13,9 +13,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check for private info
         run: |
-          grep -r "欢欢" . --include="*.py" --include="*.md" --include="*.yml" && exit 1 || exit 0
-          grep -r "huanhuan" . --include="*.py" --include="*.md" --include="*.yml" && exit 1 || exit 0
-          grep -r "许予柔" . --include="*.py" --include="*.md" --include="*.yml" && exit 1 || exit 0
+          grep -r "小明" . --include="*.py" --include="*.md" --include="*.yml" && exit 1 || exit 0
+          grep -r "xiaoming" . --include="*.py" --include="*.md" --include="*.yml" && exit 1 || exit 0
+          grep -r "李薇" . --include="*.py" --include="*.md" --include="*.yml" && exit 1 || exit 0
           grep -rE "Day [0-9]" . --include="*.py" --include="*.md" --include="*.yml" && exit 1 || exit 0
       - name: Python syntax check
         run: |
