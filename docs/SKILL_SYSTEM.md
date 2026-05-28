@@ -15,9 +15,8 @@ Skill 是 Claude Code 的可扩展功能单元，每个 Skill 负责特定的功
 | Skill | 用途 | 命令 |
 |-------|------|------|
 | `create-crush` | 角色蒸馏 - 从聊天记录或描述创建角色 | `claude skill run create-crush` |
+| `create-user` | 用户档案 - 创建你自己的性格档案 | `claude skill run create-user` |
 | `day` | 日间写作 - 记录日常生活叙事 | `claude skill run day` |
-| `confess` | 告白模拟器 - 模拟表白场景 | `claude skill run confess` |
-| `date` | 约会模拟器 - 模拟约会场景 | `claude skill run date` |
 | `analyze` | 心理分析 - 分析暗恋心理状态 | `claude skill run analyze` |
 | `progress` | 进展追踪 - 记录关系发展阶段 | `claude skill run progress` |
 
@@ -44,6 +43,27 @@ claude skill run create-crush
 - `crushes/<slug>/memory.md`
 - `crushes/<slug>/persona.md`
 - `crushes/<slug>/SKILL.md`
+
+---
+
+### create-user - 用户档案
+
+**用途**：创建你自己的性格档案，让 AI 写作时更贴合你的性格
+
+**功能**：
+- 录入 MBTI 和性格标签
+- 录入说话方式和恋爱观
+- 设置写作风格偏好
+- 生成 `user/profile.md` 和 `user/writing_style.md`
+
+**使用方式**：
+```bash
+claude skill run create-user
+```
+
+**输出文件**：
+- `user/profile.md` - 用户性格主档案
+- `user/writing_style.md` - 写作风格偏好
 
 ---
 
@@ -244,9 +264,8 @@ A Skill is an extensible function unit in Claude Code. Each Skill is responsible
 | Skill | Purpose | Command |
 |-------|---------|---------|
 | `create-crush` | Character distillation - Create from chat logs or description | `claude skill run create-crush` |
+| `create-user` | User profile - Create your own personality profile | `claude skill run create-user` |
 | `day` | Daily writing - Record daily life narratives | `claude skill run day` |
-| `confess` | Confession simulator - Simulate confession scenarios | `claude skill run confess` |
-| `date` | Date simulator - Simulate date scenarios | `claude skill run date` |
 | `analyze` | Psychology analysis - Analyze crush psychology | `claude skill run analyze` |
 | `progress` | Progress tracking - Track relationship stages | `claude skill run progress` |
 
@@ -276,6 +295,27 @@ claude skill run create-crush
 
 ---
 
+### create-user - User Profile
+
+**Purpose**: Create your own personality profile for more personalized AI writing
+
+**Features**:
+- Enter MBTI and personality traits
+- Enter speaking habits and views on love
+- Set writing style preferences
+- Generate `user/profile.md` and `user/writing_style.md`
+
+**Usage**:
+```bash
+claude skill run create-user
+```
+
+**Output Files**:
+- `user/profile.md` - User personality profile
+- `user/writing_style.md` - Writing style preferences
+
+---
+
 ### day - Daily Writing
 
 **Purpose**: Record daily life narratives in Day units
@@ -297,45 +337,6 @@ claude skill run day
 [Psychology] [Environment] [Action]
 
 Dialogue content.
-```
-
----
-
-### confess - Confession Simulator
-
-**Purpose**: Simulate confession scenarios and predict responses
-
-**Features**:
-- Evaluate confession success rate
-- Predict possible responses
-- Provide psychological preparation advice
-- Analyze if relationship is mature enough
-
-**Usage**:
-```bash
-claude skill run confess
-```
-
-**Output Example**:
-- Success rate (low/medium/high)
-- Possible response types
-- Recommended preparations
-
----
-
-### date - Date Simulator
-
-**Purpose**: Simulate date scenarios and predict behavior
-
-**Features**:
-- Simulate different date scenarios
-- Predict reactions in various situations
-- Provide date advice
-- Analyze date habits and preferences
-
-**Usage**:
-```bash
-claude skill run date
 ```
 
 ---
