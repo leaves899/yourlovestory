@@ -92,45 +92,6 @@ claude skill run day
 
 ---
 
-### confess - 告白模拟器
-
-**用途**：模拟表白场景，预测对方反应
-
-**功能**：
-- 评估表白成功率
-- 预测对方可能的回应
-- 提供心理准备建议
-- 分析当前关系是否成熟
-
-**使用方式**：
-```bash
-claude skill run confess
-```
-
-**输出示例**：
-- 成功率评估（低/中/高）
-- 对方可能的回应类型
-- 建议的准备事项
-
----
-
-### date - 约会模拟器
-
-**用途**：模拟约会场景，预测对方行为
-
-**功能**：
-- 模拟不同约会场景
-- 预测对方在各种情况下的反应
-- 提供约会建议
-- 分析约会习惯和偏好
-
-**使用方式**：
-```bash
-claude skill run date
-```
-
----
-
 ### analyze - 暗恋心理分析
 
 **用途**：分析暗恋中的心理状态和行为模式
@@ -179,9 +140,8 @@ claude skill run progress
 ```bash
 # 添加所有可用 Skill
 claude skill add ./create-crush
+claude skill add ./create-user
 claude skill add ./day
-claude skill add ./confess
-claude skill add ./date
 claude skill add ./analyze
 claude skill add ./progress
 
@@ -389,9 +349,8 @@ claude skill run progress
 ```bash
 # Add all available Skills
 claude skill add ./create-crush
+claude skill add ./create-user
 claude skill add ./day
-claude skill add ./confess
-claude skill add ./date
 claude skill add ./analyze
 claude skill add ./progress
 
