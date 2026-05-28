@@ -1,4 +1,4 @@
-# yourcrush / 恋爱日记
+# Your LOVE story / 恋爱日记
 
 > 模拟表白成功后和 crush 的幸福生活，记录你们一起的日子
 
