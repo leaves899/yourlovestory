@@ -24,7 +24,8 @@ def read_intimate_config(config_path: Path) -> bool:
     if not config_path.exists():
         return False
     content = config_path.read_text(encoding="utf-8").strip()
-    return "intimate=true" in content
+    # 支持新格式 intimate=true 和旧格式 enabled: true
+    return "intimate=true" in content or "enabled: true" in content
 
 
 def write_intimate_config(config_path: Path, enabled: bool):

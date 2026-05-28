@@ -24,6 +24,9 @@
 ### 日常叙事 / Daily Writing
 以 Day 为单位记录你们的生活——不是流水账，而是有心理描写、有温度的叙事文本。
 
+### Day 阅读器 / Day Reader
+本地 HTML 文件，无需服务器，打开浏览器即可阅读已写的 Day 叙事。
+
 ### 进度追踪 / Progress Tracking
 记录你们关系的发展脉络，从确定关系到一起生活。
 
@@ -37,6 +40,16 @@
 - Python 3.9+（仅解析器需要）
 
 ### 安装
+
+将以下命令复制给 agent，即可自动完成部署：
+
+```bash
+git clone https://github.com/leaves899/yourlovestory.git && cd yourlovestory && claude skill add ./day && claude skill run create-crush
+```
+
+---
+
+或者手动分步安装：
 
 ```bash
 # 克隆仓库
@@ -62,7 +75,9 @@ claude skill run create-crush
 python scripts/import_demo.py
 ```
 
-导入后查看 `crushes/example/` 下的文件，了解角色数据结构和 Day 写作格式。如需重新导入，使用 `python scripts/import_demo.py --force`。
+### 阅读 Day 叙事
+
+直接在浏览器打开 `viewer/index.html`，点击「选择 crushes 目录」即可浏览所有 Day 叙事。
 
 ---
 
@@ -80,6 +95,7 @@ yourcrush/
 │   └── TEMPLATE/         # 空白模板
 ├── docs/                 # 文档
 ├── scripts/              # 辅助脚本
+├── viewer/               # Day 阅读器（单文件 HTML）
 └── examples/             # 示例数据
 ```
 
