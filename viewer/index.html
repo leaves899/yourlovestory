@@ -180,7 +180,6 @@ body {
 #reader p { margin-bottom: 16px; text-align: justify; }
 
 .dialogue { color: #5a4a3a; font-style: italic; }
-.narration { color: #6b6259; }
 
 #reader table {
   width: 100%;
@@ -293,16 +292,24 @@ async function loadFiles(files) {
     }
   }
 
-  for (const [slug, f] of Object.entries(metaFiles)) {
+  const metaErrors = [];
+  const metaReadPromises = Object.entries(metaFiles).map(async ([slug, f]) => {
     try {
       const text = await readFile(f);
       const meta = JSON.parse(text);
       if (!crushes[slug]) crushes[slug] = { meta: null, days: [] };
       crushes[slug].meta = meta;
-    } catch {}
+    } catch (e) {
+      metaErrors.push(slug);
+    }
+  });
+  await Promise.all(metaReadPromises);
+  if (metaErrors.length) {
+    const msg = `无法读取：${metaErrors.join('、')}`;
+    console.warn(msg);
   }
 
-  for (const { file, slug } of dayFiles) {
+  const dayReadPromises = dayFiles.map(async ({ file, slug }) => {
     const content = await readFile(file);
     const parsed = parseFilename(file.name);
     crushes[slug].days.push({
@@ -311,7 +318,8 @@ async function loadFiles(files) {
       content,
       title: extractTitle(content)
     });
-  }
+  });
+  await Promise.all(dayReadPromises);
 
   for (const slug of Object.keys(crushes)) {
     crushes[slug].days.sort((a, b) => a.number - b.number);
@@ -456,7 +464,23 @@ function renderTable(block) {
   if (sepIdx < 0) return `<p>${renderInline(block)}</p>`;
   const headerRows = rows.slice(0, sepIdx);
   const bodyRows = rows.slice(sepIdx + 1);
-  const parseCells = row => row.split('|').map(c => c.trim()).filter(Boolean);
+  const parseCells = row => {
+    const cells = [];
+    let current = '';
+    for (let i = 0; i < row.length; i++) {
+      if (row[i] === '\\' && row[i + 1] === '|') {
+        current += '|';
+        i++;
+      } else if (row[i] === '|') {
+        cells.push(current.trim());
+        current = '';
+      } else {
+        current += row[i];
+      }
+    }
+    cells.push(current.trim());
+    return cells.filter(Boolean);
+  };
   let html = '<table>';
   for (const row of headerRows) {
     const cells = parseCells(row);
@@ -475,10 +499,9 @@ function renderTable(block) {
 }
 
 function renderInline(text) {
+  text = escapeHtml(text);
   text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   text = text.replace(/「([^」]+)」/g, '<span class="dialogue">「$1」</span>');
-  text = text.replace(/（(心理描写|环境描写|动作描写)：([^）]+)）/g,
-    '<span class="narration">（$1：$2）</span>');
   return text;
 }
 
