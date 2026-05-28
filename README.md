@@ -41,6 +41,16 @@
 
 ### 安装
 
+将以下命令复制给 agent，即可自动完成部署：
+
+```bash
+git clone https://github.com/leaves899/yourlovestory.git && cd yourlovestory && claude skill add ./day && claude skill run create-crush
+```
+
+---
+
+或者手动分步安装：
+
 ```bash
 # 克隆仓库
 git clone https://github.com/leaves899/yourlovestory.git
