@@ -48,14 +48,17 @@ def main():
     shutil.copytree(template_dir, target_dir)
 
     # Create meta.json
+    now = __import__("datetime").datetime.now().isoformat()
     meta = {
         "name": args.name,
         "nickname": args.nickname,
         "slug": args.slug,
         "gender": args.gender,
         "description": args.description,
-        "intimate": False,  # 亲密内容开关 / Intimate content toggle
-        "created_at": __import__("datetime").datetime.now().isoformat()
+        "intimate_enabled": False,
+        "version": "v1",
+        "created_at": now,
+        "updated_at": now
     }
 
     meta_path = target_dir / "meta.json"

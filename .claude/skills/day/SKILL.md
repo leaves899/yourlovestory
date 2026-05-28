@@ -21,6 +21,7 @@
 2. 读取 `crushes/{{slug}}/persona.md` 获取角色性格
 3. 检查 `crushes/{{slug}}/.intimate_config` 确认亲密内容设置
 4. 生成符合写作标准的叙事文本
+5. 输出保存至 `crushes/{{slug}}/memories/chats/day*.md`
 
 ## 输出格式
 
@@ -63,9 +64,13 @@
 - 禁止过度省略号「...」
 - 禁止在 day 末尾写「她说的话」汇总节
 
+## 完成后
+
+运行 `/onboard` 查看整体进度和建议。
+
 ## 亲密内容
 
-如果 `INTIMATE_KNOWLEDGE.md` 存在且 `.intimate_config` 中 `enabled: true`，则在写作中包含亲密场景。
+如果 `INTIMATE_KNOWLEDGE.md` 存在且 `.intimate_config` 中 `intimate=true`，则在写作中包含亲密场景。
 
 ---
 
@@ -85,6 +90,7 @@
 2. Read `crushes/{{slug}}/persona.md` for character personality
 3. Check `crushes/{{slug}}/.intimate_config` for intimate content settings
 4. Generate narrative text following writing standards
+5. Save output to `crushes/{{slug}}/memories/chats/day*.md`
 
 ## Output Format
 
@@ -97,3 +103,11 @@ See Chinese version above.
 - No dashes 「——」
 - No excessive ellipsis 「...」
 - No "things she said" summary at the end
+
+## Intimate Content
+
+If `INTIMATE_KNOWLEDGE.md` exists and `.intimate_config` contains `intimate=true`, include intimate scenes in the narrative.
+
+## After Writing
+
+Run `/onboard` to check overall progress and suggestions.
