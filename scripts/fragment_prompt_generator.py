@@ -397,10 +397,8 @@ if __name__ == "__main__":
     fragments[0].mood = None
     print(f"None + None: {generator._merge_moods(fragments)}")
 
-    # 测试占位符填充
-    print(f"\n占位符填充测试:")
-    template = "在【环境】时，看到ta的【行为】，感到开心"
-    print(f"填充前: {template}")
-    print(f"填充后: {generator._fill_placeholders(template, fragment)}")
+    # 测试碎片描述生成（替代已废弃的占位符填充）
+    print(f"\n碎片描述生成测试:")
+    print(f"描述: {generator._generate_fragment_description(fragment)}")
 
     print("\n=== 测试完成 ===")

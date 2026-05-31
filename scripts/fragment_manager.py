@@ -209,6 +209,12 @@ class FragmentManager:
         if expected_version != day.version:
             return None, "碎片已被其他客户端修改，请重新加载"
 
+        # 可修改字段白名单
+        UPDATABLE_FIELDS = {"content", "origin", "mood", "env_tags", "behavior_tags", "writing_mode"}
+        invalid_fields = set(updates.keys()) - UPDATABLE_FIELDS
+        if invalid_fields:
+            return None, f"不允许修改字段: {', '.join(invalid_fields)}"
+
         # 验证内容（如果更新了内容）
         if "content" in updates:
             writing_mode = updates.get("writing_mode", fragment.writing_mode)
@@ -275,6 +281,9 @@ class FragmentManager:
         if expected_version != day.version:
             return False, "碎片已被其他客户端修改，请重新加载"
 
+        # 保存引用以便回滚
+        original_fragment = fragment
+
         # 删除碎片
         day.fragments = [f for f in day.fragments if f.id != fragment_id]
         day.updated_at = get_current_datetime()
@@ -283,7 +292,8 @@ class FragmentManager:
         # 保存
         success, error = self._save_fragment_day(day)
         if not success:
-            # 回滚（无法恢复已删除的碎片，但可以恢复版本号）
+            # 完整回滚
+            day.fragments.append(original_fragment)
             day.version -= 1
             return False, error
 
@@ -533,8 +543,12 @@ class FragmentManager:
         if not all_fragments:
             return False, "没有有效内容的碎片"
 
+        # 使用最新日期的 direction（跨天整合时取最晚的日期）
+        latest_date = max(dates)
+        direction = day_cache[latest_date].direction
+
         # 生成叙事内容
-        writing_context = self.prompt_generator.generate_multi_fragment_prompt(all_fragments)
+        writing_context = self.prompt_generator.generate_multi_fragment_prompt(all_fragments, direction)
 
         # 标记所有日期为已完成（使用缓存的 day 对象）
         for date in dates:
