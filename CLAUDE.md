@@ -22,7 +22,6 @@ yourcrush/
 │   │   └── prompts/         # Prompt 模板（11个）
 │   ├── create-user/         # 用户档案创建
 │   ├── day/                 # 日常写作 Skill
-│   ├── onboard/             # 新手引导
 │   └── progress/            # 进展追踪
 ├── crushes/                 # 角色数据
 │   └── TEMPLATE/            # 空白角色模板
