@@ -850,33 +850,6 @@ def run_all_tests():
         import traceback
         traceback.print_exc()
         return 1
-    """运行所有测试"""
-    print("=" * 60)
-    print("碎片日记测试套件")
-    print("=" * 60)
-
-    try:
-        test_fragment_utils()
-        test_fragment_models()
-        test_state_machine()
-        test_prompt_generator()
-        test_tag_recommender()
-        test_blind_matcher()
-        test_fragment_manager()
-
-        print("\n" + "=" * 60)
-        print("[OK] 所有测试通过！")
-        print("=" * 60)
-        return 0
-
-    except AssertionError as e:
-        print(f"\n[FAIL] 测试失败: {e}")
-        return 1
-    except Exception as e:
-        print(f"\n[FAIL] 测试异常: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
 
 
 if __name__ == "__main__":

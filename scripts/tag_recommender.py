@@ -73,10 +73,10 @@ class TagRecommender:
         threshold = self._get_current_threshold(session_id)
 
         # 推荐环境标签
-        env_tags = self._recommend_env_tags(content, threshold, crush_persona)
+        env_tags = self._recommend_tags(content, threshold, "env_tags", crush_persona)
 
         # 推荐行为标签
-        behavior_tags = self._recommend_behavior_tags(content, threshold, crush_persona)
+        behavior_tags = self._recommend_tags(content, threshold, "behavior_tags", crush_persona)
 
         return {
             "env_tags": env_tags,
@@ -144,56 +144,25 @@ class TagRecommender:
 
         return self.session_stats[session_id]["threshold"]
 
-    def _recommend_env_tags(self, content: str, threshold: float,
-                            crush_persona: Optional[dict] = None) -> List[dict]:
+    def _recommend_tags(self, content: str, threshold: float,
+                        tag_type: str, crush_persona: Optional[dict] = None) -> List[dict]:
         """
-        推荐环境标签
+        推荐标签（通用方法）
 
         Args:
             content: 用户输入内容
             threshold: 推荐阈值
+            tag_type: 标签类型（"env_tags" 或 "behavior_tags"）
             crush_persona: crush 角色档案
 
         Returns:
-            List[dict]: 推荐的环境标签列表
+            List[dict]: 推荐的标签列表
         """
-        if not self.tag_library or "env_tags" not in self.tag_library:
+        if not self.tag_library or tag_type not in self.tag_library:
             return []
 
         candidates = []
-        for tag in self.tag_library["env_tags"]:
-            relevance = self._calculate_relevance(content, tag)
-            if relevance >= threshold:
-                candidates.append({
-                    "id": tag["id"],
-                    "name": tag["name"],
-                    "relevance": relevance
-                })
-
-        # 按相关度排序
-        candidates.sort(key=lambda x: x["relevance"], reverse=True)
-
-        # 最多返回 3 个推荐
-        return candidates[:3]
-
-    def _recommend_behavior_tags(self, content: str, threshold: float,
-                                 crush_persona: Optional[dict] = None) -> List[dict]:
-        """
-        推荐行为标签
-
-        Args:
-            content: 用户输入内容
-            threshold: 推荐阈值
-            crush_persona: crush 角色档案
-
-        Returns:
-            List[dict]: 推荐的行为标签列表
-        """
-        if not self.tag_library or "behavior_tags" not in self.tag_library:
-            return []
-
-        candidates = []
-        for tag in self.tag_library["behavior_tags"]:
+        for tag in self.tag_library[tag_type]:
             relevance = self._calculate_relevance(content, tag)
             if relevance >= threshold:
                 candidates.append({

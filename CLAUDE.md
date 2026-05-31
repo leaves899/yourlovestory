@@ -730,6 +730,40 @@ pi.registerCommand("record-fragment", {
 
 ---
 
+## 项目特有约束
+
+### 私密信息保护
+
+**绝不包含真实人物信息到代码库。**
+
+提交前运行：
+```bash
+grep -r "小明\|xiaoming\|李薇" . --include="*.py" --include="*.md" --include="*.yml"
+```
+
+应返回空（CONTRIBUTING.md 和 ci.yml 中的检测模式除外）。
+
+### 亲密内容处理
+
+亲密内容模块（INTIMATE_KNOWLEDGE.md）**默认关闭**。
+
+- 用户必须通过 `toggle_intimate.py --enable` 显式启用
+- `SKILL.md` 检查 `.intimate_config` 配置决定是否加载
+- 配置缺失时默认为不加载
+
+### 写作标准约束
+
+- 禁止使用破折号「——」
+- 禁止过度使用省略号「...」
+- 禁止硬编码 Day 数字或具体日期
+
+### 时间线保护
+
+- 禁止硬编码 Day 数字或具体日期
+- 时间线必须通过动态计算得出
+
+---
+
 ## 参考链接
 
 ### Pi Agent 相关
