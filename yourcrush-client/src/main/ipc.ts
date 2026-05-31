@@ -8,9 +8,9 @@ import { Value } from "@sinclair/typebox/value";
 import type { Agent, AgentEvent } from "@earendil-works/pi-agent-core";
 import { loadConfig, saveConfig, type AgentConfig } from "./config";
 
-// Slug 格式校验，防止路径遍历
+// 统一的 Slug 格式校验：小写英文、数字、下划线、连字符
 function validateCrushSlug(slug: string): boolean {
-  return /^[a-z0-9-]+$/.test(slug) && slug.length <= 64;
+  return /^[a-z0-9_-]+$/.test(slug) && slug.length >= 1 && slug.length <= 32;
 }
 
 // 带超时的 Promise 包装
@@ -150,10 +150,14 @@ export function setupIPC(getWindow: () => BrowserWindow | null) {
     return { success: true };
   });
 
+  // 获取可写入的数据目录（生产环境安全）
+  function getDataPath(): string {
+    return app.getPath('userData');
+  }
+
   // 保存用户档案
   ipcMain.handle('user:save', async (_: IpcMainInvokeEvent, profile: Record<string, unknown>) => {
-    const appPath = app.getAppPath();
-    const userDir = path.join(appPath, 'user');
+    const userDir = path.join(getDataPath(), 'user');
 
     // 确保 user 目录存在
     if (!fs.existsSync(userDir)) {
@@ -231,41 +235,77 @@ export function setupIPC(getWindow: () => BrowserWindow | null) {
     return { success: true };
   });
 
+  // 获取角色列表
+  ipcMain.handle('crush:list', async () => {
+    const crushesDir = path.join(getDataPath(), 'crushes');
+
+    if (!fs.existsSync(crushesDir)) {
+      return [];
+    }
+
+    const entries = fs.readdirSync(crushesDir, { withFileTypes: true });
+    const crushes: Array<{ slug: string; name: string }> = [];
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+
+      const metaPath = path.join(crushesDir, entry.name, 'meta.json');
+      if (fs.existsSync(metaPath)) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+          crushes.push({ slug: entry.name, name: meta.name || entry.name });
+        } catch {
+          // meta.json 损坏，用目录名作为名称
+          crushes.push({ slug: entry.name, name: entry.name });
+        }
+      }
+    }
+
+    return crushes;
+  });
+
   // 创建角色
   ipcMain.handle('crush:create', async (_: IpcMainInvokeEvent, data: Record<string, unknown>) => {
-    const appPath = app.getAppPath();
     const slug = data.slug as string;
+    const name = data.name as string;
 
-    // Slug 格式校验
-    if (!/^[a-z0-9_一-龥]+$/.test(slug) || slug.length > 32) {
+    // 校验 name
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      throw new Error('Name is required');
+    }
+
+    // Slug 格式校验（与 validateCrushSlug 一致）
+    if (!validateCrushSlug(slug)) {
       throw new Error('Invalid slug format');
     }
 
-    const crushDir = path.join(appPath, 'crushes', slug);
+    const crushDir = path.join(getDataPath(), 'crushes', slug);
 
     // 检查是否已存在
     if (fs.existsSync(crushDir)) {
       throw new Error('Crush already exists');
     }
 
-    // 创建目录
-    fs.mkdirSync(crushDir, { recursive: true });
+    // 带清理的文件写入
+    try {
+      // 创建目录
+      fs.mkdirSync(crushDir, { recursive: true });
 
-    const now = new Date().toISOString();
+      const now = new Date().toISOString();
 
-    // 生成 meta.json
-    const meta = {
-      name: data.name as string,
-      nickname: (data.nickname as string) || (data.name as string),
-      version: '1.0.0',
-      created_at: now,
-      last_updated: now,
-      intimate_enabled: false,
-    };
+      // 生成 meta.json
+      const meta = {
+        name: name.trim(),
+        nickname: (data.nickname as string) || name.trim(),
+        version: '1.0.0',
+        created_at: now,
+        last_updated: now,
+        intimate_enabled: false,
+      };
 
-    // 生成 persona.md
-    const personality = Array.isArray(data.personality) ? (data.personality as string[]).join('、') : '';
-    const personaMd = `# 人物性格
+      // 生成 persona.md
+      const personality = Array.isArray(data.personality) ? (data.personality as string[]).join('、') : '';
+      const personaMd = `# 人物性格
 
 ## 基础信息
 
@@ -301,10 +341,10 @@ export function setupIPC(getWindow: () => BrowserWindow | null) {
 ${(data.impression as string) || ''}
 `;
 
-    // 生成 memory.md
-    const memoryMd = `# 关系记忆
+      // 生成 memory.md
+      const memoryMd = `# 关系记忆
 
-## ${(data.name as string)} 的基本信息
+## ${name.trim()} 的基本信息
 
 - **姓名**：
 - **年龄**：
@@ -330,14 +370,14 @@ ${(data.impression as string) || ''}
 下一步方向：
 `;
 
-    // 生成 SKILL.md
-    const skillMd = `---
+      // 生成 SKILL.md
+      const skillMd = `---
 name: ${slug}
-description: ${(data.name as string)} 的角色 Skill
+description: ${name.trim()} 的角色 Skill
 version: 1.0.0
 ---
 
-# ${(data.name as string)} - 角色 Skill
+# ${name.trim()} - 角色 Skill
 
 你是一个可运行的 Skill，基于以下文件构建角色：
 - \`memory.md\` - 关系记忆
@@ -361,12 +401,23 @@ const persona = require('./persona.md');
 - 情感分析
 `;
 
-    // 写入文件
-    fs.writeFileSync(path.join(crushDir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf-8');
-    fs.writeFileSync(path.join(crushDir, 'persona.md'), personaMd, 'utf-8');
-    fs.writeFileSync(path.join(crushDir, 'memory.md'), memoryMd, 'utf-8');
-    fs.writeFileSync(path.join(crushDir, 'SKILL.md'), skillMd, 'utf-8');
+      // 写入文件
+      fs.writeFileSync(path.join(crushDir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf-8');
+      fs.writeFileSync(path.join(crushDir, 'persona.md'), personaMd, 'utf-8');
+      fs.writeFileSync(path.join(crushDir, 'memory.md'), memoryMd, 'utf-8');
+      fs.writeFileSync(path.join(crushDir, 'SKILL.md'), skillMd, 'utf-8');
 
-    return { success: true, slug };
+      return { success: true, slug };
+    } catch (error) {
+      // 写入失败时清理目录
+      try {
+        if (fs.existsSync(crushDir)) {
+          fs.rmSync(crushDir, { recursive: true, force: true });
+        }
+      } catch {
+        // 清理也失败了，记录但不掩盖原始错误
+      }
+      throw error;
+    }
   });
 }
