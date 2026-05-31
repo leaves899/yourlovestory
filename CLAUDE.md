@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+**语言：所有对话输出使用中文。思维链全程使用中文思考。**
+
+## 项目概述
 
 **语言：所有对话输出使用中文。思维链全程使用中文思考。**
 
