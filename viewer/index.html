@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Day 阅读器</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #faf8f5;
+  --bg-sidebar: #f3f0eb;
+  --text: #2c2c2c;
+  --text-muted: #8a8580;
+  --accent: #c9a87c;
+  --accent-light: #e8ddd0;
+  --border: #e5e0d8;
+  --white: #fff;
+  --shadow: 0 1px 3px rgba(0,0,0,0.06);
+  --sidebar-w: 260px;
+  --header-h: 56px;
+}
+
+html { font-size: 16px; }
+body {
+  font-family: "Noto Serif SC", "Source Han Serif SC", Georgia, "Times New Roman", serif;
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.8;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#header {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: var(--header-h);
+  background: var(--white);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 16px;
+  z-index: 100;
+  box-shadow: var(--shadow);
+}
+
+#header h1 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+#slug-select {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 0.85rem;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  min-width: 120px;
+}
+
+#pick-dir {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 0.85rem;
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--white);
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+#pick-dir:hover { background: var(--accent); color: var(--white); }
+
+#dir-input { display: none; }
+.header-spacer { flex: 1; }
+#day-counter {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+#sidebar {
+  position: fixed;
+  top: var(--header-h);
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-w);
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 50;
+}
+
+#sidebar::-webkit-scrollbar { width: 4px; }
+#sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+#day-list { list-style: none; padding: 8px 0; }
+
+#day-list li {
+  padding: 10px 20px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: all 0.15s;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+#day-list li:hover { background: rgba(201,168,124,0.08); }
+#day-list li.active {
+  background: rgba(201,168,124,0.12);
+  border-left-color: var(--accent);
+}
+
+.day-item-num { font-size: 0.9rem; font-weight: 600; color: var(--text); }
+.day-item-date { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+.day-item-title { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+#content {
+  position: fixed;
+  top: var(--header-h);
+  left: var(--sidebar-w);
+  right: 0;
+  bottom: 0;
+  overflow-y: auto;
+  padding: 40px 48px 80px;
+}
+
+#content::-webkit-scrollbar { width: 6px; }
+#content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+#placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 1rem;
+  text-align: center;
+  line-height: 2;
+}
+
+#reader { max-width: 720px; margin: 0 auto; }
+
+#reader h1 {
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin-bottom: 32px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid var(--accent-light);
+  color: var(--text);
+  line-height: 1.4;
+}
+
+#reader h2 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-top: 40px;
+  margin-bottom: 16px;
+  padding-left: 16px;
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+}
+
+#reader h2 .time-tag {
+  font-family: "SF Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 0.85rem;
+  color: var(--accent);
+  font-weight: 500;
+  margin-right: 8px;
+}
+
+#reader p { margin-bottom: 16px; text-align: justify; }
+
+.dialogue { color: #5a4a3a; font-style: italic; }
+
+#reader table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 0.9rem;
+}
+
+#reader th, #reader td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+#reader th { font-weight: 600; background: var(--accent-light); }
+#reader tr:last-child td { border-bottom: none; }
+
+#reader ul, #reader ol { margin: 12px 0; padding-left: 24px; }
+#reader li { margin-bottom: 6px; }
+
+#reader hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+#reader strong { font-weight: 600; }
+
+#menu-toggle { display: none; }
+
+@media (max-width: 768px) {
+  :root { --sidebar-w: 0px; }
+  #content { left: 0; padding: 24px 20px 60px; }
+  #sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    width: 280px;
+    box-shadow: 2px 0 12px rgba(0,0,0,0.1);
+  }
+  #sidebar.open { transform: translateX(0); }
+  #menu-toggle {
+    display: block;
+    font-size: 1.4rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    color: var(--text);
+  }
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 40; }
+  .overlay.show { display: block; }
+  #reader h1 { font-size: 1.5rem; }
+  #reader h2 { font-size: 1.05rem; }
+}
+
+@media (max-width: 480px) {
+  #header h1 { display: none; }
+  #content { padding: 16px 14px 60px; }
+  #reader h1 { font-size: 1.3rem; margin-bottom: 24px; }
+}
+</style>
+</head>
+<body>
+
+<header id="header">
+  <button id="menu-toggle" onclick="toggleSidebar()">&#9776;</button>
+  <h1>Day 阅读器</h1>
+  <select id="slug-select" style="display:none"></select>
+  <button id="pick-dir" onclick="document.getElementById('dir-input').click()">选择 crushes 目录</button>
+  <input type="file" id="dir-input" webkitdirectory>
+  <span class="header-spacer"></span>
+  <span id="day-counter"></span>
+</header>
+
+<div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
+
+<aside id="sidebar">
+  <ul id="day-list"></ul>
+</aside>
+
+<main id="content">
+  <div id="placeholder">
+    <div>
+      <p style="font-size:1.2rem; margin-bottom:12px;">选择 crushes 目录开始阅读</p>
+      <p style="font-size:0.85rem;">点击上方「选择 crushes 目录」按钮</p>
+    </div>
+  </div>
+  <article id="reader" style="display:none"></article>
+</main>
+
+<script>
+const state = { crushes: {}, currentSlug: null, currentDayIdx: -1 };
+
+document.getElementById('dir-input').addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files);
+  await loadFiles(files);
+});
+
+async function loadFiles(files) {
+  const crushes = {};
+  const metaFiles = {};
+  const dayFiles = [];
+
+  for (const f of files) {
+    const rawPath = f.webkitRelativePath || f.name;
+    const path = rawPath.replace(/\\/g, '/');
+    if ((path.includes('/memories/chats/') || path.includes('/chats/')) && /^day\d+.*\.md$/i.test(f.name)) {
+      const slug = extractSlug(path);
+      if (!crushes[slug]) crushes[slug] = { meta: null, days: [] };
+      dayFiles.push({ file: f, slug });
+    }
+    if (f.name === 'meta.json' && !path.includes('/TEMPLATE/')) {
+      const slug = extractSlug(path);
+      metaFiles[slug] = f;
+    }
+  }
+
+  const metaErrors = [];
+  const metaReadPromises = Object.entries(metaFiles).map(async ([slug, f]) => {
+    try {
+      const text = await readFile(f);
+      const meta = JSON.parse(text);
+      if (!crushes[slug]) crushes[slug] = { meta: null, days: [] };
+      crushes[slug].meta = meta;
+    } catch (e) {
+      metaErrors.push(slug);
+    }
+  });
+  await Promise.all(metaReadPromises);
+  if (metaErrors.length) {
+    const msg = `无法读取：${metaErrors.join('、')}`;
+    console.warn(msg);
+  }
+
+  const dayReadPromises = dayFiles.map(async ({ file, slug }) => {
+    try {
+      const content = await readFile(file);
+      const parsed = parseFilename(file.name);
+      if (!crushes[slug]) crushes[slug] = { meta: null, days: [] };
+      crushes[slug].days.push({
+        ...parsed,
+        filename: file.name,
+        content,
+        title: extractTitle(content)
+      });
+    } catch (e) {
+      console.warn(`无法读取: ${file.name}: ${e.message}`);
+    }
+  });
+  await Promise.all(dayReadPromises);
+
+  for (const slug of Object.keys(crushes)) {
+    crushes[slug].days.sort((a, b) => a.number - b.number);
+  }
+
+  state.crushes = crushes;
+  updateSlugSelector();
+  const firstSlug = Object.keys(crushes)[0];
+  if (firstSlug) selectSlug(firstSlug);
+}
+
+function extractSlug(path) {
+  const parts = path.split('/');
+  const crushIdx = parts.indexOf('crushes');
+  if (crushIdx >= 0 && parts[crushIdx + 1]) {
+    const candidate = parts[crushIdx + 1];
+    if (candidate !== 'chats' && candidate !== 'memories' && candidate !== 'crushes') {
+      return candidate;
+    }
+  }
+  for (let i = parts.length - 1; i > 0; i--) {
+    const name = parts[i];
+    if (name && name !== 'chats' && name !== 'memories' && name !== 'crushes' && !name.endsWith('.md') && !/^\d+$/.test(name)) {
+      return name;
+    }
+  }
+  return parts[parts.length - 1] || 'unknown';
+}
+
+function readFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsText(file, 'utf-8');
+  });
+}
+
+function parseFilename(name) {
+  const m = name.match(/^day(\d+)(?:-(\d+))?(?:_(.+?)(?:~(.+?))?)?\.md$/i);
+  if (!m) return { number: 0, endNumber: null, startDate: null, endDate: null };
+  return {
+    number: parseInt(m[1], 10),
+    endNumber: m[2] ? parseInt(m[2], 10) : null,
+    startDate: m[3] || null,
+    endDate: m[4] || null
+  };
+}
+
+function extractTitle(content) {
+  const m = content.match(/^#\s+(.+)$/m);
+  if (!m) return '';
+  let t = m[1].replace(/^Day\s+\d+[^）]*）?\s*/, '').trim();
+  return t;
+}
+
+function updateSlugSelector() {
+  const sel = document.getElementById('slug-select');
+  const slugs = Object.keys(state.crushes);
+  if (slugs.length <= 1) { sel.style.display = 'none'; return; }
+  sel.style.display = '';
+  sel.innerHTML = slugs.map(s => {
+    const meta = state.crushes[s].meta;
+    const label = meta ? `${s}（${escapeHtml(meta.nickname || meta.name)}）` : s;
+    return `<option value="${s}">${label}</option>`;
+  }).join('');
+  sel.onchange = () => selectSlug(sel.value);
+}
+
+function selectSlug(slug) {
+  state.currentSlug = slug;
+  state.currentDayIdx = -1;
+  const sel = document.getElementById('slug-select');
+  sel.value = slug;
+  renderSidebar();
+  if (state.crushes[slug].days.length > 0) selectDay(0);
+}
+
+function renderSidebar() {
+  const ul = document.getElementById('day-list');
+  const crush = state.crushes[state.currentSlug];
+  if (!crush) { ul.innerHTML = ''; return; }
+  ul.innerHTML = crush.days.map((d, i) => {
+    const numLabel = d.endNumber ? `Day ${d.number}-${d.endNumber}` : `Day ${d.number}`;
+    const dateStr = d.startDate || '';
+    const title = d.title || '';
+    return `<li data-idx="${i}" onclick="selectDay(${i})">
+      <div class="day-item-num">${numLabel}</div>
+      ${dateStr ? `<div class="day-item-date">${dateStr}</div>` : ''}
+      ${title ? `<div class="day-item-title">${escapeHtml(title)}</div>` : ''}
+    </li>`;
+  }).join('');
+  document.getElementById('day-counter').textContent = `共 ${crush.days.length} 篇`;
+}
+
+function selectDay(idx) {
+  state.currentDayIdx = idx;
+  const crush = state.crushes[state.currentSlug];
+  if (!crush || !crush.days) return;
+  const day = crush.days[idx];
+  if (!day) return;
+  document.querySelectorAll('#day-list li').forEach((li, i) => {
+    li.classList.toggle('active', i === idx);
+  });
+  document.getElementById('placeholder').style.display = 'none';
+  const reader = document.getElementById('reader');
+  reader.style.display = '';
+  reader.innerHTML = renderMarkdown(day.content);
+  document.getElementById('content').scrollTop = 0;
+  try {
+    localStorage.setItem('day-reader-slug', state.currentSlug);
+    localStorage.setItem('day-reader-idx', String(idx));
+  } catch {}
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('overlay').classList.remove('show');
+}
+
+function renderMarkdown(md) {
+  const blocks = md.split(/\n{2,}/);
+  return blocks.map(renderBlock).join('');
+}
+
+function renderBlock(block) {
+  block = block.trim();
+  if (!block) return '';
+  if (/^-{3,}$/.test(block) || /^\*{3,}$/.test(block)) return '<hr>';
+  const hMatch = block.match(/^(#{1,3})\s+(.+)$/);
+  if (hMatch) {
+    const level = hMatch[1].length;
+    const text = hMatch[2];
+    if (level === 1) return `<h1>${renderInline(text)}</h1>`;
+    if (level === 2) {
+      const timeMatch = text.match(/^(\d{1,2}:\d{2})\s*[·•]\s*(.+)$/);
+      if (timeMatch) {
+        return `<h2><span class="time-tag">${timeMatch[1]}</span>${escapeHtml(timeMatch[2])}</h2>`;
+      }
+      return `<h2>${renderInline(text)}</h2>`;
+    }
+    return `<h${level}>${renderInline(text)}</h${level}>`;
+  }
+  const lines = block.split('\n');
+  const hasSeparator = lines.some(l => /^\|?[\s:-]+\|/.test(l));
+  if (block.includes('|') && hasSeparator) return renderTable(block);
+  if (/^[-*]\s+/m.test(block)) {
+    const items = block.split('\n').filter(l => /^[-*]\s+/.test(l));
+    return '<ul>' + items.map(li => `<li>${renderInline(li.replace(/^[-*]\s+/, ''))}</li>`).join('') + '</ul>';
+  }
+  const paraLines = block.split('\n').map(l => l.trim()).filter(Boolean);
+  return paraLines.map(l => `<p>${renderInline(l)}</p>`).join('');
+}
+
+function renderTable(block) {
+  const rows = block.split('\n').filter(l => l.trim());
+  if (rows.length < 2) return `<p>${renderInline(block)}</p>`;
+  const sepIdx = rows.findIndex(r => /^\|?[\s:-]+\|/.test(r));
+  if (sepIdx < 0) return `<p>${renderInline(block)}</p>`;
+  const headerRows = rows.slice(0, sepIdx);
+  const bodyRows = rows.slice(sepIdx + 1);
+  const parseCells = row => {
+    const cells = [];
+    let current = '';
+    for (let i = 0; i < row.length; i++) {
+      if (row[i] === '\\' && row[i + 1] === '|') {
+        current += '|';
+        i++;
+      } else if (row[i] === '|') {
+        cells.push(current.trim());
+        current = '';
+      } else {
+        current += row[i];
+      }
+    }
+    cells.push(current.trim());
+    return cells.filter(Boolean);
+  };
+  let html = '<table>';
+  for (const row of headerRows) {
+    const cells = parseCells(row);
+    html += '<thead><tr>' + cells.map(c => `<th>${renderInline(c)}</th>`).join('') + '</tr></thead>';
+  }
+  if (bodyRows.length) {
+    html += '<tbody>';
+    for (const row of bodyRows) {
+      const cells = parseCells(row);
+      html += '<tr>' + cells.map(c => `<td>${renderInline(c)}</td>`).join('') + '</tr>';
+    }
+    html += '</tbody>';
+  }
+  html += '</table>';
+  return html;
+}
+
+function renderInline(text) {
+  text = escapeHtml(text);
+  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  text = text.replace(/「([^」]+)」/g, '<span class="dialogue">「$1」</span>');
+  return text;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('overlay').classList.toggle('show');
+}
+
+document.addEventListener('keydown', (e) => {
+  const crush = state.crushes[state.currentSlug];
+  if (!crush || !crush.days.length) return;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (state.currentDayIdx > 0) selectDay(state.currentDayIdx - 1);
+  } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (state.currentDayIdx < crush.days.length - 1) selectDay(state.currentDayIdx + 1);
+  }
+});
+
+try {
+  const lastSlug = localStorage.getItem('day-reader-slug');
+  const lastIdx = localStorage.getItem('day-reader-idx');
+  const idx = parseInt(lastIdx, 10);
+  if (lastSlug && !isNaN(idx) && state.crushes[lastSlug]) {
+    selectSlug(lastSlug);
+    selectDay(idx);
+  }
+} catch {}
+</script>
+</body>
+</html>

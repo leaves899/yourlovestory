@@ -1,4 +1,4 @@
-# yourcrush / 恋爱日记
+# Your LOVE story / 恋爱日记
 
 > 模拟表白成功后和 crush 的幸福生活，记录你们一起的日子
 
@@ -78,6 +78,9 @@ claude skill run day
 ### 日常叙事 / Daily Writing
 以 Day 为单位记录你们的生活——不是流水账，而是有心理描写、有温度的叙事文本。
 
+### Day 阅读器 / Day Reader
+本地 HTML 文件，无需服务器，打开浏览器即可阅读已写的 Day 叙事。
+
 ### 进度追踪 / Progress Tracking
 记录你们关系的发展脉络，从确定关系到一起生活。
 
@@ -91,6 +94,16 @@ claude skill run day
 - Python 3.9+（仅解析器需要）
 
 ### 安装
+
+将以下命令复制给 agent，即可自动完成部署：
+
+```bash
+git clone https://github.com/leaves899/yourlovestory.git && cd yourlovestory && claude skill add ./day && claude skill run create-crush
+```
+
+---
+
+或者手动分步安装：
 
 ```bash
 # 克隆仓库
@@ -108,6 +121,18 @@ claude skill add ./day
 claude skill run create-crush
 ```
 
+### 试用 Demo / Try the Demo
+
+不想从零开始？导入示例角色看看效果：
+
+```bash
+python scripts/import_demo.py
+```
+
+### 阅读 Day 叙事
+
+直接在浏览器打开 `viewer/index.html`，点击「选择 crushes 目录」即可浏览所有 Day 叙事。
+
 ---
 
 ## 目录结构
@@ -115,13 +140,17 @@ claude skill run create-crush
 ```
 yourcrush/
 ├── .claude/skills/       # Claude Code Skills
-│   ├── create-crush/     # 角色创建工具
+│   ├── onboard/          # 新手引导
+│   ├── create-crush/     # 角色蒸馏
+│   ├── create-user/      # 用户档案
 │   ├── day/              # 日常写作
 │   └── progress/         # 进度追踪
 ├── crushes/              # 角色数据
 │   └── TEMPLATE/         # 空白模板
 ├── docs/                 # 文档
-└── scripts/              # 辅助脚本
+├── scripts/              # 辅助脚本
+├── viewer/               # Day 阅读器（单文件 HTML）
+└── examples/             # 示例数据
 ```
 
 ---

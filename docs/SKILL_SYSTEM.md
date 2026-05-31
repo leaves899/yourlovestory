@@ -14,15 +14,37 @@ Skill 是 Claude Code 的可扩展功能单元，每个 Skill 负责特定的功
 
 | Skill | 用途 | 命令 |
 |-------|------|------|
-| `create-crush` | 角色蒸馏 - 从聊天记录或描述创建角色 | `claude skill run create-crush` |
-| `create-user` | 用户档案 - 创建你自己的性格档案 | `claude skill run create-user` |
-| `day` | 日间写作 - 记录日常生活叙事 | `claude skill run day` |
-| `analyze` | 心理分析 - 分析暗恋心理状态 | `claude skill run analyze` |
-| `progress` | 进展追踪 - 记录关系发展阶段 | `claude skill run progress` |
+| `onboard` | 新手引导 - 检测进度并给出下一步指引 | `/onboard` |
+| `create-crush` | 角色蒸馏 - 从聊天记录或描述创建角色 | `/create-crush` |
+| `create-user` | 用户档案 - 创建你自己的性格档案 | `/create-user` |
+| `day` | 日间写作 - 记录日常生活叙事 | `/day` |
+| `progress` | 进展追踪 - 记录关系发展阶段 | `/progress` |
 
 ---
 
 ## 各 Skill 详解 / Detailed Skill Descriptions
+
+### onboard - 新手引导
+
+**用途**：检测当前进度，给出个性化的下一步指引
+
+**功能**：
+- 自动检测用户档案、角色、Day 文件状态
+- 根据状态输出对应的引导
+- 帮助新用户了解完整流程
+
+**使用方式**：
+```
+/onboard
+```
+
+**状态检测**：
+- 无用户档案 → 推荐 `/create-user`
+- 有档案无角色 → 推荐 `/create-crush`
+- 有角色无 Day → 推荐 `/day`
+- 有 Day → 显示进度，推荐继续写作或追踪进展
+
+---
 
 ### create-crush - 角色蒸馏
 
@@ -35,14 +57,14 @@ Skill 是 Claude Code 的可扩展功能单元，每个 Skill 负责特定的功
 - 构建角色对话风格
 
 **使用方式**：
-```bash
-claude skill run create-crush
+```
+/create-crush
 ```
 
 **输出文件**：
 - `crushes/<slug>/memory.md`
 - `crushes/<slug>/persona.md`
-- `crushes/<slug>/SKILL.md`
+- `crushes/<slug>/meta.json`
 
 ---
 
@@ -57,8 +79,8 @@ claude skill run create-crush
 - 生成 `user/profile.md` 和 `user/writing_style.md`
 
 **使用方式**：
-```bash
-claude skill run create-user
+```
+/create-user
 ```
 
 **输出文件**：
@@ -77,8 +99,8 @@ claude skill run create-user
 - 生成具有情感深度的文本
 
 **使用方式**：
-```bash
-claude skill run day
+```
+/day
 ```
 
 **写作格式**：
@@ -88,23 +110,6 @@ claude skill run day
 [心理描写] [环境描写] [动作描写]
 
 对话内容。
-```
-
----
-
-### analyze - 暗恋心理分析
-
-**用途**：分析暗恋中的心理状态和行为模式
-
-**功能**：
-- 识别当前心理状态
-- 分析行为模式
-- 找出潜在问题
-- 提供理性建议
-
-**使用方式**：
-```bash
-claude skill run analyze
 ```
 
 ---
@@ -120,8 +125,8 @@ claude skill run analyze
 - 理清下一步方向
 
 **使用方式**：
-```bash
-claude skill run progress
+```
+/progress
 ```
 
 **阶段定义**：
@@ -142,8 +147,8 @@ claude skill run progress
 claude skill add ./create-crush
 claude skill add ./create-user
 claude skill add ./day
-claude skill add ./analyze
 claude skill add ./progress
+claude skill add ./onboard
 
 # 或者添加整个 skills 目录
 claude skill add ./.claude/skills
@@ -193,7 +198,6 @@ crushes/
     ├── memory.md        # 关系记忆
     ├── persona.md       # 人物性格
     ├── meta.json        # 元数据
-    ├── SKILL.md         # Skill 配置
     ├── CONTEXT.md       # 压缩上下文
     ├── WEEKDAY.md       # 星期速查表
     ├── PROMPT.md        # Prompt 记录
@@ -223,15 +227,31 @@ A Skill is an extensible function unit in Claude Code. Each Skill is responsible
 
 | Skill | Purpose | Command |
 |-------|---------|---------|
-| `create-crush` | Character distillation - Create from chat logs or description | `claude skill run create-crush` |
-| `create-user` | User profile - Create your own personality profile | `claude skill run create-user` |
-| `day` | Daily writing - Record daily life narratives | `claude skill run day` |
-| `analyze` | Psychology analysis - Analyze crush psychology | `claude skill run analyze` |
-| `progress` | Progress tracking - Track relationship stages | `claude skill run progress` |
+| `onboard` | Onboarding - Detect progress and guide next steps | `/onboard` |
+| `create-crush` | Character distillation - Create from chat logs or description | `/create-crush` |
+| `create-user` | User profile - Create your own personality profile | `/create-user` |
+| `day` | Daily writing - Record daily life narratives | `/day` |
+| `progress` | Progress tracking - Track relationship stages | `/progress` |
 
 ---
 
 ## Detailed Skill Descriptions
+
+### onboard - Onboarding Guide
+
+**Purpose**: Detect current progress and provide personalized next-step guidance
+
+**Features**:
+- Auto-detect user profile, crush, and Day file status
+- Output guidance based on current state
+- Help new users understand the full workflow
+
+**Usage**:
+```
+/onboard
+```
+
+---
 
 ### create-crush - Character Distillation
 
@@ -244,14 +264,14 @@ A Skill is an extensible function unit in Claude Code. Each Skill is responsible
 - Build character dialogue style
 
 **Usage**:
-```bash
-claude skill run create-crush
+```
+/create-crush
 ```
 
 **Output Files**:
 - `crushes/<slug>/memory.md`
 - `crushes/<slug>/persona.md`
-- `crushes/<slug>/SKILL.md`
+- `crushes/<slug>/meta.json`
 
 ---
 
@@ -266,8 +286,8 @@ claude skill run create-crush
 - Generate `user/profile.md` and `user/writing_style.md`
 
 **Usage**:
-```bash
-claude skill run create-user
+```
+/create-user
 ```
 
 **Output Files**:
@@ -286,8 +306,8 @@ claude skill run create-user
 - Generate emotionally rich text
 
 **Usage**:
-```bash
-claude skill run day
+```
+/day
 ```
 
 **Writing Format**:
@@ -297,23 +317,6 @@ claude skill run day
 [Psychology] [Environment] [Action]
 
 Dialogue content.
-```
-
----
-
-### analyze - Psychology Analysis
-
-**Purpose**: Analyze crush psychology and behavior patterns
-
-**Features**:
-- Identify current psychological state
-- Analyze behavior patterns
-- Find potential issues
-- Provide rational advice
-
-**Usage**:
-```bash
-claude skill run analyze
 ```
 
 ---
@@ -329,11 +332,11 @@ claude skill run analyze
 - Clarify next steps
 
 **Usage**:
-```bash
-claude skill run progress
+```
+/progress
 ```
 
-**Stage Definitions**:
+**Stage Definitions**：
 1. First meeting
 2. Building connection
 3. Friend stage
@@ -351,8 +354,8 @@ claude skill run progress
 claude skill add ./create-crush
 claude skill add ./create-user
 claude skill add ./day
-claude skill add ./analyze
 claude skill add ./progress
+claude skill add ./onboard
 
 # Or add the entire skills directory
 claude skill add ./.claude/skills
@@ -402,7 +405,6 @@ crushes/
     ├── memory.md        # Relationship memory
     ├── persona.md       # Character personality
     ├── meta.json        # Metadata
-    ├── SKILL.md         # Skill configuration
     ├── CONTEXT.md       # Compressed context
     ├── WEEKDAY.md       # Weekly schedule
     ├── PROMPT.md        # Prompt records
