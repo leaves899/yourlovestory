@@ -301,92 +301,6 @@ class FragmentPromptGenerator:
         # 简单截断（后续可以优化为智能摘要）
         return content[:max_length - 3] + "..."
 
-    def _fill_placeholders(self, template: str, fragment: Fragment, crush_persona: Optional[dict] = None) -> str:
-        """
-        填充占位符【环境】【行为】
-
-        Args:
-            template: 模板字符串
-            fragment: 碎片数据
-            crush_persona: crush 角色档案（可选）
-
-        Returns:
-            str: 填充后的字符串
-
-        填充优先级：
-        1. 用户选择的 env_tags
-        2. 用户输入 content 中通过 NLP 提取的地点词
-        3. crush 角色档案中的常去地点
-        4. 默认值："某个时刻"
-        """
-        result = template
-
-        # 填充【环境】
-        if "【环境】" in result:
-            env = self._get_env_placeholder(fragment, crush_persona)
-            result = result.replace("【环境】", env)
-
-        # 填充【行为】
-        if "【行为】" in result:
-            behavior = self._get_behavior_placeholder(fragment, crush_persona)
-            result = result.replace("【行为】", behavior)
-
-        return result
-
-    def _get_env_placeholder(self, fragment: Fragment, crush_persona: Optional[dict] = None) -> str:
-        """
-        获取环境占位符
-
-        Args:
-            fragment: 碎片数据
-            crush_persona: crush 角色档案
-
-        Returns:
-            str: 环境文本
-        """
-        # 优先级 1：用户选择的 env_tags
-        if fragment.env_tags:
-            return fragment.env_tags[0]
-
-        # 优先级 2：从 content 中提取地点词（简单实现）
-        # TODO: 使用 NLP 提取地点词
-
-        # 优先级 3：crush 角色档案中的常去地点
-        if crush_persona and "frequent_places" in crush_persona:
-            places = crush_persona["frequent_places"]
-            if places:
-                return places[0]
-
-        # 优先级 4：默认值
-        return "某个时刻"
-
-    def _get_behavior_placeholder(self, fragment: Fragment, crush_persona: Optional[dict] = None) -> str:
-        """
-        获取行为占位符
-
-        Args:
-            fragment: 碎片数据
-            crush_persona: crush 角色档案
-
-        Returns:
-            str: 行为文本
-        """
-        # 优先级 1：用户选择的 behavior_tags
-        if fragment.behavior_tags:
-            return fragment.behavior_tags[0]
-
-        # 优先级 2：从 content 中提取行为词（简单实现）
-        # TODO: 使用 NLP 提取行为词
-
-        # 优先级 3：crush 角色档案中的行为模式
-        if crush_persona and "behavior_patterns" in crush_persona:
-            patterns = crush_persona["behavior_patterns"]
-            if patterns:
-                return patterns[0]
-
-        # 优先级 4：默认值
-        return "做了什么"
-
 
 if __name__ == "__main__":
     # 测试 Prompt 生成器
@@ -483,10 +397,8 @@ if __name__ == "__main__":
     fragments[0].mood = None
     print(f"None + None: {generator._merge_moods(fragments)}")
 
-    # 测试占位符填充
-    print(f"\n占位符填充测试:")
-    template = "在【环境】时，看到ta的【行为】，感到开心"
-    print(f"填充前: {template}")
-    print(f"填充后: {generator._fill_placeholders(template, fragment)}")
+    # 测试碎片描述生成（替代已废弃的占位符填充）
+    print(f"\n碎片描述生成测试:")
+    print(f"描述: {generator._generate_fragment_description(fragment)}")
 
     print("\n=== 测试完成 ===")

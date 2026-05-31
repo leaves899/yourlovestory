@@ -323,20 +323,20 @@ class BlindMatcher:
             "behavior_patterns": []
         }
 
-        # 提取常见回复
-        replies_match = re.search(r'##\s*常见回复.*?\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        # 提取说话习惯（对应 crush_replies）
+        replies_match = re.search(r'##\s*说话习惯.*?\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
         if replies_match:
             replies_text = replies_match.group(1)
             result["crush_replies"] = self._extract_list_items(replies_text)
 
-        # 提取性格特征
-        personality_match = re.search(r'##\s*性格特征.*?\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        # 提取情绪模式（对应 personality）
+        personality_match = re.search(r'##\s*情绪模式.*?\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
         if personality_match:
             personality_text = personality_match.group(1)
             result["personality"] = self._extract_list_items(personality_text)
 
-        # 提取行为模式
-        behavior_match = re.search(r'##\s*行为模式.*?\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
+        # 提取行为偏好（对应 behavior_patterns）
+        behavior_match = re.search(r'##\s*行为偏好.*?\n(.*?)(?=\n##|\Z)', content, re.DOTALL)
         if behavior_match:
             behavior_text = behavior_match.group(1)
             result["behavior_patterns"] = self._extract_list_items(behavior_text)

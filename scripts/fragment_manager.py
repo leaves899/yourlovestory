@@ -64,6 +64,33 @@ class FragmentManager:
         self.prompt_generator = FragmentPromptGenerator()
         self.tag_recommender = TagRecommender(base_dir)
 
+    # ==================== 标签推荐 ====================
+
+    def recommend_tags(self, crush_slug: str, content: str,
+                       session_id: str) -> dict:
+        """
+        推荐标签
+
+        Args:
+            crush_slug: crush 角色标识
+            content: 用户输入内容
+            session_id: 会话 ID（用于降频统计）
+
+        Returns:
+            dict: 推荐结果
+                - env_tags: 推荐的环境标签列表
+                - behavior_tags: 推荐的行为标签列表
+        """
+        return self.tag_recommender.recommend(content, crush_slug, session_id)
+
+    def record_tag_skip(self, session_id: str):
+        """记录用户跳过标签推荐"""
+        self.tag_recommender.record_skip(session_id)
+
+    def record_tag_accept(self, session_id: str):
+        """记录用户接受标签推荐"""
+        self.tag_recommender.record_accept(session_id)
+
     # ==================== 碎片 CRUD 操作 ====================
 
     def record_fragment(self, crush_slug: str, fragment_data: dict,
@@ -137,7 +164,12 @@ class FragmentManager:
         day.version += 1
 
         # 保存
-        self._save_fragment_day(day)
+        success, error = self._save_fragment_day(day)
+        if not success:
+            # 回滚版本号
+            day.fragments.pop()
+            day.version -= 1
+            return None, error
 
         return fragment, ""
 
@@ -177,12 +209,24 @@ class FragmentManager:
         if expected_version != day.version:
             return None, "碎片已被其他客户端修改，请重新加载"
 
+        # 可修改字段白名单
+        UPDATABLE_FIELDS = {"content", "origin", "mood", "env_tags", "behavior_tags", "writing_mode"}
+        invalid_fields = set(updates.keys()) - UPDATABLE_FIELDS
+        if invalid_fields:
+            return None, f"不允许修改字段: {', '.join(invalid_fields)}"
+
         # 验证内容（如果更新了内容）
         if "content" in updates:
             writing_mode = updates.get("writing_mode", fragment.writing_mode)
             is_valid, error_msg = validate_content(updates["content"], writing_mode)
             if not is_valid:
                 return None, error_msg
+
+        # 保存旧值用于回滚
+        old_values = {}
+        for key in updates:
+            if hasattr(fragment, key):
+                old_values[key] = getattr(fragment, key)
 
         # 更新碎片
         for key, value in updates.items():
@@ -196,7 +240,13 @@ class FragmentManager:
         day.version += 1
 
         # 保存
-        self._save_fragment_day(day)
+        success, error = self._save_fragment_day(day)
+        if not success:
+            # 回滚
+            for key, value in old_values.items():
+                setattr(fragment, key, value)
+            day.version -= 1
+            return None, error
 
         return fragment, ""
 
@@ -231,13 +281,21 @@ class FragmentManager:
         if expected_version != day.version:
             return False, "碎片已被其他客户端修改，请重新加载"
 
+        # 保存引用以便回滚
+        original_fragment = fragment
+
         # 删除碎片
         day.fragments = [f for f in day.fragments if f.id != fragment_id]
         day.updated_at = get_current_datetime()
         day.version += 1
 
         # 保存
-        self._save_fragment_day(day)
+        success, error = self._save_fragment_day(day)
+        if not success:
+            # 完整回滚
+            day.fragments.append(original_fragment)
+            day.version -= 1
+            return False, error
 
         return True, ""
 
@@ -344,7 +402,9 @@ class FragmentManager:
         day.integration_date = integration_date
 
         # 保存
-        self._save_fragment_day(day)
+        success, error = self._save_fragment_day(day)
+        if not success:
+            return False, error
 
         return True, ""
 
@@ -457,9 +517,13 @@ class FragmentManager:
         """
         current_date = get_current_date()
 
+        # 缓存 day 对象，避免重复读取磁盘
+        day_cache: Dict[str, FragmentDay] = {}
+
         # 校验所有日期
         for date in dates:
             day = self.get_fragment_day(crush_slug, date)
+            day_cache[date] = day
 
             # 检查版本号
             if date in expected_versions:
@@ -471,21 +535,24 @@ class FragmentManager:
             if not FragmentStateMachine.can_integrate(status):
                 return False, f"日期 {date} 不可整合（状态：{status.value}）"
 
-        # 执行整合
+        # 收集碎片
         all_fragments = []
         for date in dates:
-            day = self.get_fragment_day(crush_slug, date)
-            all_fragments.extend(day.get_non_empty_fragments())
+            all_fragments.extend(day_cache[date].get_non_empty_fragments())
 
         if not all_fragments:
             return False, "没有有效内容的碎片"
 
-        # 生成叙事内容
-        writing_context = self.prompt_generator.generate_multi_fragment_prompt(all_fragments)
+        # 使用最新日期的 direction（跨天整合时取最晚的日期）
+        latest_date = max(dates)
+        direction = day_cache[latest_date].direction
 
-        # 标记所有日期为已完成
+        # 生成叙事内容
+        writing_context = self.prompt_generator.generate_multi_fragment_prompt(all_fragments, direction)
+
+        # 标记所有日期为已完成（使用缓存的 day 对象）
         for date in dates:
-            day = self.get_fragment_day(crush_slug, date)
+            day = day_cache[date]
             expected_version = expected_versions.get(date, day.version)
             success, error_msg = self.complete_day(
                 crush_slug, date, writing_context,
@@ -542,7 +609,12 @@ class FragmentManager:
             day.version += 1
 
             # 保存
-            self._save_fragment_day(day)
+            success, error = self._save_fragment_day(day)
+            if not success:
+                # 回滚
+                day.writing_context = backup_context
+                day.version -= 1
+                return False, error
 
             return True, ""
 
@@ -641,7 +713,9 @@ class FragmentManager:
         for date in dates:
             day = self.get_fragment_day(crush_slug, date)
             day = FragmentStateMachine.undo_integration(day)
-            self._save_fragment_day(day)
+            success, error = self._save_fragment_day(day)
+            if not success:
+                return False, error
 
         return True, ""
 
@@ -672,7 +746,11 @@ class FragmentManager:
         # 从 ID 中提取 crush_slug（需要遍历所有 crush）
         # 这里简化处理，假设 crush_slug 已知
         # 实际实现中可以通过索引或缓存优化
-        for crush_dir in (self.base_dir / "crushes").iterdir():
+        crushes_dir = self.base_dir / "crushes"
+        if not crushes_dir.exists():
+            return None, None
+
+        for crush_dir in crushes_dir.iterdir():
             if crush_dir.is_dir():
                 crush_slug = crush_dir.name
                 day = self.get_fragment_day(crush_slug, date)
@@ -682,12 +760,15 @@ class FragmentManager:
 
         return None, None
 
-    def _save_fragment_day(self, day: FragmentDay):
+    def _save_fragment_day(self, day: FragmentDay) -> Tuple[bool, str]:
         """
         保存日期级别碎片数据
 
         Args:
             day: 日期级别数据
+
+        Returns:
+            Tuple[bool, str]: (是否成功, 错误信息)
         """
         file_path = get_fragment_date_dir(self.base_dir, day.crush_slug, day.date)
 
@@ -695,8 +776,12 @@ class FragmentManager:
         ensure_fragment_dir(self.base_dir, day.crush_slug)
 
         # 保存
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(day.to_dict(), f, ensure_ascii=False, indent=2)
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(day.to_dict(), f, ensure_ascii=False, indent=2)
+            return True, ""
+        except (IOError, OSError) as e:
+            return False, f"保存碎片数据失败: {e}"
 
 
 if __name__ == "__main__":
