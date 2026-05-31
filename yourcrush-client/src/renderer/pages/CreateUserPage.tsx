@@ -99,6 +99,7 @@ export function CreateUserPage() {
   const [step, setStep] = useState(1);
   const [profile, setProfile] = useState<UserProfile>(INITIAL_PROFILE);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   const update = <K extends keyof UserProfile>(key: K, value: UserProfile[K]) => {
     setProfile((prev) => ({ ...prev, [key]: value }));
@@ -115,9 +116,12 @@ export function CreateUserPage() {
 
   const handleSave = async () => {
     setSaving(true);
+    setError('');
     try {
       await window.electron.saveUserProfile(profile as unknown as Record<string, unknown>);
       setPage('startup');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败');
     } finally {
       setSaving(false);
     }
@@ -530,6 +534,10 @@ export function CreateUserPage() {
           </button>
         )}
       </div>
+
+      {error && (
+        <div className="create-user__error">{error}</div>
+      )}
     </div>
   );
 }

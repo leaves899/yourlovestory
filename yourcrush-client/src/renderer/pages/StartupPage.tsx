@@ -1,4 +1,10 @@
+import { useState, useEffect } from 'react';
 import { useAppStore } from '../store';
+
+interface CrushInfo {
+  slug: string;
+  name: string;
+}
 
 interface SkillCard {
   id: string;
@@ -93,6 +99,22 @@ function SkillCardView({ skill }: { skill: SkillCard }) {
 
 export function StartupPage() {
   const { crushSlug, setCrush, setPage } = useAppStore();
+  const [crushList, setCrushList] = useState<CrushInfo[]>([]);
+
+  // 从磁盘加载角色列表
+  useEffect(() => {
+    window.electron.listCrushes()
+      .then((list: CrushInfo[]) => {
+        setCrushList(list);
+        // 如果当前选中的角色不在列表中，选中第一个
+        if (list.length > 0 && !list.some((c) => c.slug === crushSlug)) {
+          setCrush(list[0].slug);
+        }
+      })
+      .catch(() => {
+        // 静默失败，显示空列表
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleEnterWriting = () => {
     setPage('writing');
@@ -126,7 +148,13 @@ export function StartupPage() {
             value={crushSlug}
             onChange={(e) => setCrush(e.target.value)}
           >
-            <option value="example">example</option>
+            {crushList.length === 0 ? (
+              <option value="">暂无角色，请先创建</option>
+            ) : (
+              crushList.map((c) => (
+                <option key={c.slug} value={c.slug}>{c.name}</option>
+              ))
+            )}
           </select>
           <button className="startup__enter-btn" onClick={handleEnterWriting}>
             进入写作

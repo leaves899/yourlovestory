@@ -58,15 +58,15 @@ const RELATIONSHIP_STATUS = [
   '相亲', '前任', '网友', '邻居',
 ];
 
-// 生成 slug：中文转拼音简写，英文小写，空格替换为下划线
+// 生成 slug：纯 ASCII，中文/emoji 等非英文数字字符自动过滤
 function generateSlug(name: string): string {
-  // 简单处理：去掉特殊字符，转小写，空格替换为下划线
-  return name
-    .trim()
-    .toLowerCase()
+  const slug = name.trim().toLowerCase()
     .replace(/\s+/g, '_')
-    .replace(/[^a-z0-9_一-龥]/g, '')
+    .replace(/[^a-z0-9_-]/g, '')   // 只保留 ASCII 小写、数字、下划线、连字符
+    .replace(/_+/g, '_')            // 合并连续下划线
+    .replace(/^_|_$/g, '')          // 去除首尾下划线
     .slice(0, 32);
+  return slug;
 }
 
 export function CreateCrushPage() {
@@ -76,6 +76,7 @@ export function CreateCrushPage() {
   const [profile, setProfile] = useState<CrushProfile>(INITIAL_PROFILE);
   const [saving, setSaving] = useState(false);
   const [slug, setSlug] = useState('');
+  const [error, setError] = useState('');
 
   const update = <K extends keyof CrushProfile>(key: K, value: CrushProfile[K]) => {
     setProfile((prev) => ({ ...prev, [key]: value }));
@@ -97,8 +98,13 @@ export function CreateCrushPage() {
 
   const handleSave = async () => {
     if (!profile.name.trim()) return;
+    if (!slug) {
+      setError('代号无法生成有效的 ID，请使用英文、数字或下划线');
+      return;
+    }
 
     setSaving(true);
+    setError('');
     try {
       await window.electron.createCrush({
         ...profile,
@@ -107,6 +113,8 @@ export function CreateCrushPage() {
       // 切换到新创建的角色
       setCrush(slug);
       setPage('startup');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建失败');
     } finally {
       setSaving(false);
     }
@@ -134,8 +142,16 @@ export function CreateCrushPage() {
       {profile.name && (
         <div className="config-field">
           <label className="config-field__label">生成的 ID</label>
-          <div className="create-crush__slug">{slug}</div>
-          <span className="create-crush__slug-hint">文件将保存到 crushes/{slug}/</span>
+          {slug ? (
+            <>
+              <div className="create-crush__slug">{slug}</div>
+              <span className="create-crush__slug-hint">文件将保存到 crushes/{slug}/</span>
+            </>
+          ) : (
+            <div className="create-crush__slug-warning">
+              ⚠️ 代号中没有英文或数字，无法生成 ID。请添加至少一个英文字母或数字。
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -319,7 +335,7 @@ export function CreateCrushPage() {
   const steps = [renderStep1, renderStep2, renderStep3, renderStep4];
   const stepTitles = ['代号', '基本信息', '性格画像', '确认'];
 
-  const canProceed = step === 1 ? profile.name.trim().length > 0 : true;
+  const canProceed = step === 1 ? (profile.name.trim().length > 0 && slug.length > 0) : true;
 
   return (
     <div className="create-crush">
@@ -381,6 +397,10 @@ export function CreateCrushPage() {
           </button>
         )}
       </div>
+
+      {error && (
+        <div className="create-crush__error">{error}</div>
+      )}
     </div>
   );
 }

@@ -856,6 +856,35 @@
   display: block;
 }
 
+.create-crush__slug-warning {
+  font-size: 13px;
+  color: #f59e0b;
+  margin-top: 4px;
+  padding: 8px 12px;
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 6px;
+}
+
+.create-crush__error {
+  text-align: center;
+  color: #ef4444;
+  font-size: 14px;
+  margin-top: 12px;
+  padding: 8px 16px;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 6px;
+}
+
+.create-user__error {
+  text-align: center;
+  color: #ef4444;
+  font-size: 14px;
+  margin-top: 12px;
+  padding: 8px 16px;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 6px;
+}
+
 .create-crush__tags {
   display: flex;
   flex-wrap: wrap;

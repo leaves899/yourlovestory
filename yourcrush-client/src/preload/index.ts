@@ -28,6 +28,9 @@ interface ElectronAPI {
 
   // 角色创建
   createCrush: (data: Record<string, unknown>) => Promise<{ success: boolean; slug: string }>;
+
+  // 角色列表
+  listCrushes: () => Promise<Array<{ slug: string; name: string }>>;
 }
 
 const api: ElectronAPI = {
@@ -59,6 +62,7 @@ const api: ElectronAPI = {
   saveConfig: (config) => ipcRenderer.invoke('config:save', config),
   saveUserProfile: (profile) => ipcRenderer.invoke('user:save', profile),
   createCrush: (data) => ipcRenderer.invoke('crush:create', data),
+  listCrushes: () => ipcRenderer.invoke('crush:list'),
 };
 
 contextBridge.exposeInMainWorld('electron', api);
