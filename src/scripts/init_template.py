@@ -3,6 +3,7 @@
 """
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
 
@@ -33,12 +34,13 @@ def create_crush(name: str, nickname: str, slug: str) -> Dict[str, Any]:
         (crush_dir / 'plans').mkdir(parents=True, exist_ok=True)
 
         # 创建元数据文件
+        now = datetime.now().isoformat()
         meta = {
             'name': name,
             'nickname': nickname,
             'slug': slug,
-            'created_at': '2026-06-01T00:00:00',
-            'updated_at': '2026-06-01T00:00:00',
+            'created_at': now,
+            'updated_at': now,
         }
         meta_file = crush_dir / 'meta.json'
         with open(meta_file, 'w', encoding='utf-8') as f:
@@ -51,6 +53,10 @@ def create_crush(name: str, nickname: str, slug: str) -> Dict[str, Any]:
         # 创建性格文件
         persona_file = crush_dir / 'persona.md'
         persona_file.write_text(f'# {nickname} 的性格\n\n', encoding='utf-8')
+
+        # 创建亲密内容配置文件（默认关闭）
+        intimate_file = crush_dir / '.intimate_config'
+        intimate_file.write_text('intimate=false', encoding='utf-8')
 
         return {
             'success': True,

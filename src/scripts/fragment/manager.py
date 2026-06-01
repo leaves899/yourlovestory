@@ -58,7 +58,8 @@ class FragmentManager:
             base_dir: 项目根目录
         """
         if base_dir is None:
-            base_dir = Path(__file__).parent.parent
+            # src/scripts/fragment/ -> 项目根目录
+            base_dir = Path(__file__).parent.parent.parent.parent
 
         self.base_dir = base_dir
         self.prompt_generator = FragmentPromptGenerator()

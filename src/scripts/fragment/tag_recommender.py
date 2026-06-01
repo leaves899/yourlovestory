@@ -39,7 +39,8 @@ class TagRecommender:
             base_dir: 项目根目录（用于加载标签库）
         """
         if base_dir is None:
-            base_dir = Path(__file__).parent.parent
+            # src/scripts/fragment/ -> 项目根目录
+            base_dir = Path(__file__).parent.parent.parent.parent
 
         self.base_dir = base_dir
         self.tag_library = self._load_tag_library()
