@@ -15,15 +15,13 @@ def temp_project(tmp_path):
     return tmp_path
 
 
-def test_create_crush(temp_project, monkeypatch):
+def test_create_crush(temp_project):
     """测试创建角色"""
-    # 修改项目根目录
-    monkeypatch.chdir(temp_project)
-
     result = create_crush(
         name='测试角色',
         nickname='小测',
         slug='test_crush',
+        project_root=temp_project,
     )
     assert result['success'] is True
     assert result['data']['name'] == '测试角色'
@@ -31,14 +29,13 @@ def test_create_crush(temp_project, monkeypatch):
     assert result['data']['slug'] == 'test_crush'
 
 
-def test_create_crush_directory_structure(temp_project, monkeypatch):
+def test_create_crush_directory_structure(temp_project):
     """测试创建角色后的目录结构"""
-    monkeypatch.chdir(temp_project)
-
     create_crush(
         name='测试角色',
         nickname='小测',
         slug='test_structure',
+        project_root=temp_project,
     )
 
     crush_dir = temp_project / 'crushes' / 'test_structure'
@@ -51,15 +48,15 @@ def test_create_crush_directory_structure(temp_project, monkeypatch):
     assert (crush_dir / 'persona.md').exists()
 
 
-def test_create_crush_meta_json(temp_project, monkeypatch):
+def test_create_crush_meta_json(temp_project):
     """测试创建角色后的 meta.json 内容"""
     import json
-    monkeypatch.chdir(temp_project)
 
     create_crush(
         name='测试角色',
         nickname='小测',
         slug='test_meta',
+        project_root=temp_project,
     )
 
     meta_file = temp_project / 'crushes' / 'test_meta' / 'meta.json'
@@ -73,14 +70,13 @@ def test_create_crush_meta_json(temp_project, monkeypatch):
     assert 'updated_at' in meta
 
 
-def test_create_crush_idempotent(temp_project, monkeypatch):
+def test_create_crush_idempotent(temp_project):
     """测试创建角色的幂等性（重复创建不会失败）"""
-    monkeypatch.chdir(temp_project)
-
     result1 = create_crush(
         name='测试角色',
         nickname='小测',
         slug='test_idempotent',
+        project_root=temp_project,
     )
     assert result1['success'] is True
 
@@ -88,5 +84,6 @@ def test_create_crush_idempotent(temp_project, monkeypatch):
         name='测试角色',
         nickname='小测',
         slug='test_idempotent',
+        project_root=temp_project,
     )
     assert result2['success'] is True

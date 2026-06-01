@@ -5,10 +5,10 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 
-def create_crush(name: str, nickname: str, slug: str) -> Dict[str, Any]:
+def create_crush(name: str, nickname: str, slug: str, project_root: Optional[Path] = None) -> Dict[str, Any]:
     """
     创建新的 crush 角色
 
@@ -16,13 +16,15 @@ def create_crush(name: str, nickname: str, slug: str) -> Dict[str, Any]:
         name: 真实姓名
         nickname: 昵称
         slug: URL slug（唯一标识）
+        project_root: 项目根目录（可选，默认自动检测）
 
     Returns:
         Dict: 响应结果
     """
     try:
         # 获取项目根目录
-        project_root = Path(__file__).parent.parent.parent
+        if project_root is None:
+            project_root = Path(__file__).parent.parent.parent
 
         # 创建角色目录
         crush_dir = project_root / 'crushes' / slug

@@ -44,13 +44,13 @@ def test_record_fragment(fragment_manager):
 
 def test_get_fragments_by_date(fragment_manager):
     """测试获取指定日期的碎片列表"""
-    # 先记录一个碎片
+    # 先记录一个碎片（内容需要至少 5 个字符）
     fragment_manager.record_fragment(
         crush_slug='example',
         fragment_data={
             'origin': 'user',
             'mood': 'positive',
-            'content': '测试内容',
+            'content': 'ta发了一个可爱的表情包',
             'writing_mode': 'raw',
         },
     )
@@ -59,7 +59,7 @@ def test_get_fragments_by_date(fragment_manager):
     from src.scripts.fragment.utils import get_current_date
     fragments = fragment_manager.get_fragments_by_date('example', get_current_date())
     assert len(fragments) >= 1
-    assert fragments[0].content == '测试内容'
+    assert fragments[0].content == 'ta发了一个可爱的表情包'
 
 
 def test_get_fragment(fragment_manager):
@@ -84,45 +84,53 @@ def test_get_fragment(fragment_manager):
 
 def test_update_fragment(fragment_manager):
     """测试更新碎片"""
-    # 先记录一个碎片
+    # 先记录一个碎片（内容需要至少 5 个字符）
     fragment, _ = fragment_manager.record_fragment(
         crush_slug='example',
         fragment_data={
             'origin': 'user',
             'mood': 'neutral',
-            'content': '原始内容',
+            'content': 'ta今天发了一个表情包',
             'writing_mode': 'raw',
         },
     )
 
+    # 获取当前版本号（记录后版本会增加）
+    from src.scripts.fragment.utils import get_current_date
+    day = fragment_manager.get_fragment_day('example', get_current_date())
+
     # 更新碎片
     updated, error = fragment_manager.update_fragment(
         fragment_id=fragment.id,
-        updates={'content': '更新后的内容'},
-        expected_version=1,
+        updates={'content': 'ta今天发了一个超级可爱的表情包'},
+        expected_version=day.version,
     )
     assert updated is not None
     assert error == ''
-    assert updated.content == '更新后的内容'
+    assert updated.content == 'ta今天发了一个超级可爱的表情包'
 
 
 def test_delete_fragment(fragment_manager):
     """测试删除碎片"""
-    # 先记录一个碎片
+    # 先记录一个碎片（内容需要至少 5 个字符）
     fragment, _ = fragment_manager.record_fragment(
         crush_slug='example',
         fragment_data={
             'origin': 'user',
             'mood': 'positive',
-            'content': '要删除的内容',
+            'content': '这是要删除的碎片内容',
             'writing_mode': 'raw',
         },
     )
 
+    # 获取当前版本号（记录后版本会增加）
+    from src.scripts.fragment.utils import get_current_date
+    day = fragment_manager.get_fragment_day('example', get_current_date())
+
     # 删除碎片
     success, error = fragment_manager.delete_fragment(
         fragment_id=fragment.id,
-        expected_version=1,
+        expected_version=day.version,
     )
     assert success is True
     assert error == ''
