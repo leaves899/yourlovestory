@@ -16,7 +16,7 @@ function createWindow() {
       contextIsolation: true,
     },
     titleBarStyle: 'hiddenInset',
-    show: true,
+    show: false,
   })
 
   // 开发环境：检查是否为打包前（resourcesPath 包含 node_modules）
@@ -32,6 +32,11 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
+
+  // 窗口准备好后再显示，避免白屏闪烁
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show()
+  })
 
   mainWindow.on('closed', () => {
     mainWindow = null
