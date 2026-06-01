@@ -1,15 +1,21 @@
 import { Type } from 'typebox'
-import { exec } from 'child_process'
-import { promisify } from 'util'
+import { spawn } from 'child_process'
+import path from 'path'
 
-const execAsync = promisify(exec)
-
+/**
+ * 日常写作工具 - 运行日常写作流水线
+ *
+ * 使用 spawn 替代 exec 防止命令注入
+ */
 export const dayTool = {
-  name: 'run_day_pipeline',
-  label: 'Run Day Pipeline',
+  name: 'day_writer',
+  label: 'Day Writer',
   description: '运行日常写作流水线，生成一天的生活叙事',
   parameters: Type.Object({
-    slug: Type.String({ description: '角色标识' }),
+    slug: Type.String({
+      description: '角色标识（仅允许小写字母、数字、连字符）',
+      pattern: '^[a-z0-9-]+$',
+    }),
     day_number: Type.Number({ description: 'Day 编号' }),
     summary: Type.Optional(Type.String({ description: '当天摘要' })),
     sex_count: Type.Optional(Type.Number({ description: '性爱次数' })),
@@ -19,28 +25,52 @@ export const dayTool = {
   }),
   execute: async (toolCallId: string, params: any, signal: AbortSignal, onUpdate: any) => {
     try {
-      const { slug, day_number, summary, sex_count, sex_details, handwriting, ycm_pill } = params
-
+      const scriptPath = path.join(process.cwd(), 'src', 'scripts', 'day', 'pipeline.py')
       const args = [
-        `--slug ${slug}`,
-        `--day-number ${day_number}`,
+        scriptPath,
+        '--slug',
+        params.slug,
+        '--day-number',
+        String(params.day_number),
       ]
 
-      if (summary) args.push(`--summary "${summary}"`)
-      if (sex_count) args.push(`--sex-count ${sex_count}`)
-      if (sex_details) args.push(`--sex-details "${sex_details}"`)
-      if (handwriting) args.push(`--handwriting "${handwriting}"`)
-      if (ycm_pill) args.push(`--ycm-pill ${ycm_pill}`)
+      if (params.summary) args.push('--summary', params.summary)
+      if (params.sex_count) args.push('--sex-count', String(params.sex_count))
+      if (params.sex_details) args.push('--sex-details', params.sex_details)
+      if (params.handwriting) args.push('--handwriting', params.handwriting)
+      if (params.ycm_pill) args.push('--ycm-pill', String(params.ycm_pill))
 
-      const command = `python src/scripts/day/pipeline.py ${args.join(' ')}`
-      const { stdout, stderr } = await execAsync(command)
+      // 使用 spawn 替代 exec，防止命令注入
+      const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+        const child = spawn('python', args, { shell: false, signal })
+        let stdout = ''
+        let stderr = ''
 
-      if (stderr) {
-        throw new Error(stderr)
+        child.stdout.on('data', (data) => {
+          stdout += data.toString()
+        })
+
+        child.stderr.on('data', (data) => {
+          stderr += data.toString()
+        })
+
+        child.on('close', (code) => {
+          if (code !== 0) {
+            reject(new Error(stderr || `Process exited with code ${code}`))
+          } else {
+            resolve({ stdout, stderr })
+          }
+        })
+
+        child.on('error', reject)
+      })
+
+      if (result.stderr) {
+        console.warn('Day tool warning:', result.stderr)
       }
 
       return {
-        content: [{ type: 'text', text: stdout }],
+        content: [{ type: 'text', text: result.stdout }],
         details: { success: true },
       }
     } catch (error: any) {
