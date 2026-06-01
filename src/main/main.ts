@@ -16,20 +16,22 @@ function createWindow() {
       contextIsolation: true,
     },
     titleBarStyle: 'hiddenInset',
-    show: false,
+    show: true,
   })
 
-  // 开发环境加载本地服务器
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:3000')
+  // 开发环境：检查是否为打包前（resourcesPath 包含 node_modules）
+  const isDev = process.resourcesPath.includes('node_modules')
+
+  if (isDev) {
+    // 尝试加载 Vite 开发服务器
+    mainWindow.loadURL('http://localhost:3000').catch(() => {
+      // 如果开发服务器不可用，加载构建后的文件
+      mainWindow?.loadFile(path.join(__dirname, '../renderer/index.html'))
+    })
     mainWindow.webContents.openDevTools()
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
-
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show()
-  })
 
   mainWindow.on('closed', () => {
     mainWindow = null
