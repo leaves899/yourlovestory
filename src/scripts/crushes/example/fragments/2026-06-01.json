@@ -1,0 +1,31 @@
+{
+  "date": "2026-06-01",
+  "crush_slug": "example",
+  "fragments": [
+    {
+      "id": "frag_20260601_123058_8636",
+      "date": "2026-06-01",
+      "time": "12:30",
+      "origin": "crush",
+      "mood": "positive",
+      "content": "ta发了一个可爱的表情包",
+      "env_tags": [
+        "工作"
+      ],
+      "behavior_tags": [],
+      "custom_tags": [],
+      "writing_mode": "raw",
+      "theme": null,
+      "crush_slug": "example",
+      "created_at": "2026-06-01T12:30:58",
+      "updated_at": "2026-06-01T12:30:58"
+    }
+  ],
+  "completed": false,
+  "direction": null,
+  "writing_context": null,
+  "version": 2,
+  "integration_date": null,
+  "created_at": "2026-06-01T12:30:58",
+  "updated_at": "2026-06-01T12:30:58"
+}

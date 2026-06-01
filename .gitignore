@@ -35,6 +35,7 @@ crushes/*/
 !crushes/TEMPLATE/
 memories/
 plans/
+!docs/superpowers/plans/
 *.log
 
 # Docker
