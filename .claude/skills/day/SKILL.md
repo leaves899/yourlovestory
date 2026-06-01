@@ -23,6 +23,7 @@
 2. 读取 `crushes/{{slug}}/persona.md` 获取角色性格
 3. 检查 `crushes/{{slug}}/.intimate_config` 确认亲密内容设置
 4. 生成符合写作标准的叙事文本
+5. 输出保存至 `crushes/{{slug}}/memories/chats/day*.md`
 
 ## 碎片日记模式
 
@@ -72,11 +73,7 @@ crushes/{slug}/fragments/
 ```markdown
 ## HH:MM · 事件标题
 
-（心理活动）
-
-（环境/光线/温度/声音描写）
-
-（具体动作描写）
+叙事文本，融入心理、环境、动作描写于行文之中。
 
 ## HH:MM · 下一事件
 ...
@@ -100,17 +97,37 @@ crushes/{slug}/fragments/
 {{ITEM_STATUS}}
 ```
 
+**写作方式**：心理、环境、动作全部融入叙事，不使用「（心理描写：...）」这类标注。例如：
+
+```
+心跳声在耳边放大，我攥紧手机站在咖啡厅门口。
+雨刚停，空气中还带着潮湿的凉意。
+手指不自觉地握紧又松开。
+```
+
+而不是：
+
+```
+心跳声在耳边放大。紧张感从胸口蔓延到指尖。
+空气中带着雨后的潮湿，咖啡厅的灯光暖黄。
+手指攥紧手机，指节微微发白。
+```
+
 ## 写作标准
 
-- 三维描写：心理活动 + 环境/光线/温度/声音 + 具体动作
+- 三维描写自然融入：心理 + 环境 + 动作在行文中体现，不带标注
 - 时间标签：`## HH:MM · 事件`
 - 禁止破折号「——」
 - 禁止过度省略号「...」
 - 禁止在 day 末尾写「她说的话」汇总节
 
+## 完成后
+
+运行 `/onboard` 查看整体进度和建议。
+
 ## 亲密内容
 
-如果 `INTIMATE_KNOWLEDGE.md` 存在且 `.intimate_config` 中 `enabled: true`，则在写作中包含亲密场景。
+如果 `INTIMATE_KNOWLEDGE.md` 存在且 `.intimate_config` 中 `intimate=true`，则在写作中包含亲密场景。
 
 ---
 
@@ -130,6 +147,7 @@ crushes/{slug}/fragments/
 2. Read `crushes/{{slug}}/persona.md` for character personality
 3. Check `crushes/{{slug}}/.intimate_config` for intimate content settings
 4. Generate narrative text following writing standards
+5. Save output to `crushes/{{slug}}/memories/chats/day*.md`
 
 ## Output Format
 
@@ -142,3 +160,11 @@ See Chinese version above.
 - No dashes 「——」
 - No excessive ellipsis 「...」
 - No "things she said" summary at the end
+
+## Intimate Content
+
+If `INTIMATE_KNOWLEDGE.md` exists and `.intimate_config` contains `intimate=true`, include intimate scenes in the narrative.
+
+## After Writing
+
+Run `/onboard` to check overall progress and suggestions.

@@ -56,8 +56,39 @@ def extract_section_rules(content: str) -> list:
     return rules
 
 
+def extract_rolespec_from_frontmatter(content: str) -> str:
+    """从 YAML frontmatter 提取 roleSpec 字段"""
+    # 匹配 YAML frontmatter 中的 roleSpec
+    frontmatter_match = re.search(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
+    if not frontmatter_match:
+        return ''
+    frontmatter_text = frontmatter_match.group(1)
+    # 提取 roleSpec 字段（支持 YAML block scalar: | 或 >，最后一行可无换行）
+    rolespec_match = re.search(r'^roleSpec:\s*[|>]?\s*\n((?:\s+.*\n?)*)', frontmatter_text, re.MULTILINE)
+    if not rolespec_match:
+        return ''
+    # 去掉每行的缩进
+    rolespec_lines = rolespec_match.group(1).strip().split('\n')
+    return '\n'.join(line.strip() for line in rolespec_lines if line.strip())
+
+
 def extract_layer0_rules(content: str) -> list:
     """提取 Layer 0 所有规则（向后兼容）"""
+    # 优先从 YAML frontmatter 提取 roleSpec
+    rolespec = extract_rolespec_from_frontmatter(content)
+    if rolespec:
+        # 将 roleSpec 文本转换为规则列表
+        rules = []
+        for i, line in enumerate(rolespec.split('\n'), 1):
+            line = line.strip()
+            if line:
+                # 去掉末尾的句号
+                if line.endswith('。'):
+                    line = line[:-1]
+                rules.append((i, line))
+        return rules
+
+    # 向后兼容：从 Layer 0 提取
     layer0_match = re.search(r'## Layer 0：硬规则\s*\n(.*?)(?=\n## Layer|\n---|\Z)', content, re.DOTALL)
     if not layer0_match:
         return []
@@ -432,6 +463,11 @@ def main():
 
     print(f'=== Extracting core persona for {slug} ===')
     print(f'persona.md: {len(content)} chars')
+
+    # 检测是否从 YAML frontmatter 提取 roleSpec
+    rolespec = extract_rolespec_from_frontmatter(content)
+    if rolespec:
+        print(f'Found roleSpec in YAML frontmatter ({len(rolespec)} chars)')
 
     # 检测结构：四板块 vs 旧 Layer
     is_v2 = '## 板块一' in content

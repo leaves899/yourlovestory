@@ -58,7 +58,9 @@ crushes/TEMPLATE/
   "nickname": "{{CHARACTER_NICKNAME}}",
   "slug": "{{SLUG}}",
   "gender": "unknown",
-  "intimate": false
+  "description": "",
+  "intimate": false,
+  "created_at": "2024-01-01T00:00:00"
 }
 ```
 
@@ -248,7 +250,6 @@ python scripts/init_template.py \
 1. **完善角色信息** - 填充 `memory.md` 和 `persona.md`
 2. **添加聊天记录** - 放入 `memories/chats/` 目录
 3. **启动日间写作** - `claude skill run day`
-4. **尝试告白模拟** - `claude skill run confess`
 
 ---
 
@@ -314,7 +315,9 @@ Basic configuration for the character:
   "nickname": "{{CHARACTER_NICKNAME}}",
   "slug": "{{SLUG}}",
   "gender": "unknown",
-  "intimate": false
+  "description": "",
+  "intimate": false,
+  "created_at": "2024-01-01T00:00:00"
 }
 ```
 
@@ -504,4 +507,3 @@ Noise, being interrupted, awkwardness
 1. **Complete Character Info** - Fill in `memory.md` and `persona.md`
 2. **Add Chat Records** - Place in `memories/chats/` directory
 3. **Start Day Writing** - `claude skill run day`
-4. **Try Confession Simulation** - `claude skill run confess`

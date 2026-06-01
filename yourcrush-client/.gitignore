@@ -1,0 +1,20 @@
+# Build output
+out/
+release/
+package/
+electron-*.tgz
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
