@@ -258,10 +258,10 @@ const readFileTool: AgentTool = {
 };
 ```
 
-**配置文件**：
-- `.claude/skills/` - Skill 定义和配置
+**配置文件 / 数据目录**：
+- `src/agent/` - Pi Agent 实例与工具（crushTool / dayTool / fragmentTool）
+- `src/scripts/` - Python 业务脚本（碎片模块等，过渡层）
 - `crushes/<slug>/` - 角色数据存储
-- `scripts/` - Python 脚本和工具
 
 **Pi Agent 版本**：0.78.0（@earendil-works/pi-agent-core）
 
@@ -419,25 +419,32 @@ done
 
 ### 角色管理（重构后）
 
-角色管理功能已迁移到 `yourcrush-client/src/services/` 目录，使用 TypeScript 实现。
+角色管理功能迁移到 `src/renderer/services/` 目录，使用 TypeScript 实现：
+- `crushService.ts` — 角色 CRUD（通过 IPC 调用主进程）
+- `dayService.ts` — Day 叙事管理
+- `fragmentService.ts` — 碎片日记 CRUD
 
-### Skill 命令（Pi Agent）
+UI 状态由 `src/renderer/stores/`（Zustand）管理。旧路径 `yourcrush-client/src/services/` 已随 `yourcrush-client/` 删除。
+
+### 运行命令
+
+重构后不再使用 Claude Code Skills（`claude skill run create-crush` 等已废弃）。改为标准的 Electron 应用脚本：
 
 ```bash
-# 添加 Skill
-claude skill add ./day
-claude skill add ./.claude/skills
+# 开发模式（同时启动渲染进程 Vite 和主进程 Electron）
+npm run dev
 
-# 查看已添加的 Skill
-claude skill list
+# 构建生产包
+npm run build
 
-# 运行 Skill
-claude skill run create-crush    # 角色创建
-claude skill run day             # 日常写作
-claude skill run progress        # 进度追踪
+# 打包桌面应用（Windows）
+npm run package:win
+
+# 运行测试
+npm test
 ```
 
-**注意**：以上命令基于 Claude Code Skills 接口。如果 Pi Agent 使用不同的命令格式，请参考 [Pi Agent 文档](https://github.com/earendil-works/pi) 进行调整。
+业务功能通过应用内的 Pi Agent（`src/agent/agent.ts`）+ 注册的工具（`dayTool` / `fragmentTool` / `crushTool`）提供，不再以独立 Skill 形式调用。
 
 ### Pi Agent 配置示例
 
@@ -592,39 +599,31 @@ agent.reset();
 - 日期状态自动计算：IN_PROGRESS → UNFINISHED → EXPIRED
 - 已完成状态不可逆
 
-### Pi Agent 与 TypeScript 服务集成
+### Pi Agent 与业务服务集成
 
-Pi Agent（TypeScript/Node.js）直接调用 TypeScript 服务，无需 Python 桥接：
+Pi Agent（`src/agent/agent.ts`）注册三个工具：`crushTool`、`dayTool`、`fragmentTool`（均在 `src/agent/tools/`）。
+
+**当前实现（过渡态）**：Agent 工具通过 `child_process.spawn` 调用 Python 脚本，Python 仍是碎片逻辑的实际承载体：
 
 ```typescript
-// 重构后：直接使用 TypeScript 服务
-import { FragmentManager } from './services/fragment-manager';
-import { WritingService } from './services/writing-service';
+// src/agent/tools/fragmentTool.ts（简化）
+import { spawn } from 'child_process'
 
-// 初始化服务
-const fragmentManager = new FragmentManager();
-const writingService = new WritingService();
-
-// 在工具中使用
-const recordFragmentTool: AgentTool = {
-  name: "record_fragment",
-  description: "记录碎片日记",
-  execute: async (toolCallId, params) => {
-    const result = await fragmentManager.record({
-      action: "record",
-      crush_slug: params.crush_slug,
-      fragment_data: params.fragment_data,
-    });
-    return { content: [{ type: "text", text: result }] };
+const fragmentTool = {
+  name: 'fragment_manager',
+  parameters: Type.Object({ action: Type.Union([...]), slug: Type.String({...}), ... }),
+  execute: async (toolCallId, params, signal) => {
+    const scriptPath = path.join(process.cwd(), 'src', 'scripts', 'fragment', 'manager.py')
+    const args = [scriptPath, '--action', params.action, '--slug', params.slug, ...]
+    const child = spawn('python', args, { shell: false, signal })  // shell:false 防注入
+    // ...收集 stdout/stderr
   },
-};
+}
 ```
 
-**集成要点**：
-- 所有业务逻辑使用 TypeScript 实现
-- Pi Agent 直接调用 TypeScript 服务
-- 类型安全，IDE 支持更好
-- 无需 Python 运行时依赖
+UI 侧则通过 IPC 调用主进程（`src/main/ipc.ts`），渲染进程的 `fragmentService.ts` 是对 `window.electronAPI.*` 的薄封装。
+
+> ⚠️ **与 ADR-0003 的差距**：ADR-0003 设想「Python 逻辑全部重写为 TypeScript、无 Python 桥接」，但当前实现仍是 TS→spawn→Python 的桥接形态。全转 TS 是待办事项，在此期间 Python 模块（`src/scripts/fragment/`）需保持可用且测试绿色。
 
 ### Pi Agent 扩展系统
 
