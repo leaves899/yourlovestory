@@ -362,12 +362,8 @@ def get_origin_display(origin: str) -> str:
     Returns:
         str: 显示文本
     """
-    origin_map = {
-        "user": "用户",
-        "crush": "Crush",
-        "ambient": "环境"
-    }
-    return origin_map.get(origin, origin)
+    from .models import ORIGIN_DISPLAY
+    return ORIGIN_DISPLAY.get(origin, origin)
 
 
 def get_mood_emoji(mood: Optional[str]) -> str:
@@ -380,14 +376,8 @@ def get_mood_emoji(mood: Optional[str]) -> str:
     Returns:
         str: Emoji
     """
-    mood_emoji_map = {
-        "positive": "😊",
-        "negative": "😢",
-        "neutral": "😐",
-        "mixed": "😶",
-        None: "⬜"
-    }
-    return mood_emoji_map.get(mood, "⬜")
+    from .models import MOOD_EMOJI
+    return MOOD_EMOJI.get(mood, "⬜")
 
 
 def get_mood_display(mood: Optional[str]) -> str:
@@ -400,14 +390,8 @@ def get_mood_display(mood: Optional[str]) -> str:
     Returns:
         str: 显示文本
     """
-    mood_display_map = {
-        "positive": "开心",
-        "negative": "在意",
-        "neutral": "平静",
-        "mixed": "复杂",
-        None: "未选择"
-    }
-    return mood_display_map.get(mood, "未选择")
+    from .models import MOOD_DISPLAY
+    return MOOD_DISPLAY.get(mood, "未选择")
 
 
 def get_writing_mode_display(mode: str) -> str:
@@ -420,13 +404,8 @@ def get_writing_mode_display(mode: str) -> str:
     Returns:
         str: 显示文本
     """
-    mode_display_map = {
-        "raw": "Raw",
-        "guided": "Guided",
-        "themed": "Themed",
-        "blind": "Blind"
-    }
-    return mode_display_map.get(mode, mode)
+    from .models import WRITING_MODE_DISPLAY
+    return WRITING_MODE_DISPLAY.get(mode, mode)
 
 
 def sort_fragments_by_time(fragments: list) -> list:

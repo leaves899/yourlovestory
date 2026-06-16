@@ -269,114 +269,79 @@ const readFileTool: AgentTool = {
 
 ### 项目结构
 
+> 当前处于 `重构` 分支，正在按 [ADR-0003](docs/adr/0003-electron-refactoring.md) 从 Claude Code Skills 迁移到 Electron + Pi Agent SDK 桌面应用。结构会随重构推进变化，更新本段时请同步。
+
 ```
 yourcrush/
-├── .claude/                        # Claude Code 配置目录
-│   └── skills/                     # Pi Agent Skills（底层代理框架）
-│       ├── create-crush/           # 角色创建工具
-│       │   ├── prompts/            # 分析和构建 Prompt
-│       │   │   ├── intake.md       # 输入收集
-│       │   │   ├── memory_analyzer.md  # 记忆分析
-│       │   │   ├── memory_builder.md   # 记忆构建
-│       │   │   ├── merger.md       # 合并器
-│       │   │   ├── persona_analyzer.md # 性格分析
-│       │   │   └── persona_builder.md  # 性格构建
-│       │   └── tools/              # 辅助脚本
-│       │       ├── day_pipeline.py     # Day 处理流水线
-│       │       ├── context_generator.py # 上下文生成器
-│       │       ├── persona_splitter.py  # 性格分割器
-│       │       ├── wechat_parser.py     # 微信聊天解析
-│       │       ├── qq_parser.py         # QQ 聊天解析
-│       │       ├── social_parser.py     # 社交媒体解析
-│       │       ├── photo_analyzer.py    # 照片分析
-│       │       ├── intimate_extractor.py # 亲密内容提取
-│       │       ├── skill_writer.py      # Skill 写入器
-│       │       ├── day_checker.py       # Day 检查器
-│       │       ├── day_updater.py       # Day 更新器
-│       │       ├── pre_write_check.py   # 写入前检查
-│       │       ├── wordcount.py         # 字数统计
-│       │       ├── version_manager.py   # 版本管理
-│       │       └── fix_*.py             # 各种修复脚本
-│       ├── create-user/            # 用户档案创建
-│       ├── day/                    # 日常写作（含碎片日记）
-│       │   ├── SKILL.md            # Day Skill 配置
-│       │   └── fragments/          # 碎片日记配置
-│       │       ├── fragment_input.md       # 碎片输入指南
-│       │       ├── fragment_integrate.md   # 碎片整合指南
-│       │       ├── fragment_prompts.md     # 碎片 Prompt
-│       │       └── fragment_settings.md    # 碎片设置
-│       └── progress/               # 进度追踪
-│           └── SKILL.md            # Progress Skill 配置
-├── crushes/                        # 角色数据存储
-│   ├── TEMPLATE/                   # 空白模板
-│   │   ├── memory.md               # 关系记忆模板
-│   │   ├── persona.md              # 人物性格模板
-│   │   ├── meta.json               # 元数据模板
-│   │   ├── SKILL.md                # Skill 配置模板
-│   │   ├── CONTEXT.md              # 压缩上下文模板
-│   │   ├── WEEKDAY.md              # 星期速查表模板
-│   │   ├── PROMPT.md               # Prompt 记录模板
-│   │   ├── INTIMATE_KNOWLEDGE.md   # 亲密知识库模板
-│   │   ├── .intimate_config        # 亲密内容开关
-│   │   ├── memories/               # 聊天记录目录
-│   │   │   └── chats/
-│   │   └── plans/                  # 日程规划目录
-│   ├── example/                    # 示例角色
-│   └── demo/                       # 演示角色
-├── scripts/                        # 核心 Python 模块
-│   ├── fragment_models.py          # 碎片数据模型（Fragment、FragmentDay）
-│   ├── fragment_utils.py           # 工具函数（ID 生成、时间处理、验证）
-│   ├── fragment_state_machine.py   # 状态机（EDITABLE→READONLY_REGENERABLE→READONLY_FINAL）
-│   ├── fragment_manager.py         # 碎片管理器（CRUD、整合、乐观锁）
-│   ├── fragment_prompt_generator.py # Prompt 生成器（13种组合矩阵）
-│   ├── tag_recommender.py          # 标签推荐器（含降频策略）
-│   ├── blind_matcher.py            # Blind 模式匹配器（关键词+语义相似度）
-│   ├── init_template.py            # 初始化新角色模板
-│   └── toggle_intimate.py          # 亲密内容开关
-├── tags/                           # 标签库
-│   └── tag_library.json            # 环境标签和行为标签定义
-├── tests/                          # 测试文件
-│   └── test_fragment.py            # 碎片日记测试（77 项用例）
-├── docs/                           # 文档目录
-│   ├── SKILL_SYSTEM.md             # Skill 系统说明
-│   ├── WRITING_STANDARDS.md        # 写作标准规范
-│   ├── TEMPLATE_GUIDE.md           # 模板使用指南
-│   ├── CONFIGURATION.md            # 配置指南
-│   ├── PI_AGENT_REFERENCE.md       # Pi Agent 参考文档
-│   └── features/                   # 功能 PRD
-│       ├── fragment-journal-prd.md # 碎片日记 PRD
-│       └── relationship-progress-prd.md # 关系进展 PRD
-├── examples/                       # 示例目录
-│   └── demo/                       # 演示数据
-│       ├── memories/               # 示例聊天记录
-│       └── plans/                  # 示例日程规划
-├── user/                           # 用户档案
-│   ├── profile.md                  # 用户性格档案
-│   └── writing_style.md            # 写作风格偏好
-├── .pi/                            # Pi Agent 配置目录
-│   └── skills/                     # 自定义扩展
-│       └── yourcrush/              # yourcrush 扩展
-├── yourcrush-client/               # Pi Agent 客户端（Node.js）
-│   └── node_modules/
-│       └── @earendil-works/        # Pi Agent 核心包
-│           ├── pi-agent-core/      # 代理核心（v0.78.0）
-│           ├── pi-ai/              # AI 模型集成
-│           ├── pi-coding-agent/    # 编码代理 CLI
-│           └── pi-tui/             # 终端 UI 库
-├── .github/                        # GitHub 配置
-│   └── workflows/
-│       └── ci.yml                  # CI/CD 配置
-├── README.md                       # 项目说明
-├── CONTRIBUTING.md                 # 贡献指南
-├── CODE_OF_CONDUCT.md              # 行为准则
-├── CONTENT_POLICY.md               # 内容政策
-├── SECURITY.md                     # 安全政策
-├── LICENSE                         # MIT 开源协议
-├── Dockerfile                      # Docker 配置
-├── docker-compose.yml              # Docker Compose 配置
-├── docker-run.sh                   # Docker 运行脚本
-└── .gitignore                      # Git 忽略规则
+├── src/                            # Electron 应用源码（TypeScript）
+│   ├── main/                       # 主进程
+│   │   ├── main.ts                 # 入口
+│   │   ├── ipc.ts                  # IPC 通信
+│   │   └── preload.ts              # 预加载脚本
+│   ├── renderer/                   # 渲染进程（React）
+│   │   ├── App.tsx                 # 应用根
+│   │   ├── main.tsx                # 渲染入口
+│   │   ├── index.html
+│   │   ├── pages/                  # 路由页面
+│   │   │   ├── CrushPage.tsx       # 角色页
+│   │   │   ├── DayPage.tsx         # 日间写作页
+│   │   │   ├── FragmentPage.tsx    # 碎片日记页
+│   │   │   ├── SettingsPage.tsx    # 设置页
+│   │   │   ├── UpdatePage.tsx      # 更新页
+│   │   │   └── HelpPage.tsx        # 帮助页
+│   │   ├── components/             # 组件
+│   │   │   ├── Layout.tsx / Sidebar.tsx
+│   │   │   ├── DayWriting/         # Day 写作组件
+│   │   │   └── WritingInput/       # 写作输入组件
+│   │   ├── stores/                 # Zustand 状态（crush/day/fragment store）
+│   │   ├── services/               # 业务服务（TypeScript，取代 Python 逻辑）
+│   │   │   ├── crushService.ts
+│   │   │   ├── dayService.ts
+│   │   │   └── fragmentService.ts
+│   │   └── hooks/
+│   ├── agent/                      # Pi Agent 集成
+│   │   ├── agent.ts                # 代理实例
+│   │   └── tools/                  # Agent 工具（crushTool / dayTool / fragmentTool）
+│   └── scripts/                    # 过渡用 Python 脚本（将逐步迁移到 src/renderer/services）
+│       ├── fragment/               # 碎片模块（外观模式：manager 委托 crud/locker/integrator/backup/storage）
+│       ├── day/ parsers/ utils/    # Day / 解析 / 工具
+│       ├── init_template.py        # 角色模板初始化
+│       └── toggle_intimate.py      # 亲密内容开关
+├── crushes/                        # 角色数据存储（运行时数据）
+│   ├── TEMPLATE/                   # 空白角色模板
+│   ├── example/  demo/             # 示例/演示角色
+├── tests/                          # 测试
+│   ├── unit/                       # 单元测试（test_crush / test_day / test_fragment）
+│   ├── integration/                # 集成测试（test_day_integration / test_fragment_integration）
+│   └── e2e/                        # Playwright 端到端（test_app.spec.ts）
+├── tags/                           # 标签库（tag_library.json）
+├── examples/                       # 示例数据（demo/memories、demo/plans）
+├── user/                           # 用户档案（profile.md、writing_style.md）
+├── docs/                           # 文档
+│   ├── adr/                        # 架构决策记录（0001~0003）
+│   ├── agents/                     # Agent 协作约定（issue-tracker / triage-labels / domain）
+│   ├── features/                   # 功能 PRD（fragment-journal-prd、relationship-progress-prd）
+│   ├── PI_AGENT_REFERENCE.md       # Pi Agent 参考
+│   ├── REFACTORING_PLAN.md         # 重构计划
+│   ├── CLIENT_STATUS.md            # 客户端实现状态
+│   ├── WRITING_STANDARDS.md        # 写作标准
+│   └── …
+├── .github/workflows/ci.yml        # CI/CD
+├── viewer/                         # Day 阅读器（单文件 HTML）
+├── dist/                           # 构建产物（.gitignore）
+├── release/                        # 打包输出
+├── package.json                    # 依赖（Electron 28 / React 18 / Pi Agent 0.78 / Zustand）
+├── vite.config.ts                  # 渲染进程构建
+├── tsconfig*.json                  # TypeScript 配置（base/main/node）
+├── electron-builder.yml            # 打包配置
+├── README.md / CONTRIBUTING.md / CONTENT_POLICY.md / SECURITY.md / LICENSE
+├── Dockerfile / docker-compose.yml # Docker 部署（旧形态，重构后评估是否保留）
+└── .gitignore
 ```
+
+**已删除（重构移除）**：`.claude/skills/`（create-crush / create-user / day / progress）、`yourcrush-client/`、顶层 `scripts/`、`.pi/`、`src/scripts/utils/date_utils.py`。
+
+**待清理 / 未跟踪**：`.agents/`、`.claude/skills/<开发工具>`（caveman、tdd、prototype 等第三方 skills，属开发工具，非项目业务）、`skills-lock.json`、`CONTEXT.md`（已纳入领域文档）。
 
 ### 数据流
 
@@ -452,17 +417,9 @@ for f in docs/*.md; do
 done
 ```
 
-### 角色管理
+### 角色管理（重构后）
 
-```bash
-# 初始化新角色模板
-python scripts/init_template.py --name "小明" --nickname "小雪" --slug "xiaoxue"
-
-# 切换亲密内容开关
-python scripts/toggle_intimate.py --slug "xiaoxue" --enable
-python scripts/toggle_intimate.py --slug "xiaoxue" --disable
-python scripts/toggle_intimate.py --slug "xiaoxue" --status
-```
+角色管理功能已迁移到 `yourcrush-client/src/services/` 目录，使用 TypeScript 实现。
 
 ### Skill 命令（Pi Agent）
 
@@ -516,10 +473,10 @@ const recordFragmentTool: AgentTool = {
     behavior_tags: Type.Array(Type.String(), { description: "行为标签" }),
   }),
   execute: async (toolCallId, params, signal, onUpdate) => {
-    // 调用 Python 脚本处理碎片
-    const result = await execPythonScript("scripts/fragment_manager.py", params);
+    // 重构后：直接使用 TypeScript 服务处理碎片
+    // const result = await fragmentManager.record(params);
     return {
-      content: [{ type: "text", text: result }],
+      content: [{ type: "text", text: "碎片已记录" }],
       details: { success: true },
     };
   },
@@ -635,35 +592,25 @@ agent.reset();
 - 日期状态自动计算：IN_PROGRESS → UNFINISHED → EXPIRED
 - 已完成状态不可逆
 
-### Pi Agent 与 Python 脚本集成
+### Pi Agent 与 TypeScript 服务集成
 
-Pi Agent（TypeScript/Node.js）与 Python 脚本通过子进程调用集成：
+Pi Agent（TypeScript/Node.js）直接调用 TypeScript 服务，无需 Python 桥接：
 
 ```typescript
-import { exec } from "child_process";
-import { promisify } from "util";
+// 重构后：直接使用 TypeScript 服务
+import { FragmentManager } from './services/fragment-manager';
+import { WritingService } from './services/writing-service';
 
-const execAsync = promisify(exec);
-
-async function execPythonScript(scriptPath: string, params: any): Promise<string> {
-  const paramsJson = JSON.stringify(params);
-  const command = `python ${scriptPath} --params '${paramsJson}'`;
-
-  const { stdout, stderr } = await execAsync(command);
-
-  if (stderr) {
-    throw new Error(`Python script error: ${stderr}`);
-  }
-
-  return stdout;
-}
+// 初始化服务
+const fragmentManager = new FragmentManager();
+const writingService = new WritingService();
 
 // 在工具中使用
 const recordFragmentTool: AgentTool = {
   name: "record_fragment",
   description: "记录碎片日记",
   execute: async (toolCallId, params) => {
-    const result = await execPythonScript("scripts/fragment_manager.py", {
+    const result = await fragmentManager.record({
       action: "record",
       crush_slug: params.crush_slug,
       fragment_data: params.fragment_data,
@@ -674,10 +621,10 @@ const recordFragmentTool: AgentTool = {
 ```
 
 **集成要点**：
-- Python 脚本负责数据处理和业务逻辑
-- Pi Agent 负责对话管理和工具编排
-- 通过 JSON 格式传递参数和结果
-- 错误通过 stderr 和异常处理机制传递
+- 所有业务逻辑使用 TypeScript 实现
+- Pi Agent 直接调用 TypeScript 服务
+- 类型安全，IDE 支持更好
+- 无需 Python 运行时依赖
 
 ### Pi Agent 扩展系统
 
@@ -761,6 +708,45 @@ grep -r "小明\|xiaoming\|李薇" . --include="*.py" --include="*.md" --include
 
 - 禁止硬编码 Day 数字或具体日期
 - 时间线必须通过动态计算得出
+
+---
+
+## Git 与 PR 规则
+
+**安全操作，可验证结果。**
+
+必须：
+- 解决合并冲突后，必须读取冲突文件验证解决结果
+- 提交后运行 `git diff HEAD~1 --stat` 验证实际提交了什么
+- `.gitignore` 必须包含：`node_modules/`、`*.tgz`、`dist/`、`out/`、`__pycache__/`
+- 分支命名：`feature/*`、`fix/*`、`refactor/*`
+
+禁止：
+- 用 `git rebase` 删除文件或修改 PR 内容——用新 commit
+- 在没有检查现有 PR 的情况下创建重复 PR
+- force push 到 master/main 分支
+- 提交包含敏感信息（密钥、token、密码）
+
+当 Git 操作复杂度超过简单 commit/push 时：
+- 先说明计划，再执行
+- 如果 rebase/冲突解决失败超过 2 次，停下来让我手动处理
+- 永远不要在我不知情的情况下 force push
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues（leaves899/yourlovestory）. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+使用默认标签：needs-triage、needs-info、ready-for-agent、ready-for-human、wontfix. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — 一个 CONTEXT.md + docs/adr/ 在项目根目录. See `docs/agents/domain.md`.
 
 ---
 

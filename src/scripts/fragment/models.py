@@ -203,6 +203,14 @@ MOOD_DISPLAY = {
     None: "未选择"
 }
 
+# 情绪修饰符（用于 Prompt 生成）
+MOOD_MODIFIERS = {
+    "positive": "开心",
+    "negative": "在意",
+    "neutral": "日常",
+    "mixed": "心情复杂"
+}
+
 # 写作模式显示文本
 WRITING_MODE_DISPLAY = {
     "raw": "Raw",
@@ -218,6 +226,20 @@ DIRECTION_OPTIONS = [
     {"id": "deep", "name": "想深入的", "description": "展开聊聊这个话题"}
 ]
 
+# 方向 Prompt（用于 Prompt 生成）
+DIRECTION_PROMPTS = {
+    "轻松的": "记录一些日常小事",
+    "有些在意的": "说说那些让你在意的事",
+    "想深入的": "展开聊聊这个话题"
+}
+
+# 方向→情绪推荐映射
+DIRECTION_MOOD_MAP = {
+    "轻松的": "positive",
+    "有些在意的": "negative",
+    "想深入的": "mixed"
+}
+
 # Themed 模式主题选项
 THEME_OPTIONS = [
     {"id": "work_study", "name": "工作/学习", "description": "与工作、学习相关的互动"},
@@ -230,11 +252,16 @@ THEME_OPTIONS = [
     {"id": "reconcile", "name": "和好/道歉", "description": "和好、道歉相关"}
 ]
 
-# 方向→情绪推荐映射
-DIRECTION_MOOD_MAP = {
-    "轻松的": "positive",
-    "有些在意的": "negative",
-    "想深入的": "mixed"
+# 主题 Prompt（用于 Prompt 生成）
+THEME_PROMPTS = {
+    "工作/学习": "与工作、学习相关的互动",
+    "生活日常": "日常生活中的小事",
+    "约会/出行": "约会、外出相关的场景",
+    "情感交流": "深入的情感对话",
+    "兴趣爱好": "与兴趣、爱好相关",
+    "节日/纪念日": "节日、纪念日相关",
+    "争吵/误会": "冲突、误会相关",
+    "和好/道歉": "和好、道歉相关"
 }
 
 
