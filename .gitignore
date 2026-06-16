@@ -49,6 +49,7 @@ electron_err.txt
 electron_out.txt
 
 # Build outputs
+release/
 yourcrush-client/out/
 yourcrush-client/release/
 yourcrush-client/electron-*.tgz
