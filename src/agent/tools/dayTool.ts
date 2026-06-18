@@ -1,11 +1,10 @@
 import { Type } from 'typebox'
-import { runPython, buildArgs } from '@/shared/pythonRunner'
+import { generateDay } from '@/shared/day/dayService'
 
 /**
  * 日常写作工具 - 运行日常写作流水线
  *
- * 调用 src.scripts.day.service 的 generate action（与 IPC 的 day:generate 入口一致）。
- * 底层 spawn 逻辑见 src/shared/pythonRunner.ts（全项目唯一实现）。
+ * 直接调用 TS dayService.generateDay（不再 spawn Python）。
  */
 export const dayTool = {
   name: 'day_writer',
@@ -25,32 +24,16 @@ export const dayTool = {
   }),
   execute: async (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
     try {
-      const result = await runPython(
-        'src.scripts.day.service',
-        buildArgs({
-          action: 'generate',
-          slug: params.slug,
-          day_number: params.day_number,
-          summary: params.summary,
-          sex_count: params.sex_count,
-          sex_details: params.sex_details,
-          handwriting: params.handwriting,
-          ycm_pill: params.ycm_pill,
-        }),
-        { signal }
-      )
-
-      if (result.stderr) {
-        console.warn('Day tool warning:', result.stderr)
-      }
+      const projectRoot = process.cwd()
+      const result = generateDay(projectRoot, params)
 
       return {
-        content: [{ type: 'text', text: result.stdout }],
-        details: { success: result.exitCode === 0 },
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        details: { success: result.success },
       }
     } catch (error: any) {
       return {
-        content: [{ type: 'text', text: `错误: ${error.message}` }],
+        content: [{ type: 'text' as const, text: `错误: ${error.message}` }],
         details: { success: false, error: error.message },
       }
     }

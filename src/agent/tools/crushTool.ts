@@ -61,12 +61,12 @@ export const crushTool = {
       }
 
       return {
-        content: [{ type: 'text', text: JSON.stringify(result) }],
+        content: [{ type: 'text' as const, text: JSON.stringify(result) }],
         details: { success: result.success === true },
       }
     } catch (error: any) {
       return {
-        content: [{ type: 'text', text: `错误: ${error.message}` }],
+        content: [{ type: 'text' as const, text: `错误: ${error.message}` }],
         details: { success: false, error: error.message },
       }
     }

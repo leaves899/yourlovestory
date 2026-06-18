@@ -153,7 +153,7 @@ projectName/
 
 ### 技术栈
 
-- **Python 3.9+** - 脚本和解析器
+- **TypeScript** - 全量业务逻辑（详见 [ADR-0004](docs/adr/0004-python-ts-migration.md)，Python 运行时已移除）
 - **Pi Agent** - 底层代理框架（[GitHub](https://github.com/earendil-works/pi)）
 - **JSON** - 数据存储（碎片日记、元数据）
 - **Markdown** - 文档和角色数据（memory.md、persona.md）
@@ -264,7 +264,7 @@ const readFileTool: AgentTool = {
 
 **配置文件 / 数据目录**：
 - `src/agent/` - Pi Agent 实例与工具（crushTool / dayTool / fragmentTool）
-- `src/scripts/` - Python 业务脚本（碎片模块等，过渡层）
+- `src/shared/` - 纯 TS 业务逻辑（crush/day/fragment/persistence，取代原 Python 脚本，见 ADR-0004）
 - `crushes/<slug>/` - 角色数据存储
 
 **Pi Agent 版本**：0.78.0（@earendil-works/pi-agent-core）
@@ -273,14 +273,14 @@ const readFileTool: AgentTool = {
 
 ### 项目结构
 
-> 当前处于 `重构` 分支，正在按 [ADR-0003](docs/adr/0003-electron-refactoring.md) 从 Claude Code Skills 迁移到 Electron + Pi Agent SDK 桌面应用。结构会随重构推进变化，更新本段时请同步。
+> 重构已完成（[ADR-0003](docs/adr/0003-electron-refactoring.md) Electron 化 + [ADR-0004](docs/adr/0004-python-ts-migration.md) 全量迁 TS）。业务逻辑无 Python 运行时。
 
 ```
 yourcrush/
 ├── src/                            # Electron 应用源码（TypeScript）
 │   ├── main/                       # 主进程
 │   │   ├── main.ts                 # 入口
-│   │   ├── ipc.ts                  # IPC 通信
+│   │   ├── ipc.ts                  # IPC 通信（直接调 src/shared，无子进程）
 │   │   └── preload.ts              # 预加载脚本
 │   ├── renderer/                   # 渲染进程（React）
 │   │   ├── App.tsx                 # 应用根
@@ -298,30 +298,30 @@ yourcrush/
 │   │   │   ├── DayWriting/         # Day 写作组件
 │   │   │   └── WritingInput/       # 写作输入组件
 │   │   ├── stores/                 # Zustand 状态（crush/day/fragment store）
-│   │   ├── services/               # 业务服务（TypeScript，取代 Python 逻辑）
+│   │   ├── services/               # 渲染进程业务服务（IPC 薄封装）
 │   │   │   ├── crushService.ts
 │   │   │   ├── dayService.ts
 │   │   │   └── fragmentService.ts
 │   │   └── hooks/
 │   ├── agent/                      # Pi Agent 集成
 │   │   ├── agent.ts                # 代理实例
-│   │   └── tools/                  # Agent 工具（crushTool / dayTool / fragmentTool）
-│   └── scripts/                    # 过渡用 Python 脚本（将逐步迁移到 src/shared，见 ADR-0004）
-│       ├── fragment/               # 碎片模块（外观模式：manager 委托 crud/locker/integrator/backup/storage）
-│       ├── day/ utils/             # Day / 工具
-│       └── init_template.py        # 角色模板初始化
+│   │   └── tools/                  # Agent 工具（crushTool / dayTool / fragmentTool，均调 src/shared）
+│   └── shared/                     # 纯 TS 业务逻辑（取代原 Python 脚本，见 ADR-0004）
+│       ├── crush/crushStore.ts     # 角色 CRUD
+│       ├── day/dayService.ts       # Day 叙事管理
+│       ├── fragment/               # 碎片模块（外观：manager 委托 crud/locker/integrator/backup/storage/state_machine/utils/models/prompt_generator/tag_recommender/blind_matcher）
+│       └── persistence/            # settingsStore / intimateToggle
 ├── crushes/                        # 角色数据存储（运行时数据）
 │   ├── TEMPLATE/                   # 空白角色模板
 │   ├── example/  demo/             # 示例/演示角色
-├── tests/                          # 测试
-│   ├── unit/                       # 单元测试（test_crush / test_day / test_fragment）
-│   ├── integration/                # 集成测试（test_day_integration / test_fragment_integration）
-│   └── e2e/                        # Playwright 端到端（test_app.spec.ts）
+├── tests/                          # 测试（jest + Playwright）
+│   ├── shared/                     # 单元测试（crushStore / dayService / settingsStore + fragment 子模块）
+│   └── e2e/                        # Playwright 端到端（test_app.spec.ts，mock-electron-api 拦截 IPC）
 ├── tags/                           # 标签库（tag_library.json）
 ├── examples/                       # 示例数据（demo/memories、demo/plans）
 ├── user/                           # 用户档案（profile.md、writing_style.md）
 ├── docs/                           # 文档
-│   ├── adr/                        # 架构决策记录（0001~0003）
+│   ├── adr/                        # 架构决策记录（0001~0004）
 │   ├── agents/                     # Agent 协作约定（issue-tracker / triage-labels / domain）
 │   ├── features/                   # 功能 PRD（fragment-journal-prd、relationship-progress-prd）
 │   ├── PI_AGENT_REFERENCE.md       # Pi Agent 参考
@@ -329,7 +329,7 @@ yourcrush/
 │   ├── CLIENT_STATUS.md            # 客户端实现状态
 │   ├── WRITING_STANDARDS.md        # 写作标准
 │   └── …
-├── .github/workflows/ci.yml        # CI/CD
+├── .github/workflows/ci.yml        # CI/CD（lint + test:cli + tsc + e2e，无 Python）
 ├── viewer/                         # Day 阅读器（单文件 HTML）
 ├── dist/                           # 构建产物（.gitignore）
 ├── release/                        # 打包输出
@@ -342,7 +342,7 @@ yourcrush/
 └── .gitignore
 ```
 
-**已删除（重构移除）**：`.claude/skills/`（create-crush / create-user / day / progress）、`yourcrush-client/`、顶层 `scripts/`、`.pi/`、`src/scripts/utils/date_utils.py`。
+**已删除（重构移除）**：`.claude/skills/`（create-crush / create-user / day / progress）、`yourcrush-client/`、顶层 `scripts/`、`.pi/`、`src/scripts/`（Python 业务脚本，已由 `src/shared/` 取代）、`src/shared/pythonRunner.ts`（TS→Python 桥接，迁移完成已删）。
 
 **待清理 / 未跟踪**：`.agents/`、`.claude/skills/<开发工具>`（caveman、tdd、prototype 等第三方 skills，属开发工具，非项目业务）、`skills-lock.json`、`CONTEXT.md`（已纳入领域文档）。
 
@@ -387,31 +387,37 @@ READONLY_FINAL（只读，不可修改）
 ### 测试
 
 ```bash
-# 运行所有测试
-pytest
+# 运行所有单元测试（jest，覆盖 src/shared 各模块）
+npm test
 
 # 运行单个测试文件
-pytest tests/test_fragment.py
+npx jest tests/shared/fragment/crud.test.ts
 
-# 运行特定测试函数
-pytest tests/test_fragment.py::test_fragment_utils
+# 运行特定测试套件
+npx jest --testNamePattern="降频策略"
+
+# 端到端测试（Playwright）
+npm run test:e2e
 ```
 
-### 语法检查
+### 类型检查
 
 ```bash
-# 检查单个 Python 文件语法
-python -m py_compile scripts/fragment_models.py
+# 主进程类型检查（CI 也跑此命令）
+npx tsc --noEmit -p tsconfig.main.json
 
-# 检查所有 Python 文件
-find . -name "*.py" -exec python -m py_compile {} \;
+# 全量类型检查
+npx tsc --noEmit -p tsconfig.json
 ```
 
 ### Lint 检查
 
 ```bash
+# ESLint
+npm run lint
+
 # 检查是否有私密信息泄露
-grep -r "小明\|xiaoming\|李薇" . --include="*.py" --include="*.md" --include="*.yml"
+grep -r "小明\|xiaoming\|李薇" . --include="*.ts" --include="*.md" --include="*.yml"
 
 # 检查 Markdown 格式
 for f in docs/*.md; do
@@ -566,12 +572,12 @@ agent.reset();
 
 ## 代码规范
 
-### Python 代码
+### TypeScript 代码
 
-- 遵循 PEP 8 规范
-- 使用类型注解（typing）
-- 数据类使用 `@dataclass` 装饰器
-- 枚举类使用 `Enum` 基类
+- 遵循项目 ESLint 规则
+- 严格类型（`strict: true`），避免 `any`，业务模块用接口/联合类型建模
+- 数据结构用 `interface`，枚举用字符串联合类型（等价原 Python Enum）
+- 单一职责，模块按 `src/shared/<域>/` 划分
 
 ### 文档规范
 
@@ -581,7 +587,8 @@ agent.reset();
 
 ### 提交规范
 
-- 提交前运行 `python -m py_compile` 检查语法
+- 提交前运行 `npx tsc --noEmit -p tsconfig.main.json` 类型检查
+- 提交前运行 `npm test` 确保单测绿色
 - 提交前运行 `grep` 检查私密信息
 - 分支命名：`feature/*`、`fix/*`
 
@@ -612,11 +619,11 @@ agent.reset();
 
 Pi Agent（`src/agent/agent.ts`）注册三个工具：`crushTool`、`dayTool`、`fragmentTool`（均在 `src/agent/tools/`）。
 
-**当前实现（过渡态）**：Agent 工具通过 `child_process.spawn` 调用 Python 脚本，Python 仍是碎片逻辑的实际承载体：
+**当前实现（纯 TS，无子进程）**：Agent 工具直接调用 `src/shared/` 下的 TS 业务模块，无 Python 桥接（见 [ADR-0004](docs/adr/0004-python-ts-migration.md)）：
 
 ```typescript
 // src/agent/tools/fragmentTool.ts（简化）
-import { spawn } from 'child_process'
+import { managerRecordFragment, ... } from '@/shared/fragment/manager'
 
 const fragmentTool = {
   name: 'fragment_manager',
@@ -624,17 +631,14 @@ const fragmentTool = {
   parameters: Type.Object({ action: Type.Union([...]), slug: Type.String({...}), ... }),
   execute: async (toolCallId, params, signal, onUpdate) => {
     // signal 和 onUpdate 均为可选参数
-    const scriptPath = path.join(process.cwd(), 'src', 'scripts', 'fragment', 'manager.py')
-    const args = [scriptPath, '--action', params.action, '--slug', params.slug, ...]
-    const child = spawn('python', args, { shell: false })  // shell:false 防注入
-    // ...收集 stdout/stderr
+    const projectRoot = process.cwd()
+    const result = managerRecordFragment(projectRoot, params.slug, { ... })
+    return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], details: { success: ... } }
   },
 }
 ```
 
-UI 侧则通过 IPC 调用主进程（`src/main/ipc.ts`），渲染进程的 `fragmentService.ts` 是对 `window.electronAPI.*` 的薄封装。
-
-> ⚠️ **与 ADR-0003 的差距**：ADR-0003 设想「Python 逻辑全部重写为 TypeScript、无 Python 桥接」，但当前实现仍是 TS→spawn→Python 的桥接形态。全转 TS 是待办事项，在此期间 Python 模块（`src/scripts/fragment/`）需保持可用且测试绿色。
+UI 侧则通过 IPC 调用主进程（`src/main/ipc.ts`），渲染进程的 `fragmentService.ts` 是对 `window.electronAPI.*` 的薄封装。ipc handler 同样直接调 `src/shared/`，与 Agent 工具共用同一套 TS 业务逻辑。
 
 ### Pi Agent 扩展系统
 
@@ -695,7 +699,7 @@ pi.registerCommand("record-fragment", {
 
 提交前运行：
 ```bash
-grep -r "小明\|xiaoming\|李薇" . --include="*.py" --include="*.md" --include="*.yml"
+grep -r "小明\|xiaoming\|李薇" . --include="*.ts" --include="*.tsx" --include="*.md" --include="*.yml"
 ```
 
 应返回空（CONTRIBUTING.md 和 ci.yml 中的检测模式除外）。
@@ -783,8 +787,7 @@ Single-context — 一个 CONTEXT.md + docs/adr/ 在项目根目录. See `docs/a
 - **docs/features/fragment-journal-prd.md**: 碎片日记 PRD
 
 ### 外部依赖
-- **Python 3.9+**: 脚本运行环境
-- **Node.js 22.19.0+**: Pi Agent 运行环境
+- **Node.js 22.19.0+**: Electron + Pi Agent 运行环境（业务逻辑无 Python 依赖）
 - **Anthropic Claude**: 默认 LLM 提供商
 - **OpenAI GPT**: 备选 LLM 提供商
 - **Google Gemini**: 备选 LLM 提供商

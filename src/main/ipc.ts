@@ -1,5 +1,4 @@
 import { ipcMain, app } from 'electron'
-import { runPython, buildArgs, parsePythonJSON } from '@/shared/pythonRunner'
 import { getSettings, updateSettings } from '@/shared/persistence/settingsStore'
 import {
   createCrush,
@@ -8,84 +7,78 @@ import {
   updateCrush,
   deleteCrush,
 } from '@/shared/crush/crushStore'
-
-/**
- * 统一调用 Python 业务模块并包装成 IPC 返回契约。
- *
- * 返回 { success: true, data } / { success: false, errors }，
- * 渲染进程依赖此结构，勿改。底层 spawn 逻辑见 src/shared/pythonRunner.ts。
- *
- * 业务失败时 Python 仍可能 exit 1 但 stdout 含 {success:false} JSON，
- * 故优先 parsePythonJSON：成功即返回 data；解析失败或无 JSON 则回退到 stderr/exitCode。
- */
-async function callPython(
-  modulePath: string,
-  params: Record<string, any>
-): Promise<{ success: boolean; data?: any; errors?: string[] }> {
-  try {
-    const result = await runPython(modulePath, buildArgs(params), {
-      cwd: app.getAppPath(),
-    })
-    try {
-      const data = parsePythonJSON(result.stdout)
-      return { success: true, data }
-    } catch {
-      return {
-        success: false,
-        errors: [result.stderr || `Python exit ${result.exitCode}`],
-      }
-    }
-  } catch (error: any) {
-    return { success: false, errors: [error.message] }
-  }
-}
+import {
+  generateDay,
+  listDays,
+  getDay,
+  updateDay,
+  deleteDay,
+} from '@/shared/day/dayService'
+import {
+  managerRecordFragment,
+  getFragmentsByDate,
+  getFragment,
+  managerUpdateFragment,
+  managerDeleteFragment,
+  managerIntegrateFragments,
+} from '@/shared/fragment/manager'
 
 export function setupIPC() {
-  // 日常写作
-  ipcMain.handle('day:generate', (_, params) =>
-    callPython('src.scripts.day.service', { action: 'generate', ...params })
+  // 日常写作（已迁移到 TS dayService）
+  ipcMain.handle('day:generate', async (_, params) =>
+    generateDay(app.getAppPath(), params)
   )
 
-  ipcMain.handle('day:list', (_, params) =>
-    callPython('src.scripts.day.service', { action: 'list', ...params })
+  ipcMain.handle('day:list', async (_, params) =>
+    listDays(app.getAppPath(), params)
   )
 
-  ipcMain.handle('day:get', (_, params) =>
-    callPython('src.scripts.day.service', { action: 'get', ...params })
+  ipcMain.handle('day:get', async (_, params) =>
+    getDay(app.getAppPath(), params)
   )
 
-  ipcMain.handle('day:update', (_, params) =>
-    callPython('src.scripts.day.service', { action: 'update', ...params })
+  ipcMain.handle('day:update', async (_, params) =>
+    updateDay(app.getAppPath(), params)
   )
 
-  ipcMain.handle('day:delete', (_, params) =>
-    callPython('src.scripts.day.service', { action: 'delete', ...params })
+  ipcMain.handle('day:delete', async (_, params) =>
+    deleteDay(app.getAppPath(), params)
   )
 
-  // 碎片日记
-  ipcMain.handle('fragment:record', (_, params) =>
-    callPython('src.scripts.fragment.manager', { action: 'record', ...params })
+  // 碎片日记（已迁移到 TS fragment 模块，不再走 Python 子进程）
+  // date 作为 currentDate（状态判断/文件定位基准）传入，与 Python ipc 行为等价；
+  // 不传时 recordFragment 内部退化为今天。
+  ipcMain.handle('fragment:record', async (_, params) => {
+    const { date, ...fragmentData } = params
+    return managerRecordFragment(app.getAppPath(), params.slug, fragmentData, date)
+  })
+
+  ipcMain.handle('fragment:list', async (_, params) => ({
+    success: true,
+    data: getFragmentsByDate(app.getAppPath(), params.slug, params.date ?? new Date().toISOString().slice(0, 10)),
+  }))
+
+  ipcMain.handle('fragment:get', async (_, params) => {
+    const fragment = getFragment(app.getAppPath(), params.fragment_id)
+    return fragment
+      ? { success: true, data: fragment }
+      : { success: false, errors: ['碎片不存在'] }
+  })
+
+  ipcMain.handle('fragment:update', async (_, params) =>
+    managerUpdateFragment(app.getAppPath(), params.fragment_id, params, params.expected_version ?? 1)
   )
 
-  ipcMain.handle('fragment:list', (_, params) =>
-    callPython('src.scripts.fragment.manager', { action: 'list', ...params })
+  ipcMain.handle('fragment:delete', async (_, params) =>
+    managerDeleteFragment(app.getAppPath(), params.fragment_id, params.expected_version ?? 1)
   )
 
-  ipcMain.handle('fragment:get', (_, params) =>
-    callPython('src.scripts.fragment.manager', { action: 'get', ...params })
-  )
-
-  ipcMain.handle('fragment:update', (_, params) =>
-    callPython('src.scripts.fragment.manager', { action: 'update', ...params })
-  )
-
-  ipcMain.handle('fragment:delete', (_, params) =>
-    callPython('src.scripts.fragment.manager', { action: 'delete', ...params })
-  )
-
-  ipcMain.handle('fragment:integrate', (_, params) =>
-    callPython('src.scripts.fragment.manager', { action: 'integrate', ...params })
-  )
+  ipcMain.handle('fragment:integrate', async (_, params) => ({
+    success: true,
+    data: {
+      prompt: managerIntegrateFragments(app.getAppPath(), params.slug, params.date ?? new Date().toISOString().slice(0, 10)),
+    },
+  }))
 
   // 角色管理（已迁移到 TS crushStore，不再走 Python 子进程）
   ipcMain.handle('crush:create', async (_, params) =>
