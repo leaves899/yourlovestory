@@ -29,29 +29,31 @@ intimate=false  # 关闭
 
 ## 启用/禁用亲密模块 / Enable/Disable Intimate Module
 
-### 命令行方式
+### 手动方式 / Manual Method
+
+原 Python CLI 工具 `toggle_intimate.py` 已迁移为 TypeScript 实现
+（`src/shared/persistence/intimateToggle.ts`），命令行入口不再保留。
+直接编辑 `.intimate_config` 文件即可：
+
+The original Python CLI tool `toggle_intimate.py` has been migrated to TypeScript
+(`src/shared/persistence/intimateToggle.ts`); the CLI entry is no longer provided.
+Edit `.intimate_config` directly instead:
 
 ```bash
-# 启用亲密内容
-python scripts/toggle_intimate.py --slug "xiaoxue" --enable
-
-# 禁用亲密内容
-python scripts/toggle_intimate.py --slug "xiaoxue" --disable
-
-# 查看当前状态
-python scripts/toggle_intimate.py --slug "xiaoxue" --status
-```
-
-### 手动方式
-
-直接编辑 `.intimate_config` 文件：
-
-```bash
-# 开启
+# 开启 / Enable
 echo "intimate=true" > crushes/<slug>/.intimate_config
 
-# 关闭
+# 关闭 / Disable
 echo "intimate=false" > crushes/<slug>/.intimate_config
+```
+
+### 配置文件格式 / Config File Format
+
+`.intimate_config` 文件内容（兼容旧格式）：
+
+```bash
+intimate=true   # 开启 / enabled
+intimate=false  # 关闭 / disabled
 ```
 
 ---
@@ -190,21 +192,10 @@ intimate=false  # disabled
 
 ## Enable/Disable Intimate Module
 
-### Command Line Method
-
-```bash
-# Enable intimate content
-python scripts/toggle_intimate.py --slug "xiaoxue" --enable
-
-# Disable intimate content
-python scripts/toggle_intimate.py --slug "xiaoxue" --disable
-
-# Check current status
-python scripts/toggle_intimate.py --slug "xiaoxue" --status
-```
-
 ### Manual Method
 
+The original Python CLI tool `toggle_intimate.py` has been migrated to TypeScript
+(`src/shared/persistence/intimateToggle.ts`); the CLI entry is no longer provided.
 Edit `.intimate_config` directly:
 
 ```bash

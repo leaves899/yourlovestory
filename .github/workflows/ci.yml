@@ -21,20 +21,64 @@ jobs:
         run: |
           find . -name "*.py" -exec python -m py_compile {} \;
 
-  test-scripts:
+  test-cli:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
-      - name: Test toggle_intimate.py --help
+          python-version: '3.9'
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run CLI contract tests
+        run: npm run test:cli
+      - name: Cleanup test data
+        if: always()
         run: |
-          cd scripts && python toggle_intimate.py --help
-      - name: Test init_template.py --help
-        run: |
-          cd scripts && python init_template.py --help
+          find crushes -maxdepth 1 -name 'smoke_*' -type d -exec rm -rf {} + 2>/dev/null || true
+
+  test-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+      - name: Run E2E tests
+        run: npm run test:e2e
+      - name: Upload trace on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+
+  test-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Install pytest
+        run: pip install pytest
+      - name: Run Python unit tests
+        run: pytest tests/unit/ -v
+      - name: Run Python integration tests
+        run: pytest tests/integration/ -v
 
   markdown-lint:
     runs-on: ubuntu-latest

@@ -1,11 +1,10 @@
 import { Type } from 'typebox'
-import { spawn } from 'child_process'
-import path from 'path'
+import { runPython, buildArgs } from '@/shared/pythonRunner'
 
 /**
  * 碎片日记工具 - 支持 CRUD 操作
  *
- * 使用 spawn 替代 exec 防止命令注入
+ * 底层 spawn 逻辑见 src/shared/pythonRunner.ts（全项目唯一实现）。
  */
 export const fragmentTool = {
   name: 'fragment_manager',
@@ -48,42 +47,22 @@ export const fragmentTool = {
     env_tags: Type.Optional(Type.Array(Type.String(), { description: '环境标签' })),
     behavior_tags: Type.Optional(Type.Array(Type.String(), { description: '行为标签' })),
   }),
-  execute: async (toolCallId: string, params: any, signal: AbortSignal, onUpdate: any) => {
+  execute: async (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
     try {
-      // 使用 spawn 替代 exec，防止命令注入
-      const scriptPath = path.join(process.cwd(), 'src', 'scripts', 'fragment', 'manager.py')
-      const args = [scriptPath, '--action', params.action, '--slug', params.slug]
-
-      if (params.fragment_id) args.push('--fragment-id', params.fragment_id)
-      if (params.origin) args.push('--origin', params.origin)
-      if (params.mood) args.push('--mood', params.mood)
-      if (params.content) args.push('--content', params.content)
-      if (params.env_tags) args.push('--env-tags', JSON.stringify(params.env_tags))
-      if (params.behavior_tags) args.push('--behavior-tags', JSON.stringify(params.behavior_tags))
-
-      const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-        const child = spawn('python', args, { shell: false, signal })
-        let stdout = ''
-        let stderr = ''
-
-        child.stdout.on('data', (data) => {
-          stdout += data.toString()
-        })
-
-        child.stderr.on('data', (data) => {
-          stderr += data.toString()
-        })
-
-        child.on('close', (code) => {
-          if (code !== 0) {
-            reject(new Error(stderr || `Process exited with code ${code}`))
-          } else {
-            resolve({ stdout, stderr })
-          }
-        })
-
-        child.on('error', reject)
-      })
+      const result = await runPython(
+        'src.scripts.fragment.manager',
+        buildArgs({
+          action: params.action,
+          slug: params.slug,
+          fragment_id: params.fragment_id,
+          origin: params.origin,
+          mood: params.mood,
+          content: params.content,
+          env_tags: params.env_tags,
+          behavior_tags: params.behavior_tags,
+        }),
+        { signal }
+      )
 
       if (result.stderr) {
         console.warn('Fragment tool warning:', result.stderr)
@@ -91,7 +70,7 @@ export const fragmentTool = {
 
       return {
         content: [{ type: 'text', text: result.stdout }],
-        details: { success: true },
+        details: { success: result.exitCode === 0 },
       }
     } catch (error: any) {
       return {

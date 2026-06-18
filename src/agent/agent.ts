@@ -8,9 +8,12 @@ import { crushTool } from './tools/crushTool'
  * Pi Agent 实例
  *
  * 配置：
-- 并行执行工具
-- 中等思考深度
-- 使用 Anthropic Claude 模型
+ * - 并行执行工具
+ * - 中等思考深度
+ * - 使用 Anthropic Claude Sonnet 4 模型
+ *
+ * 注意：streamFn 使用默认的 streamSimple（从 @earendil-works/pi-ai 自动加载），
+ * 需通过 ANTHROPIC_API_KEY 环境变量提供 API 密钥。
  */
 const agent = new Agent({
   initialState: {
@@ -42,8 +45,16 @@ agent.subscribe((event) => {
     case 'message_start':
       console.log('开始处理消息...')
       break
-    case 'message_update':
-      process.stdout.write(event.assistantMessageEvent.delta)
+    case 'message_update': {
+      // AssistantMessageEvent 是联合类型，delta 只在 text_delta/thinking_delta 子类型上存在
+      const e = event.assistantMessageEvent
+      if (e.type === 'text_delta') {
+        process.stdout.write(e.delta)
+      }
+      break
+    }
+    case 'message_end':
+      // 消息完成
       break
     case 'tool_execution_start':
       console.log(`执行工具: ${event.toolName}`)

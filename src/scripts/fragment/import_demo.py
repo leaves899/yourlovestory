@@ -52,7 +52,7 @@ def main():
     print("  3. Start writing: claude skill run day")
     print()
     print("  Create your own character:")
-    print('  python scripts/init_template.py --name "Name" --nickname "Nick" --slug "your-slug"')
+    print("  （通过应用内 UI 创建角色，或参考 src/shared/crush/crushStore.ts）")
 
     return 0
 

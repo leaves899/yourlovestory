@@ -213,7 +213,11 @@ const agent = new Agent({
 // 事件订阅
 agent.subscribe((event) => {
   if (event.type === "message_update") {
-    // 处理流式更新
+    // AssistantMessageEvent 是联合类型，需要按子类型窄化
+    const e = event.assistantMessageEvent;
+    if (e.type === "text_delta") {
+      process.stdout.write(e.delta);
+    }
   }
 });
 
@@ -230,11 +234,11 @@ await agent.prompt("Hello!");
 | `turn_start` | 新回合开始 |
 | `turn_end` | 回合完成 |
 | `message_start` | 消息开始 |
-| `message_update` | 消息更新（流式） |
+| `message_update` | 消息更新（流式），`assistantMessageEvent` 可能为 `text_delta`/`thinking_delta` 等子类型 |
 | `message_end` | 消息完成 |
-| `tool_execution_start` | 工具开始执行 |
-| `tool_execution_update` | 工具执行进度 |
-| `tool_execution_end` | 工具执行完成 |
+| `tool_execution_start` | 工具开始执行（含 `toolCallId`、`toolName`、`args`） |
+| `tool_execution_update` | 工具执行进度（含 `partialResult`） |
+| `tool_execution_end` | 工具执行完成（含 `result`、`isError`） |
 
 **工具定义示例**：
 
@@ -302,11 +306,10 @@ yourcrush/
 │   ├── agent/                      # Pi Agent 集成
 │   │   ├── agent.ts                # 代理实例
 │   │   └── tools/                  # Agent 工具（crushTool / dayTool / fragmentTool）
-│   └── scripts/                    # 过渡用 Python 脚本（将逐步迁移到 src/renderer/services）
+│   └── scripts/                    # 过渡用 Python 脚本（将逐步迁移到 src/shared，见 ADR-0004）
 │       ├── fragment/               # 碎片模块（外观模式：manager 委托 crud/locker/integrator/backup/storage）
-│       ├── day/ parsers/ utils/    # Day / 解析 / 工具
-│       ├── init_template.py        # 角色模板初始化
-│       └── toggle_intimate.py      # 亲密内容开关
+│       ├── day/ utils/             # Day / 工具
+│       └── init_template.py        # 角色模板初始化
 ├── crushes/                        # 角色数据存储（运行时数据）
 │   ├── TEMPLATE/                   # 空白角色模板
 │   ├── example/  demo/             # 示例/演示角色
@@ -453,6 +456,8 @@ npm test
 ```typescript
 import { Agent } from "@earendil-works/pi-agent-core";
 import { getModel } from "@earendil-works/pi-ai";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Type } from "typebox";
 
 // 创建代理实例
 const agent = new Agent({
@@ -493,15 +498,19 @@ const recordFragmentTool: AgentTool = {
 agent.state.tools = [recordFragmentTool];
 
 // 事件订阅
-agent.subscribe(async (event) => {
+agent.subscribe((event) => {
   switch (event.type) {
     case "message_start":
       console.log("开始处理消息...");
       break;
-    case "message_update":
-      // 流式输出
-      process.stdout.write(event.assistantMessageEvent.delta);
+    case "message_update": {
+      // AssistantMessageEvent 是联合类型，需要按子类型窄化
+      const e = event.assistantMessageEvent;
+      if (e.type === "text_delta") {
+        process.stdout.write(e.delta);
+      }
       break;
+    }
     case "tool_execution_start":
       console.log(`执行工具: ${event.toolName}`);
       break;
@@ -611,11 +620,13 @@ import { spawn } from 'child_process'
 
 const fragmentTool = {
   name: 'fragment_manager',
+  label: 'Fragment Manager',
   parameters: Type.Object({ action: Type.Union([...]), slug: Type.String({...}), ... }),
-  execute: async (toolCallId, params, signal) => {
+  execute: async (toolCallId, params, signal, onUpdate) => {
+    // signal 和 onUpdate 均为可选参数
     const scriptPath = path.join(process.cwd(), 'src', 'scripts', 'fragment', 'manager.py')
     const args = [scriptPath, '--action', params.action, '--slug', params.slug, ...]
-    const child = spawn('python', args, { shell: false, signal })  // shell:false 防注入
+    const child = spawn('python', args, { shell: false })  // shell:false 防注入
     // ...收集 stdout/stderr
   },
 }
@@ -693,7 +704,8 @@ grep -r "小明\|xiaoming\|李薇" . --include="*.py" --include="*.md" --include
 
 亲密内容模块（INTIMATE_KNOWLEDGE.md）**默认关闭**。
 
-- 用户必须通过 `toggle_intimate.py --enable` 显式启用
+- 用户必须显式启用：编辑 `crushes/<slug>/.intimate_config` 写入 `intimate=true`
+  （原 `toggle_intimate.py` CLI 已迁移为 `src/shared/persistence/intimateToggle.ts`，不再提供命令行入口）
 - `SKILL.md` 检查 `.intimate_config` 配置决定是否加载
 - 配置缺失时默认为不加载
 

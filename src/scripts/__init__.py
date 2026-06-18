@@ -1,0 +1,1 @@
+# 使 scripts 成为 Python 包，支持 python -m src.scripts.fragment.manager 等调用

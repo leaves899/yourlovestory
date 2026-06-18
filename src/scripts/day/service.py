@@ -239,3 +239,87 @@ class DayService:
                 'success': False,
                 'errors': [str(e)],
             }
+
+
+def _main() -> int:
+    """CLI 入口：解析参数并调用 DayService 对应方法，输出 JSON。"""
+    import argparse
+    import json
+    import sys
+
+    parser = argparse.ArgumentParser(description="日常写作服务 CLI")
+    parser.add_argument("--action", required=True,
+                        choices=["generate", "list", "get", "update", "delete"],
+                        help="操作类型")
+    parser.add_argument("--slug", required=True, help="角色标识")
+    parser.add_argument("--day-number", type=int, default=None,
+                        help="Day 编号（generate/get/update/delete 需要）")
+    parser.add_argument("--content", default=None, help="写作内容（update 需要）")
+    parser.add_argument("--summary", default="", help="当天摘要（generate 可选）")
+    parser.add_argument("--page", type=int, default=1, help="页码（list 可选，默认 1）")
+    parser.add_argument("--page-size", type=int, default=20, help="每页数量（list 可选，默认 20）")
+
+    args = parser.parse_args()
+
+    # project_root = 当前文件所在 src/scripts/day/ -> 向上三级到项目根
+    project_root = Path(__file__).resolve().parent.parent.parent.parent
+    service = DayService(project_root)
+
+    try:
+        if args.action == "generate":
+            if args.day_number is None:
+                print(json.dumps({"success": False, "errors": ["--day-number is required for generate"]},
+                                 ensure_ascii=False))
+                return 1
+            result = service.generate(
+                slug=args.slug,
+                day_number=args.day_number,
+                summary=args.summary,
+            )
+            print(json.dumps(result, ensure_ascii=False))
+
+        elif args.action == "list":
+            result = service.list(
+                slug=args.slug,
+                page=args.page,
+                page_size=args.page_size,
+            )
+            print(json.dumps(result, ensure_ascii=False))
+
+        elif args.action == "get":
+            if args.day_number is None:
+                print(json.dumps({"success": False, "errors": ["--day-number is required for get"]},
+                                 ensure_ascii=False))
+                return 1
+            result = service.get(slug=args.slug, day_number=args.day_number)
+            print(json.dumps(result, ensure_ascii=False))
+
+        elif args.action == "update":
+            if args.day_number is None or args.content is None:
+                print(json.dumps({"success": False, "errors": ["--day-number and --content are required for update"]},
+                                 ensure_ascii=False))
+                return 1
+            result = service.update(
+                slug=args.slug,
+                day_number=args.day_number,
+                content=args.content,
+            )
+            print(json.dumps(result, ensure_ascii=False))
+
+        elif args.action == "delete":
+            if args.day_number is None:
+                print(json.dumps({"success": False, "errors": ["--day-number is required for delete"]},
+                                 ensure_ascii=False))
+                return 1
+            result = service.delete(slug=args.slug, day_number=args.day_number)
+            print(json.dumps(result, ensure_ascii=False))
+
+        return 0
+
+    except Exception as e:
+        print(json.dumps({"success": False, "errors": [str(e)]}, ensure_ascii=False))
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
