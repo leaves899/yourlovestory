@@ -1,19 +1,24 @@
 import { Type } from 'typebox'
-import { spawn } from 'child_process'
-import path from 'path'
+import { createCrush, getCrush, listCrushes, updateCrush, deleteCrush } from '@/shared/crush/crushStore'
 
 /**
- * 角色管理工具 - 支持创建、查看、列表操作
+ * 角色管理工具 - 支持创建、查看、列表、更新、删除操作。
  *
- * 使用 spawn 替代 exec 防止命令注入
+ * 已迁移到 TS crushStore，不再 spawn Python 子进程。
+ * 返回结构与原 Python 一致（raw JSON 字符串进 content[0].text）。
+ *
+ * projectRoot 用 process.cwd()（agent 运行在 electron 主进程，cwd 为项目根）。
  */
+const PROJECT_ROOT = process.cwd()
+
 export const crushTool = {
   name: 'crush_manager',
   label: 'Crush Manager',
-  description: '管理 crush 角色：创建、查看、列表',
+  description: '管理 crush 角色：创建、查看、列表、更新、删除',
   parameters: Type.Object({
     action: Type.Union(
-      [Type.Literal('create'), Type.Literal('get'), Type.Literal('list')],
+      [Type.Literal('create'), Type.Literal('get'), Type.Literal('list'),
+       Type.Literal('update'), Type.Literal('delete')],
       { description: '操作类型' }
     ),
     name: Type.Optional(Type.String({ description: '角色真实姓名（create 必需）' })),
@@ -24,52 +29,44 @@ export const crushTool = {
         pattern: '^[a-z0-9-]+$',
       })
     ),
+    description: Type.Optional(Type.String({ description: '角色描述' })),
+    gender: Type.Optional(
+      Type.Union(
+        [Type.Literal('male'), Type.Literal('female'), Type.Literal('unknown')],
+        { description: '性别' }
+      )
+    ),
   }),
-  execute: async (toolCallId: string, params: any, signal: AbortSignal, onUpdate: any) => {
+  execute: async (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
     try {
-      const scriptPath = path.join(process.cwd(), 'src', 'scripts', 'init_template.py')
-      const args = [scriptPath, '--action', params.action]
-
-      if (params.name) args.push('--name', params.name)
-      if (params.nickname) args.push('--nickname', params.nickname)
-      if (params.slug) args.push('--slug', params.slug)
-
-      // 使用 spawn 替代 exec，防止命令注入
-      const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-        const child = spawn('python', args, { shell: false, signal })
-        let stdout = ''
-        let stderr = ''
-
-        child.stdout.on('data', (data) => {
-          stdout += data.toString()
-        })
-
-        child.stderr.on('data', (data) => {
-          stderr += data.toString()
-        })
-
-        child.on('close', (code) => {
-          if (code !== 0) {
-            reject(new Error(stderr || `Process exited with code ${code}`))
-          } else {
-            resolve({ stdout, stderr })
-          }
-        })
-
-        child.on('error', reject)
-      })
-
-      if (result.stderr) {
-        console.warn('Crush tool warning:', result.stderr)
+      let result: any
+      switch (params.action) {
+        case 'create':
+          result = createCrush(PROJECT_ROOT, params)
+          break
+        case 'list':
+          result = listCrushes(PROJECT_ROOT)
+          break
+        case 'get':
+          result = getCrush(PROJECT_ROOT, params.slug)
+          break
+        case 'update':
+          result = updateCrush(PROJECT_ROOT, params)
+          break
+        case 'delete':
+          result = deleteCrush(PROJECT_ROOT, params.slug)
+          break
+        default:
+          result = { success: false, errors: [`未知 action: ${params.action}`] }
       }
 
       return {
-        content: [{ type: 'text', text: result.stdout }],
-        details: { success: true },
+        content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+        details: { success: result.success === true },
       }
     } catch (error: any) {
       return {
-        content: [{ type: 'text', text: `错误: ${error.message}` }],
+        content: [{ type: 'text' as const, text: `错误: ${error.message}` }],
         details: { success: false, error: error.message },
       }
     }

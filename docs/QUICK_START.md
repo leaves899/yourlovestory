@@ -102,7 +102,7 @@ claude skill list
 ### Q: 如何开启亲密内容模块？
 
 ```bash
-python scripts/toggle_intimate.py --slug "xiaoxue" --enable
+echo "intimate=true" > crushes/xiaoxue/.intimate_config
 ```
 
 ### Q: 如何切换角色？
@@ -228,7 +228,7 @@ All data is stored locally in `crushes/<slug>/`:
 ### Q: How to enable intimate content?
 
 ```bash
-python scripts/toggle_intimate.py --slug "xiaoxue" --enable
+echo "intimate=true" > crushes/xiaoxue/.intimate_config
 ```
 
 ### Q: How to switch characters?

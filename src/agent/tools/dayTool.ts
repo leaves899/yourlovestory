@@ -1,11 +1,10 @@
 import { Type } from 'typebox'
-import { spawn } from 'child_process'
-import path from 'path'
+import { generateDay } from '@/shared/day/dayService'
 
 /**
  * 日常写作工具 - 运行日常写作流水线
  *
- * 使用 spawn 替代 exec 防止命令注入
+ * 直接调用 TS dayService.generateDay（不再 spawn Python）。
  */
 export const dayTool = {
   name: 'day_writer',
@@ -23,59 +22,18 @@ export const dayTool = {
     handwriting: Type.Optional(Type.String({ description: '手心写字' })),
     ycm_pill: Type.Optional(Type.Number({ description: '优思明颗数' })),
   }),
-  execute: async (toolCallId: string, params: any, signal: AbortSignal, onUpdate: any) => {
+  execute: async (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
     try {
-      const scriptPath = path.join(process.cwd(), 'src', 'scripts', 'day', 'pipeline.py')
-      const args = [
-        scriptPath,
-        '--slug',
-        params.slug,
-        '--day-number',
-        String(params.day_number),
-      ]
-
-      if (params.summary) args.push('--summary', params.summary)
-      if (params.sex_count) args.push('--sex-count', String(params.sex_count))
-      if (params.sex_details) args.push('--sex-details', params.sex_details)
-      if (params.handwriting) args.push('--handwriting', params.handwriting)
-      if (params.ycm_pill) args.push('--ycm-pill', String(params.ycm_pill))
-
-      // 使用 spawn 替代 exec，防止命令注入
-      const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-        const child = spawn('python', args, { shell: false, signal })
-        let stdout = ''
-        let stderr = ''
-
-        child.stdout.on('data', (data) => {
-          stdout += data.toString()
-        })
-
-        child.stderr.on('data', (data) => {
-          stderr += data.toString()
-        })
-
-        child.on('close', (code) => {
-          if (code !== 0) {
-            reject(new Error(stderr || `Process exited with code ${code}`))
-          } else {
-            resolve({ stdout, stderr })
-          }
-        })
-
-        child.on('error', reject)
-      })
-
-      if (result.stderr) {
-        console.warn('Day tool warning:', result.stderr)
-      }
+      const projectRoot = process.cwd()
+      const result = generateDay(projectRoot, params)
 
       return {
-        content: [{ type: 'text', text: result.stdout }],
-        details: { success: true },
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        details: { success: result.success },
       }
     } catch (error: any) {
       return {
-        content: [{ type: 'text', text: `错误: ${error.message}` }],
+        content: [{ type: 'text' as const, text: `错误: ${error.message}` }],
         details: { success: false, error: error.message },
       }
     }

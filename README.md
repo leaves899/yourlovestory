@@ -135,6 +135,56 @@ python scripts/import_demo.py
 
 ---
 
+## 如何验证基本可用 / Smoke Testing
+
+### 1. CLI 冒烟测试（不需要 Electron）
+
+验证 Python 脚本能正确接收参数并返回 JSON：
+
+```bash
+# 角色管理：创建 → 列表 → 删除
+python -m src.scripts.init_template --action create --name "Smoke Test" --nickname "ST" --slug smoke_test && \
+python -m src.scripts.init_template --action list && \
+python -m src.scripts.init_template --action delete --slug smoke_test
+
+# 碎片日记：列出
+python -m src.scripts.fragment.manager --action list --slug example --date 2026-01-01
+
+# 期望输出格式：{"success": true, "data": ...}
+```
+
+### 2. 自动化 CLI 契约测试
+
+```bash
+npm run test:cli
+```
+
+自动测试所有 Python 脚本的 CLI 接口，验证：
+- 角色 CRUD 的 JSON 输出格式和语义正确性
+- 碎片记录/列表/获取/更新/删除的 JSON 输出格式
+- 错误情况（内容过短、缺少参数等）的 JSON 错误响应
+
+### 3. E2E 浏览器测试
+
+```bash
+npm run test:e2e
+```
+
+Playwright 自动启动 Vite 开发服务器并测试 UI 交互（包括碎片记录和 toast 反馈）。
+
+### 4. Python 单元/集成测试
+
+```bash
+pytest tests/unit/ -v
+pytest tests/integration/ -v
+```
+
+### 5. CI 自动验证
+
+推送 PR 后，CI 自动运行所有检查（lint + test-cli + test-e2e + test-python + markdown-lint）。所有检查通过才能合并。
+
+---
+
 ## 目录结构
 
 ```
