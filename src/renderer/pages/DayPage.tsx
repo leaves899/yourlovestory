@@ -36,7 +36,7 @@ function DayPage() {
   const [editContent, setEditContent] = useState('')
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState(0)
-  const { days, loading, error, fetchDays, generateDay, updateDay, deleteDay } = useDayStore()
+  const { items: days, loading, error, fetch: fetchDays, generate: generateDay, update: updateDay, delete: deleteDay } = useDayStore()
   const { activeSlug, crushes } = useAppStore()
   const { isOpen, onOpen, onClose } = useDisclosure()
   const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure()

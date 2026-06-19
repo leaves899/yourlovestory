@@ -31,7 +31,7 @@ function FragmentPage() {
   const [origin, setOrigin] = useState('user')
   const [mood, setMood] = useState('positive')
   const [content, setContent] = useState('')
-  const { fragments, loading, error, fetchFragments, recordFragment, updateFragment, deleteFragment } = useFragmentStore()
+  const { items: fragments, loading, error, fetch: fetchFragments, record: recordFragment, update: updateFragment, delete: deleteFragment } = useFragmentStore()
   const { activeSlug } = useAppStore()
   const { isOpen, onOpen, onClose } = useDisclosure()
   const toast = useToast()

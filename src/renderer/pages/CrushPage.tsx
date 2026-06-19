@@ -28,7 +28,7 @@ function CrushPage() {
   const [editingCrush, setEditingCrush] = useState<{ slug: string; name: string; nickname: string } | null>(null)
   const [editName, setEditName] = useState('')
   const [editNickname, setEditNickname] = useState('')
-  const { crushes, loading, error, fetchCrushes, createCrush, updateCrush, deleteCrush } = useCrushStore()
+  const { items: crushes, loading, error, fetch: fetchCrushes, create: createCrush, update: updateCrush, delete: deleteCrush } = useCrushStore()
   const { isOpen, onOpen, onClose } = useDisclosure()
   const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure()
   const toast = useToast()
