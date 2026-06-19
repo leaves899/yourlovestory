@@ -102,7 +102,7 @@ export function updateFragment(
   projectRoot: string,
   fragmentId: string,
   updates: Record<string, any>,
-  expectedVersion: number,
+  expectedVersion?: number,
   existingFragment?: Fragment | null,
   existingDay?: FragmentDay | null
 ): { fragment: Fragment | null; error: string } {
@@ -126,7 +126,7 @@ export function updateFragment(
     return { fragment: null, error: '已触发写作，碎片内容只读，仅可重新生成叙事' }
   }
 
-  if (expectedVersion !== day.version) {
+  if (expectedVersion !== undefined && expectedVersion !== day.version) {
     return { fragment: null, error: '碎片已被其他客户端修改，请重新加载' }
   }
 
@@ -182,7 +182,7 @@ export function updateFragment(
 export function deleteFragment(
   projectRoot: string,
   fragmentId: string,
-  expectedVersion: number,
+  expectedVersion?: number,
   existingFragment?: Fragment | null,
   existingDay?: FragmentDay | null
 ): { success: boolean; error: string } {
@@ -203,7 +203,7 @@ export function deleteFragment(
     return { success: false, error: '该日期已完成写作，碎片不可删除' }
   }
 
-  if (expectedVersion !== day.version) {
+  if (expectedVersion !== undefined && expectedVersion !== day.version) {
     return { success: false, error: '碎片已被其他客户端修改，请重新加载' }
   }
 

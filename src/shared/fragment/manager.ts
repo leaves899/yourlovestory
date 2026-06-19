@@ -72,7 +72,7 @@ export function managerUpdateFragment(
   projectRoot: string,
   fragmentId: string,
   updates: Record<string, any>,
-  expectedVersion: number
+  expectedVersion?: number
 ): { fragment: Fragment | null; error: string } {
   return updateFragment(projectRoot, fragmentId, updates, expectedVersion)
 }
@@ -80,7 +80,7 @@ export function managerUpdateFragment(
 export function managerDeleteFragment(
   projectRoot: string,
   fragmentId: string,
-  expectedVersion: number
+  expectedVersion?: number
 ): { success: boolean; error: string } {
   return deleteFragment(projectRoot, fragmentId, expectedVersion)
 }

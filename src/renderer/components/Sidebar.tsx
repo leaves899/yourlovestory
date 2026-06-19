@@ -2,6 +2,7 @@ import React from 'react'
 import { Box, VStack, Link, Text, Icon } from '@chakra-ui/react'
 import { Link as RouterLink, useLocation } from 'react-router-dom'
 import { FaBook, FaStickyNote, FaUser, FaCog, FaQuestionCircle, FaSync } from 'react-icons/fa'
+import CharacterSelector from './CharacterSelector'
 
 const navItems = [
   { path: '/', label: '日常写作', icon: FaBook },
@@ -17,10 +18,11 @@ function Sidebar() {
 
   return (
     <Box w="250px" bg="gray.100" p={4} borderRight="1px" borderColor="gray.200">
-      <Text fontSize="xl" fontWeight="bold" mb={6}>
+      <Text fontSize="xl" fontWeight="bold" mb={2}>
         yourcrush
       </Text>
-      <VStack align="stretch" spacing={2}>
+      <CharacterSelector />
+      <VStack align="stretch" spacing={2} mt={4}>
         {navItems.map((item) => (
           <Link
             key={item.path}

@@ -38,6 +38,9 @@ plans/
 !docs/superpowers/plans/
 *.log
 
+# 设置文件含 API Key，禁止提交
+settings.json
+
 # Docker
 .docker/
 

@@ -19,27 +19,33 @@ import {
   ModalCloseButton,
   useDisclosure,
   Select,
+  Alert,
+  AlertIcon,
+  AlertTitle,
+  AlertDescription,
 } from '@chakra-ui/react'
 import { useFragmentStore } from '../stores/fragmentStore'
+import { useAppStore } from '../stores/appStore'
 
 function FragmentPage() {
-  const [slug, setSlug] = useState('')
   const [origin, setOrigin] = useState('user')
   const [mood, setMood] = useState('positive')
   const [content, setContent] = useState('')
   const { fragments, loading, error, fetchFragments, recordFragment, updateFragment, deleteFragment } = useFragmentStore()
+  const { activeSlug } = useAppStore()
   const { isOpen, onOpen, onClose } = useDisclosure()
   const toast = useToast()
 
   useEffect(() => {
-    if (slug) {
-      fetchFragments(slug)
+    if (activeSlug) {
+      fetchFragments(activeSlug)
     }
-  }, [slug, fetchFragments])
+  }, [activeSlug, fetchFragments])
 
   const handleRecord = async () => {
+    if (!activeSlug) return
     try {
-      await recordFragment(slug, origin, mood, content)
+      await recordFragment(activeSlug, origin, mood, content)
       toast({
         title: '记录成功',
         status: 'success',
@@ -57,8 +63,9 @@ function FragmentPage() {
   }
 
   const handleUpdate = async (fragmentId: string, content: string) => {
+    if (!activeSlug) return
     try {
-      await updateFragment(slug, fragmentId, content)
+      await updateFragment(activeSlug, fragmentId, content)
       toast({
         title: '更新成功',
         status: 'success',
@@ -75,8 +82,9 @@ function FragmentPage() {
   }
 
   const handleDelete = async (fragmentId: string) => {
+    if (!activeSlug) return
     try {
-      await deleteFragment(slug, fragmentId)
+      await deleteFragment(activeSlug, fragmentId)
       toast({
         title: '删除成功',
         status: 'success',
@@ -90,6 +98,23 @@ function FragmentPage() {
         duration: 3000,
       })
     }
+  }
+
+  if (!activeSlug) {
+    return (
+      <Box>
+        <Heading mb={4}>碎片日记</Heading>
+        <Alert status="info" borderRadius="md">
+          <AlertIcon />
+          <Box>
+            <AlertTitle>请选择角色</AlertTitle>
+            <AlertDescription>
+              请在侧边栏选择一个角色开始记录碎片。
+            </AlertDescription>
+          </Box>
+        </Alert>
+      </Box>
+    )
   }
 
   return (
@@ -134,14 +159,6 @@ function FragmentPage() {
           <ModalCloseButton />
           <ModalBody>
             <Stack spacing={4}>
-              <Box>
-                <Text mb={2}>角色标识</Text>
-                <Textarea
-                  value={slug}
-                  onChange={(e) => setSlug(e.target.value)}
-                  placeholder="输入角色标识"
-                />
-              </Box>
               <Box>
                 <Text mb={2}>来源</Text>
                 <Select value={origin} onChange={(e) => setOrigin(e.target.value)}>

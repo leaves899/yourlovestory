@@ -2,7 +2,7 @@
   "name": "yourcrush",
   "version": "1.0.0",
   "description": "基于 Pi Agent SDK 的恋爱日记 Electron 桌面应用",
-  "main": "dist/main/main.js",
+  "main": "dist/main/main/main.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:main\"",
     "dev:renderer": "vite",

@@ -46,8 +46,29 @@ function nowISO(): string {
 }
 
 /**
+ * 从 TEMPLATE 目录复制文件到新角色目录，替换占位符。
+ * 对齐 Python init_template.py 的 copy_template 行为。
+ */
+function copyTemplateFile(
+  templateDir: string,
+  targetDir: string,
+  filename: string,
+  replacements: Record<string, string>
+): void {
+  const src = path.join(templateDir, filename)
+  const dst = path.join(targetDir, filename)
+  if (!fs.existsSync(src)) return
+  let content = fs.readFileSync(src, 'utf-8')
+  for (const [key, value] of Object.entries(replacements)) {
+    content = content.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value)
+  }
+  fs.writeFileSync(dst, content, 'utf-8')
+}
+
+/**
  * 创建新的 crush 角色（幂等）。
  * 缺 name/nickname/slug 时返回 {success:false, errors}（对齐 Python CLI 校验）。
+ * 从 TEMPLATE/ 复制完整文件集（9 文件），替换占位符。
  */
 export function createCrush(
   projectRoot: string,
@@ -64,36 +85,64 @@ export function createCrush(
     fs.mkdirSync(path.join(dir, 'fragments'), { recursive: true })
     fs.mkdirSync(path.join(dir, 'plans'), { recursive: true })
 
-    // 元数据（总是覆盖，对齐 Python）
+    const templateDir = path.join(projectRoot, 'crushes', 'TEMPLATE')
+    const templateExists = fs.existsSync(templateDir)
     const now = nowISO()
-    const meta: CrushMeta = {
-      name,
-      nickname,
-      slug,
-      gender: params.gender || 'unknown',
-      description: params.description || '',
-      intimate_enabled: false,
-      version: 'v1',
-      created_at: now,
-      updated_at: now,
+    const replacements: Record<string, string> = {
+      CHARACTER_NAME: name,
+      CHARACTER_NICKNAME: nickname,
+      SLUG: slug,
+      TIMESTAMP: now,
     }
-    writeJson(path.join(dir, 'meta.json'), meta)
 
-    // 记忆/性格/亲密配置文件（幂等：已存在则保留，对齐 Python）
-    const memoryFile = path.join(dir, 'memory.md')
-    if (!fs.existsSync(memoryFile)) {
-      fs.writeFileSync(memoryFile, `# ${nickname} 的记忆\n\n`, 'utf-8')
+    if (templateExists) {
+      // 从 TEMPLATE 复制所有模板文件并替换占位符
+      const templateFiles = [
+        'meta.json',
+        'persona.md',
+        'memory.md',
+        'INTIMATE_KNOWLEDGE.md',
+        'WEEKDAY.md',
+        'CONTEXT.md',
+        'SKILL.md',
+        'PROMPT.md',
+      ]
+      for (const file of templateFiles) {
+        copyTemplateFile(templateDir, dir, file, replacements)
+      }
+    } else {
+      // TEMPLATE 不存在时回退到裸骨架（测试环境等场景）
+      const meta: CrushMeta = {
+        name,
+        nickname,
+        slug,
+        gender: params.gender || 'unknown',
+        description: params.description || '',
+        intimate_enabled: false,
+        version: 'v1',
+        created_at: now,
+        updated_at: now,
+      }
+      writeJson(path.join(dir, 'meta.json'), meta)
+      const memoryFile = path.join(dir, 'memory.md')
+      if (!fs.existsSync(memoryFile)) {
+        fs.writeFileSync(memoryFile, `# ${nickname} 的记忆\n\n`, 'utf-8')
+      }
+      const personaFile = path.join(dir, 'persona.md')
+      if (!fs.existsSync(personaFile)) {
+        fs.writeFileSync(personaFile, `# ${nickname} 的性格\n\n`, 'utf-8')
+      }
     }
-    const personaFile = path.join(dir, 'persona.md')
-    if (!fs.existsSync(personaFile)) {
-      fs.writeFileSync(personaFile, `# ${nickname} 的性格\n\n`, 'utf-8')
-    }
+
+    // .intimate_config：明确设为 false（用户安装后自行决定是否开启）
     const intimateFile = path.join(dir, '.intimate_config')
     if (!fs.existsSync(intimateFile)) {
       fs.writeFileSync(intimateFile, 'intimate=false\n', 'utf-8')
     }
 
-    return { success: true, data: meta }
+    // 返回创建后的 meta
+    const meta = readJson<CrushMeta>(path.join(dir, 'meta.json'))
+    return { success: true, data: meta ?? { name, nickname, slug } as CrushMeta }
   } catch (e: any) {
     return { success: false, errors: [String(e?.message ?? e)] }
   }
@@ -113,6 +162,8 @@ export function listCrushes(projectRoot: string): CrushResult {
     )
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
+      // 跳过模板目录（模板文件含 {{VAR}} 占位符，不应作为角色列出）
+      if (entry.name === 'TEMPLATE') continue
       const meta = readJson<CrushMeta>(path.join(crushesDir, entry.name, 'meta.json'))
       if (meta) {
         results.push(meta)

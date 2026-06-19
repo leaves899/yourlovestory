@@ -5,13 +5,17 @@
  * - 文件存储在 <projectRoot>/crushes/<slug>/memories/chats/day<day_number>.md。
  * - list 按 day_number 排序，content 截前 200 字符，支持分页。
  * - get/update/delete 在文件不存在时返回 {success:false, errors:["Day file not found: <path>"]}。
- * - generate 调用 runPipeline（空壳，返回固定 dict）。
+ * - generate 调用 runPipeline 生成叙事（使用 pi-ai 的 complete API）。
  * - update 整体覆盖写入 content；delete 删文件。
  *
  * projectRoot 由调用方传入（ipc.ts 传 app.getAppPath()）。
  */
 import * as fs from 'fs'
 import * as path from 'path'
+import { getSettings } from '../persistence/settingsStore'
+import { loadCrushContext } from '../crush/contextLoader'
+import { buildSystemPrompt, buildUserPrompt, type CustomPrompts } from '../ai/promptBuilder'
+import { generateNarrative } from '../ai/aiClient'
 
 /** 统一返回契约（对齐 Python DayService）。 */
 export type DayResult =
@@ -31,20 +35,102 @@ function formatNotFound(filePath: string): DayResult {
 }
 
 /**
- * 运行日常写作流水线（空壳，等价 Python pipeline.py 的 run_pipeline）。
- * 目前返回固定成功 dict，不执行任何实际逻辑。
+ * 运行日常写作流水线 —— 叙事生成核心。
+ *
+ * 1. 加载 AI 设置（settings.json）
+ * 2. 加载角色上下文（persona / memory / WEEKDAY / intimate knowledge）
+ * 3. 构建 system + user prompt
+ * 4. 调用 pi-ai complete 生成叙事
+ * 5. 写入 Day 文件
+ *
+ * @returns 包含生成内容的 DayResult
  */
-export function runPipeline(params: {
-  slug: string
-}): { success: true; data: { slug: string } } {
-  return {
-    success: true,
-    data: { slug: params.slug },
+export async function runPipeline(
+  projectRoot: string,
+  params: {
+    slug: string
+    day_number: number
+    summary?: string
+    sex_count?: number
+    sex_details?: string
+    handwriting?: string
+    ycm_pill?: number
+  }
+): Promise<DayResult> {
+  try {
+    // 1. 加载 AI 设置
+    const settings = getSettings(projectRoot)
+    const apiKey = settings.apiKey as string | undefined
+    if (!apiKey) {
+      return {
+        success: false,
+        errors: ['请先在设置中配置 AI API Key（打开设置页面，选择 Provider 并填入 API Key）'],
+      }
+    }
+
+    const provider = (settings.provider as string) || 'anthropic'
+    const modelId = (settings.model as string) || 'claude-sonnet-4-20250514'
+    const temperature = (settings.temperature as number) ?? 0.8
+    const maxTokens = (settings.maxTokens as number) ?? 4096
+
+    // 读取自定义提示词配置
+    const customPrompts: CustomPrompts = {
+      customSystemPrompt: settings.customSystemPrompt as string | undefined,
+      customUserPromptTemplate: settings.customUserPromptTemplate as string | undefined,
+    }
+
+    // 2. 加载角色上下文
+    const ctx = loadCrushContext(projectRoot, params.slug)
+
+    // 3. 构建 prompt
+    const systemPrompt = buildSystemPrompt(ctx, {
+      dayNumber: params.day_number,
+      summary: params.summary,
+      sexCount: params.sex_count,
+      sexDetails: params.sex_details,
+      ycmPill: params.ycm_pill,
+    }, customPrompts)
+    const userPrompt = buildUserPrompt(params.slug, {
+      dayNumber: params.day_number,
+      summary: params.summary,
+      sexCount: params.sex_count,
+      sexDetails: params.sex_details,
+      ycmPill: params.ycm_pill,
+    }, customPrompts)
+
+    // 4. 调用 AI 生成叙事
+    const narrative = await generateNarrative({
+      systemPrompt,
+      userPrompt,
+      provider,
+      modelId,
+      apiKey,
+      temperature,
+      maxTokens,
+    })
+
+    // 5. 写入文件
+    const filePath = dayPath(projectRoot, params.slug, params.day_number)
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    fs.writeFileSync(filePath, narrative, 'utf-8')
+
+    return {
+      success: true,
+      data: {
+        slug: params.slug,
+        day_number: params.day_number,
+        content: narrative,
+        summary: params.summary ?? '',
+      },
+    }
+  } catch (e: any) {
+    return { success: false, errors: [String(e?.message ?? e)] }
   }
 }
 
-/** 生成日常写作（流水线入口，等价 Python DayService.generate）。 */
-export function generateDay(
+/** 生成日常写作（流水线入口，等价 Python DayService.generate）。
+ *  异步：等待 AI 生成完成后返回结果。 */
+export async function generateDay(
   projectRoot: string,
   params: {
     slug: string
@@ -58,24 +144,43 @@ export function generateDay(
     skip_skill?: boolean
     skip_check?: boolean
   }
-): DayResult {
+): Promise<DayResult> {
   try {
     const filePath = dayPath(projectRoot, params.slug, params.day_number)
 
-    if (!fs.existsSync(filePath)) {
-      return formatNotFound(filePath)
+    // 已存在时允许覆盖（重新生成场景）
+    const isOverwrite = fs.existsSync(filePath)
+
+    // dry_run：只构建 prompt 不实际生成
+    if (params.dry_run) {
+      const ctx = loadCrushContext(projectRoot, params.slug)
+      const systemPrompt = buildSystemPrompt(ctx, {
+        dayNumber: params.day_number,
+        summary: params.summary,
+        sexCount: params.sex_count,
+        sexDetails: params.sex_details,
+        ycmPill: params.ycm_pill,
+      })
+      const userPrompt = buildUserPrompt(params.slug, {
+        dayNumber: params.day_number,
+        summary: params.summary,
+        sexCount: params.sex_count,
+        sexDetails: params.sex_details,
+        ycmPill: params.ycm_pill,
+      })
+      return {
+        success: true,
+        data: {
+          slug: params.slug,
+          day_number: params.day_number,
+          summary: params.summary ?? '',
+          system_prompt: systemPrompt,
+          user_prompt: userPrompt,
+        },
+      }
     }
 
-    runPipeline({ slug: params.slug })
-
-    return {
-      success: true,
-      data: {
-        slug: params.slug,
-        day_number: params.day_number,
-        summary: params.summary ?? '',
-      },
-    }
+    return await runPipeline(projectRoot, params)
   } catch (e: any) {
     return { success: false, errors: [String(e?.message ?? e)] }
   }

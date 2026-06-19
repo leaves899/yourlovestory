@@ -1,19 +1,19 @@
 import { ipcMain, app } from 'electron'
-import { getSettings, updateSettings } from '@/shared/persistence/settingsStore'
+import { getSettings, updateSettings } from '../shared/persistence/settingsStore'
 import {
   createCrush,
   listCrushes,
   getCrush,
   updateCrush,
   deleteCrush,
-} from '@/shared/crush/crushStore'
+} from '../shared/crush/crushStore'
 import {
   generateDay,
   listDays,
   getDay,
   updateDay,
   deleteDay,
-} from '@/shared/day/dayService'
+} from '../shared/day/dayService'
 import {
   managerRecordFragment,
   getFragmentsByDate,
@@ -21,7 +21,8 @@ import {
   managerUpdateFragment,
   managerDeleteFragment,
   managerIntegrateFragments,
-} from '@/shared/fragment/manager'
+} from '../shared/fragment/manager'
+import { getCurrentDate } from '../shared/fragment/utils'
 
 export function setupIPC() {
   // 日常写作（已迁移到 TS dayService）
@@ -49,13 +50,17 @@ export function setupIPC() {
   // date 作为 currentDate（状态判断/文件定位基准）传入，与 Python ipc 行为等价；
   // 不传时 recordFragment 内部退化为今天。
   ipcMain.handle('fragment:record', async (_, params) => {
-    const { date, ...fragmentData } = params
-    return managerRecordFragment(app.getAppPath(), params.slug, fragmentData, date)
+    const { date, slug, ...fragmentData } = params
+    const result = managerRecordFragment(app.getAppPath(), slug, fragmentData, date)
+    if (result.fragment) {
+      return { success: true, data: result.fragment }
+    }
+    return { success: false, errors: [result.error] }
   })
 
   ipcMain.handle('fragment:list', async (_, params) => ({
     success: true,
-    data: getFragmentsByDate(app.getAppPath(), params.slug, params.date ?? new Date().toISOString().slice(0, 10)),
+    data: getFragmentsByDate(app.getAppPath(), params.slug, params.date ?? getCurrentDate()),
   }))
 
   ipcMain.handle('fragment:get', async (_, params) => {
@@ -65,18 +70,23 @@ export function setupIPC() {
       : { success: false, errors: ['碎片不存在'] }
   })
 
-  ipcMain.handle('fragment:update', async (_, params) =>
-    managerUpdateFragment(app.getAppPath(), params.fragment_id, params, params.expected_version ?? 1)
-  )
+  ipcMain.handle('fragment:update', async (_, params) => {
+    const { fragment_id, slug, expected_version, ...updates } = params
+    const result = managerUpdateFragment(app.getAppPath(), fragment_id, updates, expected_version)
+    if (result.fragment) {
+      return { success: true, data: result.fragment }
+    }
+    return { success: false, errors: [result.error] }
+  })
 
   ipcMain.handle('fragment:delete', async (_, params) =>
-    managerDeleteFragment(app.getAppPath(), params.fragment_id, params.expected_version ?? 1)
+    managerDeleteFragment(app.getAppPath(), params.fragment_id, params.expected_version)
   )
 
   ipcMain.handle('fragment:integrate', async (_, params) => ({
     success: true,
     data: {
-      prompt: managerIntegrateFragments(app.getAppPath(), params.slug, params.date ?? new Date().toISOString().slice(0, 10)),
+      prompt: managerIntegrateFragments(app.getAppPath(), params.slug, params.date ?? getCurrentDate()),
     },
   }))
 
