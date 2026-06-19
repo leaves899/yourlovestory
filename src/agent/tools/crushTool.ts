@@ -1,5 +1,5 @@
 import { Type } from 'typebox'
-import { createCrush, getCrush, listCrushes, updateCrush, deleteCrush } from '@/shared/crush/crushStore'
+import { createCrush, getCrush, listCrushes, updateCrush, deleteCrush } from '../../shared/crush/crushStore'
 
 /**
  * 角色管理工具 - 支持创建、查看、列表、更新、删除操作。

@@ -1,5 +1,5 @@
 import { Type } from 'typebox'
-import { generateDay } from '@/shared/day/dayService'
+import { generateDay } from '../../shared/day/dayService'
 
 /**
  * 日常写作工具 - 运行日常写作流水线
@@ -25,7 +25,7 @@ export const dayTool = {
   execute: async (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
     try {
       const projectRoot = process.cwd()
-      const result = generateDay(projectRoot, params)
+      const result = await generateDay(projectRoot, params)
 
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],

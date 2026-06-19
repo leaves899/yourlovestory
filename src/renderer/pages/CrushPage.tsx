@@ -25,8 +25,12 @@ function CrushPage() {
   const [name, setName] = useState('')
   const [nickname, setNickname] = useState('')
   const [slug, setSlug] = useState('')
+  const [editingCrush, setEditingCrush] = useState<{ slug: string; name: string; nickname: string } | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editNickname, setEditNickname] = useState('')
   const { crushes, loading, error, fetchCrushes, createCrush, updateCrush, deleteCrush } = useCrushStore()
   const { isOpen, onOpen, onClose } = useDisclosure()
+  const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure()
   const toast = useToast()
 
   useEffect(() => {
@@ -52,14 +56,24 @@ function CrushPage() {
     }
   }
 
-  const handleUpdate = async (slug: string, name: string, nickname: string) => {
+  const handleEdit = (crush: { slug: string; name: string; nickname: string }) => {
+    setEditingCrush(crush)
+    setEditName(crush.name)
+    setEditNickname(crush.nickname)
+    onEditOpen()
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editingCrush) return
     try {
-      await updateCrush(slug, name, nickname)
+      await updateCrush(editingCrush.slug, editName, editNickname)
       toast({
         title: '更新成功',
         status: 'success',
         duration: 3000,
       })
+      onEditClose()
+      setEditingCrush(null)
     } catch (error: any) {
       toast({
         title: '更新失败',
@@ -106,7 +120,7 @@ function CrushPage() {
               <Text>标识: {crush.slug}</Text>
               <Button
                 mt={4}
-                onClick={() => handleUpdate(crush.slug, crush.name, crush.nickname)}
+                onClick={() => handleEdit(crush)}
               >
                 编辑
               </Button>
@@ -161,6 +175,42 @@ function CrushPage() {
               创建
             </Button>
             <Button variant="ghost" onClick={onClose}>
+              取消
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={isEditOpen} onClose={onEditClose}>
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>编辑角色</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <Stack spacing={4}>
+              <Box>
+                <Text mb={2}>真实姓名</Text>
+                <Textarea
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="输入真实姓名"
+                />
+              </Box>
+              <Box>
+                <Text mb={2}>昵称</Text>
+                <Textarea
+                  value={editNickname}
+                  onChange={(e) => setEditNickname(e.target.value)}
+                  placeholder="输入昵称"
+                />
+              </Box>
+            </Stack>
+          </ModalBody>
+          <ModalFooter>
+            <Button colorScheme="blue" mr={3} onClick={handleSaveEdit}>
+              保存
+            </Button>
+            <Button variant="ghost" onClick={onEditClose}>
               取消
             </Button>
           </ModalFooter>

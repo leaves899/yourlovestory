@@ -7,17 +7,18 @@ import {
   managerDeleteFragment,
   managerIntegrateFragments,
   recommendTags,
-} from '@/shared/fragment/manager'
+} from '../../shared/fragment/manager'
+import { getCurrentDate } from '../../shared/fragment/utils'
 
 /**
- * 碎片日记工具 - 支持 CRUD + integrate 操作
+ * 碎片日记工具 - 支持 CRUD + integrate + recommend 操作
  *
  * 直接调用 TS fragment 模块（不再 spawn Python）。
  */
 export const fragmentTool = {
   name: 'fragment_manager',
   label: 'Fragment Manager',
-  description: '管理碎片日记：记录、查看、更新、删除、整合碎片',
+  description: '管理碎片日记：记录、查看、更新、删除、整合碎片、推荐标签',
   parameters: Type.Object({
     action: Type.Union(
       [
@@ -27,6 +28,7 @@ export const fragmentTool = {
         Type.Literal('update'),
         Type.Literal('delete'),
         Type.Literal('integrate'),
+        Type.Literal('recommend'),
       ],
       { description: '操作类型' }
     ),
@@ -56,7 +58,8 @@ export const fragmentTool = {
     env_tags: Type.Optional(Type.Array(Type.String(), { description: '环境标签' })),
     behavior_tags: Type.Optional(Type.Array(Type.String(), { description: '行为标签' })),
     date: Type.Optional(Type.String({ description: '日期 YYYY-MM-DD（record/list/integrate 可选）' })),
-    expected_version: Type.Optional(Type.Number({ description: '乐观锁版本号（update/delete 必需）' })),
+    expected_version: Type.Optional(Type.Number({ description: '乐观锁版本号（update/delete 可选，不传则跳过锁检查）' })),
+    session_id: Type.Optional(Type.String({ description: '会话 ID（recommend 操作需要）' })),
   }),
   execute: async (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
     try {
@@ -75,7 +78,7 @@ export const fragmentTool = {
           }, params.date)
           break
         case 'list':
-          result = { success: true, data: getFragmentsByDate(projectRoot, params.slug, params.date ?? new Date().toISOString().slice(0, 10)) }
+          result = { success: true, data: getFragmentsByDate(projectRoot, params.slug, params.date ?? getCurrentDate()) }
           break
         case 'get':
           result = getFragment(projectRoot, params.fragment_id)
@@ -88,21 +91,31 @@ export const fragmentTool = {
             mood: params.mood,
             env_tags: params.env_tags,
             behavior_tags: params.behavior_tags,
-          }, params.expected_version ?? 1)
+          }, params.expected_version)
           break
         case 'delete':
-          result = managerDeleteFragment(projectRoot, params.fragment_id, params.expected_version ?? 1)
+          result = managerDeleteFragment(projectRoot, params.fragment_id, params.expected_version)
           break
         case 'integrate':
-          result = { success: true, data: { prompt: managerIntegrateFragments(projectRoot, params.slug, params.date ?? new Date().toISOString().slice(0, 10)) } }
+          result = { success: true, data: { prompt: managerIntegrateFragments(projectRoot, params.slug, params.date ?? getCurrentDate()) } }
           break
+        case 'recommend': {
+          const sessionId = params.session_id ?? `agent_${toolCallId}`
+          const tags = recommendTags(projectRoot, params.slug, params.content ?? '', sessionId)
+          result = { success: true, data: tags }
+          break
+        }
         default:
           result = { success: false, errors: [`Unknown action: ${params.action}`] }
       }
 
+      const isSuccess =
+        result.success === true ||
+        (result.fragment !== null && result.fragment !== undefined)
+
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-        details: { success: result.success !== false },
+        details: { success: isSuccess },
       }
     } catch (error: any) {
       return {

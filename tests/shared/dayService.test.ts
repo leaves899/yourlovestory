@@ -43,13 +43,33 @@ function setupCrushWithDay(
 }
 
 // ============================================================
-// runPipeline（空壳）
+// runPipeline（叙事生成核心）
 // ============================================================
 describe('runPipeline', () => {
-  test('返回固定成功 dict', () => {
-    const result = runPipeline({ slug: 'test' })
+  test('无 settings/apiKey 时返回错误', async () => {
+    const result = await runPipeline(tmpRoot, { slug: 'test', day_number: 1 })
+    expect(result.success).toBe(false)
+    if (result.success) return
+    expect(result.errors[0]).toContain('API Key')
+  })
+
+  test('dry_run 模式返回 prompt 不实际生成', async () => {
+    // 创建最小角色目录结构（dry_run 也需要加载上下文，但不需要 apiKey）
+    const personFile = path.join(tmpRoot, 'crushes', 'test', 'persona.md')
+    fs.mkdirSync(path.dirname(personFile), { recursive: true })
+    fs.writeFileSync(personFile, '# Test Persona\n\n测试角色。\n', 'utf-8')
+
+    const result = await generateDay(tmpRoot, {
+      slug: 'test',
+      day_number: 1,
+      summary: 'dry run 测试',
+      dry_run: true,
+    })
     expect(result.success).toBe(true)
-    expect(result.data.slug).toBe('test')
+    if (!result.success) return
+    expect(result.data.system_prompt).toBeTruthy()
+    expect(result.data.user_prompt).toBeTruthy()
+    expect(result.data.user_prompt).toContain('dry run 测试')
   })
 })
 
@@ -240,43 +260,51 @@ describe('deleteDay', () => {
 // generateDay
 // ============================================================
 describe('generateDay', () => {
-  test('generate 已存在的 day 文件返回成功', () => {
-    setupCrushWithDay('test', 1, '# Day 1\n\ncontent')
+  test('generate 已存在的 day 文件允许覆盖（不再报错"已存在"）', async () => {
+    setupCrushWithDay('test', 1, '# Day 1\n\n旧内容')
 
-    const result = generateDay(tmpRoot, {
+    const result = await generateDay(tmpRoot, {
       slug: 'test',
       day_number: 1,
-      summary: '测试摘要',
+      summary: '新摘要',
     })
-    expect(result.success).toBe(true)
-    if (!result.success) return
-    expect(result.data.slug).toBe('test')
-    expect(result.data.day_number).toBe(1)
-    expect(result.data.summary).toBe('测试摘要')
+    // 不应返回"已存在"错误（旧行为），而是尝试生成（会因无 apiKey 失败）
+    if (!result.success) {
+      expect(result.errors[0]).not.toContain('已存在')
+    }
   })
 
-  test('generate 不存在的 day 文件返回错误', () => {
-    setupCrushWithDay('test', 1)
+  test('generate 新 day 需 apiKey（无设置时返回错误）', async () => {
+    // 创建角色文件让上下文加载不报错
+    const crushDir = path.join(tmpRoot, 'crushes', 'test')
+    fs.mkdirSync(crushDir, { recursive: true })
+    fs.writeFileSync(path.join(crushDir, 'persona.md'), '# test\n', 'utf-8')
 
-    const result = generateDay(tmpRoot, {
+    const result = await generateDay(tmpRoot, {
       slug: 'test',
-      day_number: 999,
+      day_number: 1,
+      summary: '测试',
     })
     expect(result.success).toBe(false)
     if (result.success) return
-    expect(result.errors[0]).toContain('Day file not found')
+    expect(result.errors[0]).toContain('API Key')
   })
 
-  test('generate 无 summary 时返回空字符串', () => {
-    setupCrushWithDay('test', 1)
+  test('dry_run 模式无需 apiKey，返回 prompt 预览', async () => {
+    const crushDir = path.join(tmpRoot, 'crushes', 'test')
+    fs.mkdirSync(crushDir, { recursive: true })
+    fs.writeFileSync(path.join(crushDir, 'persona.md'), '# test\n', 'utf-8')
 
-    const result = generateDay(tmpRoot, {
+    const result = await generateDay(tmpRoot, {
       slug: 'test',
       day_number: 1,
+      dry_run: true,
     })
     expect(result.success).toBe(true)
     if (!result.success) return
     expect(result.data.summary).toBe('')
+    expect(result.data.system_prompt).toBeTruthy()
+    expect(result.data.user_prompt).toBeTruthy()
   })
 })
 

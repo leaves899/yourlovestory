@@ -26,11 +26,11 @@ function createWindow() {
     // 尝试加载 Vite 开发服务器
     mainWindow.loadURL('http://localhost:3000').catch(() => {
       // 如果开发服务器不可用，加载构建后的文件
-      mainWindow?.loadFile(path.join(__dirname, '../renderer/index.html'))
+      mainWindow?.loadFile(path.join(__dirname, '../../renderer/index.html'))
     })
     mainWindow.webContents.openDevTools()
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+    mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'))
   }
 
   // 窗口准备好后再显示，避免白屏闪烁
