@@ -36,7 +36,9 @@ function DayPage() {
   const [editContent, setEditContent] = useState('')
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState(0)
-  const { items: days, loading, error, fetch: fetchDays, generate: generateDay, update: updateDay, delete: deleteDay } = useDayStore()
+  const [expandedDay, setExpandedDay] = useState<number | null>(null)
+  const [expandedContent, setExpandedContent] = useState<string>('')
+  const { items: days, loading, error, fetch: fetchDays, generate: generateDay, update: updateDay, delete: deleteDay, get: getDay } = useDayStore()
   const { activeSlug, crushes } = useAppStore()
   const { isOpen, onOpen, onClose } = useDisclosure()
   const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure()
@@ -44,6 +46,9 @@ function DayPage() {
 
   useEffect(() => {
     if (activeSlug) {
+      // 切换角色时重置生成状态
+      setGenerating(false)
+      setProgress(0)
       fetchDays(activeSlug)
     }
   }, [activeSlug, fetchDays])
@@ -62,14 +67,25 @@ function DayPage() {
     }, 500)
 
     try {
-      await generateDay(activeSlug, dayNumber, summary)
-      setProgress(100)
-      toast({
-        title: '生成成功',
-        status: 'success',
-        duration: 3000,
-      })
-      onClose()
+      const result = await generateDay(activeSlug, dayNumber, summary)
+      if (result.success) {
+        setProgress(100)
+        toast({
+          title: '生成成功',
+          status: 'success',
+          duration: 3000,
+        })
+        onClose()
+        // 生成成功后重新加载列表
+        fetchDays(activeSlug)
+      } else {
+        toast({
+          title: '生成失败',
+          description: result.errors?.[0] || '未知错误',
+          status: 'error',
+          duration: 3000,
+        })
+      }
     } catch (error: any) {
       toast({
         title: '生成失败',
@@ -135,12 +151,23 @@ function DayPage() {
   const handleDelete = async (dayNumber: number) => {
     if (!activeSlug) return
     try {
-      await deleteDay(activeSlug, dayNumber)
-      toast({
-        title: '删除成功',
-        status: 'success',
-        duration: 3000,
-      })
+      const result = await deleteDay(activeSlug, dayNumber)
+      if (result.success) {
+        toast({
+          title: '删除成功',
+          status: 'success',
+          duration: 3000,
+        })
+        // 删除成功后重新加载列表
+        fetchDays(activeSlug)
+      } else {
+        toast({
+          title: '删除失败',
+          description: result.errors?.[0] || '未知错误',
+          status: 'error',
+          duration: 3000,
+        })
+      }
     } catch (error: any) {
       toast({
         title: '删除失败',
@@ -196,21 +223,43 @@ function DayPage() {
               <Heading size="md">Day {day.day_number}</Heading>
             </CardHeader>
             <CardBody>
-              <Text whiteSpace="pre-wrap">{day.content}</Text>
-              <Button
-                mt={4}
-                onClick={() => handleEdit(day)}
-              >
-                编辑
-              </Button>
-              <Button
-                mt={4}
-                ml={2}
-                colorScheme="red"
-                onClick={() => handleDelete(day.day_number)}
-              >
-                删除
-              </Button>
+              <Text whiteSpace="pre-wrap">
+                {expandedDay === day.day_number ? expandedContent : day.content}
+              </Text>
+              <HStack mt={4} spacing={2}>
+                {expandedDay === day.day_number ? (
+                  <Button
+                    onClick={() => {
+                      setExpandedDay(null)
+                      setExpandedContent('')
+                    }}
+                  >
+                    收起
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={async () => {
+                      if (!activeSlug) return
+                      const result = await getDay(activeSlug, day.day_number)
+                      if (result.success) {
+                        setExpandedDay(day.day_number)
+                        setExpandedContent(result.data.content)
+                      }
+                    }}
+                  >
+                    查看完整内容
+                  </Button>
+                )}
+                <Button onClick={() => handleEdit(day)}>
+                  编辑
+                </Button>
+                <Button
+                  colorScheme="red"
+                  onClick={() => handleDelete(day.day_number)}
+                >
+                  删除
+                </Button>
+              </HStack>
             </CardBody>
           </Card>
         ))}

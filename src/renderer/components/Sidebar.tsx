@@ -1,13 +1,14 @@
 import React from 'react'
 import { Box, VStack, Link, Text, Icon } from '@chakra-ui/react'
 import { Link as RouterLink, useLocation } from 'react-router-dom'
-import { FaBook, FaStickyNote, FaUser, FaCog, FaQuestionCircle, FaSync } from 'react-icons/fa'
+import { FaBook, FaStickyNote, FaUser, FaHeart, FaCog, FaQuestionCircle, FaSync } from 'react-icons/fa'
 import CharacterSelector from './CharacterSelector'
 
 const navItems = [
   { path: '/', label: '日常写作', icon: FaBook },
   { path: '/fragment', label: '碎片日记', icon: FaStickyNote },
   { path: '/crush', label: '角色管理', icon: FaUser },
+  { path: '/progress', label: '关系进度', icon: FaHeart },
   { path: '/settings', label: '设置', icon: FaCog },
   { path: '/help', label: '帮助', icon: FaQuestionCircle },
   { path: '/update', label: '更新', icon: FaSync },

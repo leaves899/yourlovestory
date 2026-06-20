@@ -7,6 +7,7 @@ import CrushPage from './pages/CrushPage'
 import SettingsPage from './pages/SettingsPage'
 import HelpPage from './pages/HelpPage'
 import UpdatePage from './pages/UpdatePage'
+import ProgressPage from './pages/ProgressPage'
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
           <Route path="/" element={<DayPage />} />
           <Route path="/fragment" element={<FragmentPage />} />
           <Route path="/crush" element={<CrushPage />} />
+          <Route path="/progress" element={<ProgressPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/help" element={<HelpPage />} />
           <Route path="/update" element={<UpdatePage />} />

@@ -145,7 +145,8 @@ export function createCrudStore<
     // ---- fetch：加载列表 ----
     const fetch = async (...args: TFetchArgs) => {
       const seq = ++_fetchSeq
-      setBase({ loading: true, error: null })
+      // 清除旧数据，避免切换角色时显示旧数据
+      setBase({ items: [], loading: true, error: null })
       _lastFetchArgs = args
       try {
         applyListResponse(await config.list(...args), seq)

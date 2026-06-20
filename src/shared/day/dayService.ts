@@ -60,6 +60,8 @@ export async function runPipeline(
   try {
     // 1. 加载 AI 设置
     const settings = getSettings(projectRoot)
+    console.log('[DayService] 加载的设置:', JSON.stringify(settings, null, 2))
+
     const apiKey = settings.apiKey as string | undefined
     if (!apiKey) {
       return {
@@ -72,6 +74,8 @@ export async function runPipeline(
     const modelId = (settings.model as string) || 'claude-sonnet-4-20250514'
     const temperature = (settings.temperature as number) ?? 0.8
     const maxTokens = (settings.maxTokens as number) ?? 4096
+
+    console.log('[DayService] AI 配置:', { provider, modelId, temperature, maxTokens })
 
     // 读取自定义提示词配置
     const customPrompts: CustomPrompts = {
@@ -218,7 +222,7 @@ export function listDays(
       return {
         slug: params.slug,
         day_number: dayNumber,
-        content: content.slice(0, 200), // 只返回前 200 字符
+        content: content.slice(0, 200), // 列表只返回前 200 字符作为预览
         file_path: fullPath,
       }
     })
