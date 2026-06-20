@@ -84,12 +84,23 @@ function FragmentPage() {
   const handleDelete = async (fragmentId: string) => {
     if (!activeSlug) return
     try {
-      await deleteFragment(activeSlug, fragmentId)
-      toast({
-        title: '删除成功',
-        status: 'success',
-        duration: 3000,
-      })
+      const result = await deleteFragment(activeSlug, fragmentId)
+      if (result.success) {
+        toast({
+          title: '删除成功',
+          status: 'success',
+          duration: 3000,
+        })
+        // 删除成功后重新加载列表
+        fetchFragments(activeSlug)
+      } else {
+        toast({
+          title: '删除失败',
+          description: result.errors?.[0] || '未知错误',
+          status: 'error',
+          duration: 3000,
+        })
+      }
     } catch (error: any) {
       toast({
         title: '删除失败',

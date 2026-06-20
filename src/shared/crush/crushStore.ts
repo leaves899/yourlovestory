@@ -69,10 +69,15 @@ function copyTemplateFile(
  * 创建新的 crush 角色（幂等）。
  * 缺 name/nickname/slug 时返回 {success:false, errors}（对齐 Python CLI 校验）。
  * 从 TEMPLATE/ 复制完整文件集（9 文件），替换占位符。
+ *
+ * @param projectRoot - 用户数据目录（可读写）
+ * @param params - 角色参数
+ * @param templateRoot - 模板所在目录（可选，默认与 projectRoot 相同）
  */
 export function createCrush(
   projectRoot: string,
-  params: { name: string; nickname: string; slug: string; description?: string; gender?: string }
+  params: { name: string; nickname: string; slug: string; description?: string; gender?: string },
+  templateRoot?: string
 ): CrushResult {
   const { name, nickname, slug } = params
   if (!name || !nickname || !slug) {
@@ -85,7 +90,10 @@ export function createCrush(
     fs.mkdirSync(path.join(dir, 'fragments'), { recursive: true })
     fs.mkdirSync(path.join(dir, 'plans'), { recursive: true })
 
-    const templateDir = path.join(projectRoot, 'crushes', 'TEMPLATE')
+    // 模板目录：优先使用 templateRoot，否则使用 projectRoot
+    const templateDir = templateRoot
+      ? path.join(templateRoot, 'crushes', 'TEMPLATE')
+      : path.join(projectRoot, 'crushes', 'TEMPLATE')
     const templateExists = fs.existsSync(templateDir)
     const now = nowISO()
     const replacements: Record<string, string> = {

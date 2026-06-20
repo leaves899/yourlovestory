@@ -15,6 +15,8 @@ const mutations = {
     dayService.update(slug, dayNumber, content),
   delete: (slug: string, dayNumber: number) =>
     dayService.delete(slug, dayNumber),
+  get: (slug: string, dayNumber: number) =>
+    dayService.get(slug, dayNumber),
 }
 
 export const useDayStore = createCrudStore<Day, [slug: string], typeof mutations>({

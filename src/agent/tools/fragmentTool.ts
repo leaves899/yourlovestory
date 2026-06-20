@@ -1,4 +1,5 @@
 import { Type } from 'typebox'
+import { app } from 'electron'
 import {
   managerRecordFragment,
   getFragmentsByDate,
@@ -63,7 +64,7 @@ export const fragmentTool = {
   }),
   execute: async (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
     try {
-      const projectRoot = process.cwd()
+      const projectRoot = app.getPath('userData')
       let result: any
 
       switch (params.action) {

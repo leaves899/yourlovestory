@@ -23,6 +23,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateCrush: (params: any) => ipcRenderer.invoke('crush:update', params),
   deleteCrush: (params: any) => ipcRenderer.invoke('crush:delete', params),
 
+  // 关系进度
+  relationshipProgress: (slug: string) => ipcRenderer.invoke('relationship:progress', { slug }),
+  relationshipDetectSignals: (slug: string, narrativeText: string) =>
+    ipcRenderer.invoke('relationship:detectSignals', { slug, narrativeText }),
+  relationshipAdvancePhase: (slug: string, reason?: string) =>
+    ipcRenderer.invoke('relationship:advancePhase', { slug, reason }),
+  relationshipSetPhase: (slug: string, phase: number) =>
+    ipcRenderer.invoke('relationship:setPhase', { slug, phase }),
+
   // 设置
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (params: any) => ipcRenderer.invoke('settings:update', params),

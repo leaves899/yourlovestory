@@ -1,4 +1,5 @@
 import { Type } from 'typebox'
+import { app } from 'electron'
 import { createCrush, getCrush, listCrushes, updateCrush, deleteCrush } from '../../shared/crush/crushStore'
 
 /**
@@ -7,9 +8,9 @@ import { createCrush, getCrush, listCrushes, updateCrush, deleteCrush } from '..
  * 已迁移到 TS crushStore，不再 spawn Python 子进程。
  * 返回结构与原 Python 一致（raw JSON 字符串进 content[0].text）。
  *
- * projectRoot 用 process.cwd()（agent 运行在 electron 主进程，cwd 为项目根）。
+ * projectRoot 用 app.getPath('userData')，打包后指向 userData 目录（可读写）。
  */
-const PROJECT_ROOT = process.cwd()
+const PROJECT_ROOT = app.getPath('userData')
 
 export const crushTool = {
   name: 'crush_manager',
