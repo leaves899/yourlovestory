@@ -24,10 +24,47 @@ interface FragmentRecord {
   updated_at: string
 }
 
+interface CrushRecord {
+  slug: string
+  name: string
+  nickname: string
+  gender?: string
+  description?: string
+  created_at: string
+  updated_at: string
+}
+
+interface ProgressRecord {
+  crush_slug: string
+  current_phase: number
+  phase_name: string
+  total_narratives: number
+  interaction_narratives: number
+  flirting_signals: number
+  accumulated_score: number
+  threshold: number
+  signals: any[]
+  phase_history: Array<{
+    phase: number
+    phase_name: string
+    started_at: string
+    ended_at?: string
+    duration_days?: number
+    narrative_count: number
+    transition_reason?: string
+  }>
+  created_at: string
+  updated_at: string
+}
+
 // 在浏览器上下文中运行的注入脚本
 function mockElectronAPIScript() {
   const mockCalls: MockCall[] = []
   const fragmentStore: FragmentRecord[] = []
+  const crushStore: CrushRecord[] = []
+  const progressStore: Record<string, ProgressRecord> = {}
+  const PHASE_NAMES = ['陌生人', '认识', '暧昧', '表白', '热恋']
+  const PHASE_THRESHOLDS = [60, 70, -1, -1, -1]
 
   function track(channel: string, params: any) {
     mockCalls.push({ channel, params, timestamp: Date.now() })
@@ -35,6 +72,47 @@ function mockElectronAPIScript() {
 
   function nextId(): string {
     return `frag_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_${String(Date.now()).slice(-6)}_${Math.random().toString(16).slice(2, 6)}`
+  }
+
+  function sanitizeSlug(value: string) {
+    return value
+      .normalize('NFKC')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, '')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .replace(/\.+$/g, '')
+  }
+
+  function buildSlug(params: any) {
+    return sanitizeSlug(params.slug || params.nickname || params.name || '') || `crush-${Date.now().toString(36)}`
+  }
+
+  function createProgress(slug: string, initialPhase: number = 0): ProgressRecord {
+    const now = new Date().toISOString()
+    return {
+      crush_slug: slug,
+      current_phase: initialPhase,
+      phase_name: PHASE_NAMES[initialPhase],
+      total_narratives: 0,
+      interaction_narratives: 0,
+      flirting_signals: 0,
+      accumulated_score: 0,
+      threshold: PHASE_THRESHOLDS[initialPhase],
+      signals: [],
+      phase_history: [
+        {
+          phase: initialPhase,
+          phase_name: PHASE_NAMES[initialPhase],
+          started_at: now,
+          narrative_count: 0,
+        },
+      ],
+      created_at: now,
+      updated_at: now,
+    }
   }
 
   ;(window as any).electronAPI = {
@@ -103,45 +181,88 @@ function mockElectronAPIScript() {
     // 角色管理
     createCrush: async (params: any) => {
       track('crush:create', params)
-      return {
-        success: true,
-        data: {
-          name: params.name,
-          nickname: params.nickname,
-          slug: params.slug,
-          gender: params.gender || 'unknown',
-          created_at: new Date().toISOString(),
-        },
+      const now = new Date().toISOString()
+      const slug = buildSlug(params)
+      const record: CrushRecord = {
+        name: params.name,
+        nickname: params.nickname,
+        slug,
+        gender: params.gender || 'unknown',
+        description: params.description || '',
+        created_at: now,
+        updated_at: now,
       }
+      const existingIndex = crushStore.findIndex((item) => item.slug === slug)
+      if (existingIndex >= 0) {
+        crushStore[existingIndex] = { ...crushStore[existingIndex], ...record }
+      } else {
+        crushStore.push(record)
+      }
+
+      if (!progressStore[slug]) {
+        progressStore[slug] = createProgress(slug, params.initialPhase || 0)
+      }
+
+      return { success: true, data: record }
     },
 
     getCrushes: async () => {
       track('crush:list', {})
-      return { success: true, data: [] }
+      return { success: true, data: [...crushStore] }
     },
 
     getCrush: async (params: any) => {
       track('crush:get', params)
-      return {
-        success: true,
-        data: { slug: params.slug, name: 'Mock Crush', nickname: 'Mock' },
+      const found = crushStore.find((item) => item.slug === params.slug)
+      if (found) {
+        return { success: true, data: found }
       }
+      return { success: false, errors: ['Crush not found'] }
     },
 
     updateCrush: async (params: any) => {
       track('crush:update', params)
-      return { success: true, data: params }
+      const idx = crushStore.findIndex((item) => item.slug === params.slug)
+      if (idx >= 0) {
+        crushStore[idx] = {
+          ...crushStore[idx],
+          ...params,
+          updated_at: new Date().toISOString(),
+        }
+        return { success: true, data: crushStore[idx] }
+      }
+      return { success: false, errors: ['Crush not found'] }
     },
 
     deleteCrush: async (params: any) => {
       track('crush:delete', params)
+      const idx = crushStore.findIndex((item) => item.slug === params.slug)
+      if (idx >= 0) {
+        crushStore.splice(idx, 1)
+      }
+      delete progressStore[params.slug]
       return { success: true }
     },
 
     // 日常写作
     generateDay: async (params: any) => {
       track('day:generate', params)
-      return { success: true, data: { day_number: params.day_number, content: 'Mock day content' } }
+      const override = (window as any).__mockGenerateDayResponse
+      if (typeof override === 'function') {
+        return override(params)
+      }
+      if (override) {
+        return override
+      }
+      return {
+        success: true,
+        data: {
+          slug: params.slug,
+          day_number: params.day_number,
+          content: 'Mock day content',
+          summary: params.summary || '',
+        },
+      }
     },
 
     getDays: async (params: any) => {
@@ -175,6 +296,69 @@ function mockElectronAPIScript() {
       return { success: true, data: params }
     },
 
+    // 关系进度
+    relationshipProgress: async (slug: string) => {
+      track('relationship:progress', { slug })
+      if (!progressStore[slug]) {
+        progressStore[slug] = createProgress(slug, 0)
+      }
+      return { success: true, data: progressStore[slug] }
+    },
+
+    relationshipDetectSignals: async (slug: string, narrativeText: string) => {
+      track('relationship:detectSignals', { slug, narrativeText })
+      const progress = progressStore[slug] || createProgress(slug, 0)
+      progressStore[slug] = progress
+      return {
+        success: true,
+        data: {
+          signals: [],
+          transitionResult: {
+            shouldTransition: false,
+            currentPhase: progress.current_phase,
+            nextPhase: progress.current_phase < 4 ? progress.current_phase + 1 : null,
+            currentScore: progress.accumulated_score,
+            threshold: progress.threshold,
+            signals: [],
+          },
+          progress,
+        },
+      }
+    },
+
+    relationshipAdvancePhase: async (slug: string, reason?: string) => {
+      track('relationship:advancePhase', { slug, reason })
+      const progress = progressStore[slug] || createProgress(slug, 0)
+      if (progress.current_phase < 4) {
+        const now = new Date().toISOString()
+        const currentHistory = progress.phase_history[progress.phase_history.length - 1]
+        if (currentHistory && !currentHistory.ended_at) {
+          currentHistory.ended_at = now
+          currentHistory.transition_reason = reason || '用户手动推进'
+        }
+        progress.current_phase += 1
+        progress.phase_name = PHASE_NAMES[progress.current_phase]
+        progress.accumulated_score = 0
+        progress.threshold = PHASE_THRESHOLDS[progress.current_phase]
+        progress.phase_history.push({
+          phase: progress.current_phase,
+          phase_name: progress.phase_name,
+          started_at: now,
+          narrative_count: 0,
+        })
+        progress.updated_at = now
+      }
+      progressStore[slug] = progress
+      return { success: true, data: progress }
+    },
+
+    relationshipSetPhase: async (slug: string, phase: number) => {
+      track('relationship:setPhase', { slug, phase })
+      const progress = createProgress(slug, phase)
+      progressStore[slug] = progress
+      return { success: true, data: progress }
+    },
+
     // 应用
     getAppInfo: async () => {
       return { name: 'yourcrush', version: '0.3.0', platform: 'test', arch: 'x64' }
@@ -191,6 +375,9 @@ function mockElectronAPIScript() {
 
   ;(window as any).__mockCalls = mockCalls
   ;(window as any).__mockStore = fragmentStore
+  ;(window as any).__mockCrushStore = crushStore
+  ;(window as any).__mockProgressStore = progressStore
+  ;(window as any).__mockGenerateDayResponse = null
 }
 
 /**

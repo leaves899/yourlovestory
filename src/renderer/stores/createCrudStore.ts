@@ -23,6 +23,7 @@ export interface ServiceResponse<T = unknown> {
   success: boolean
   data?: T
   errors?: string[]
+  warnings?: string[]
 }
 
 /**
@@ -59,8 +60,8 @@ export interface CrudConfig<
 
 /** 将每个 mutation 的参数签名保留，返回值统一为 Promise<ServiceResponse> */
 type WrapMutations<M extends Record<string, ServiceMethod>> = {
-  [K in keyof M]: M[K] extends (...args: infer A) => any
-    ? (...args: A) => Promise<ServiceResponse>
+  [K in keyof M]: M[K] extends (...args: infer A) => Promise<infer R>
+    ? (...args: A) => Promise<R>
     : never
 }
 

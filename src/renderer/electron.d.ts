@@ -1,10 +1,13 @@
+import type { GenerateDayResponse } from '../shared/day/dayService'
+import type { ServiceResponse } from './stores/createCrudStore'
+
 interface ElectronAPI {
   // 日常写作
-  generateDay: (params: any) => Promise<any>
-  getDays: (params: any) => Promise<any>
-  getDay: (params: any) => Promise<any>
-  updateDay: (params: any) => Promise<any>
-  deleteDay: (params: any) => Promise<any>
+  generateDay: (params: any) => Promise<GenerateDayResponse>
+  getDays: (params: any) => Promise<ServiceResponse>
+  getDay: (params: any) => Promise<ServiceResponse>
+  updateDay: (params: any) => Promise<ServiceResponse>
+  deleteDay: (params: any) => Promise<ServiceResponse>
 
   // 碎片日记
   recordFragment: (params: any) => Promise<any>

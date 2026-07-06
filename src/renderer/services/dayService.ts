@@ -1,5 +1,19 @@
+import type { GenerateDayResponse } from '../../shared/day/dayService'
+import type { ServiceResponse } from '../stores/createCrudStore'
+
+interface DayListItem {
+  slug: string
+  day_number: number
+  content: string
+  file_path?: string
+}
+
 const dayService = {
-  async generate(slug: string, dayNumber: number, summary?: string) {
+  async generate(
+    slug: string,
+    dayNumber: number,
+    summary?: string
+  ): Promise<GenerateDayResponse> {
     const response = await window.electronAPI.generateDay({
       slug,
       day_number: dayNumber,
@@ -8,12 +22,16 @@ const dayService = {
     return response
   },
 
-  async list(slug: string, page?: number, pageSize?: number) {
+  async list(
+    slug: string,
+    page?: number,
+    pageSize?: number
+  ): Promise<ServiceResponse<DayListItem[]>> {
     const response = await window.electronAPI.getDays({
       slug,
       page,
       page_size: pageSize,
-    })
+    }) as ServiceResponse<DayListItem[]>
     return response
   },
 

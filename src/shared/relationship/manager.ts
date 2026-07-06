@@ -5,7 +5,6 @@
  */
 
 import {
-  type RelationshipPhase,
   type ProgressData,
   type PhaseSignal,
   type PhaseTransitionResult,
@@ -14,12 +13,30 @@ import { detectPhaseSignals, checkPhaseTransition } from './phase_detector'
 import {
   loadProgress,
   saveProgress,
-  recordSignals,
   advancePhase,
-  incrementNarrativeCount,
   setPhase,
 } from './progress_store'
 import { getPhaseWritingRules, buildPhaseAwareSystemPrompt } from './phase_prompts'
+
+const INTERACTION_SIGNAL_TYPES = new Set([
+  'has_dialogue',
+  'knows_name',
+  'has_contact',
+])
+
+const FLIRTING_SIGNAL_TYPES = new Set([
+  'physical_contact',
+  'late_night_chat',
+  'alone_time',
+  'gift_exchange',
+])
+
+export interface NarrativeCompleteResult {
+  signals: PhaseSignal[]
+  shouldTransition: boolean
+  transitionMessage?: string
+  progress: ProgressData
+}
 
 /**
  * 检测叙事文本的阶段信号。
@@ -53,6 +70,30 @@ export function detectNarrativeSignals(
   }
 }
 
+function applyNarrativeProgress(progress: ProgressData, signals: PhaseSignal[]): void {
+  progress.total_narratives += 1
+
+  const currentHistory = progress.phase_history[progress.phase_history.length - 1]
+  if (currentHistory) {
+    currentHistory.narrative_count += 1
+  }
+
+  if (signals.length === 0) {
+    return
+  }
+
+  progress.signals.push(...signals)
+  progress.accumulated_score += signals.reduce((sum, signal) => sum + signal.score, 0)
+
+  if (signals.some((signal) => INTERACTION_SIGNAL_TYPES.has(signal.type))) {
+    progress.interaction_narratives += 1
+  }
+
+  if (signals.some((signal) => FLIRTING_SIGNAL_TYPES.has(signal.type))) {
+    progress.flirting_signals += 1
+  }
+}
+
 /**
  * 处理叙事完成事件。
  *
@@ -67,32 +108,25 @@ export function handleNarrativeComplete(
   projectRoot: string,
   crushSlug: string,
   narrativeText: string
-): {
-  signals: PhaseSignal[]
-  shouldTransition: boolean
-  transitionMessage?: string
-  progress: ProgressData
-} {
-  // 检测信号
+): NarrativeCompleteResult {
   const { signals, transitionResult, progress } = detectNarrativeSignals(
     projectRoot,
     crushSlug,
     narrativeText
   )
 
-  // 记录信号
-  if (signals.length > 0) {
-    recordSignals(projectRoot, crushSlug, signals)
-  }
+  applyNarrativeProgress(progress, signals)
 
-  // 增加叙事计数
-  incrementNarrativeCount(projectRoot, crushSlug)
+  const saveResult = saveProgress(projectRoot, progress)
+  if (!saveResult.success) {
+    throw new Error(saveResult.error)
+  }
 
   return {
     signals,
     shouldTransition: transitionResult.shouldTransition,
     transitionMessage: transitionResult.message,
-    progress: loadProgress(projectRoot, crushSlug), // 重新加载最新进度
+    progress,
   }
 }
 

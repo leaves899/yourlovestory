@@ -1,5 +1,6 @@
 import { createCrudStore } from './createCrudStore'
 import dayService from '../services/dayService'
+import type { GenerateDayResponse } from '../../shared/day/dayService'
 
 export interface Day {
   slug: string
@@ -9,8 +10,11 @@ export interface Day {
 }
 
 const mutations = {
-  generate: (slug: string, dayNumber: number, summary?: string) =>
-    dayService.generate(slug, dayNumber, summary),
+  generate: (
+    slug: string,
+    dayNumber: number,
+    summary?: string
+  ): Promise<GenerateDayResponse> => dayService.generate(slug, dayNumber, summary),
   update: (slug: string, dayNumber: number, content: string) =>
     dayService.update(slug, dayNumber, content),
   delete: (slug: string, dayNumber: number) =>

@@ -1,115 +1,160 @@
-import { test, expect } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { injectMockElectronAPI } from './mock-electron-api'
 
-test.describe('yourcrush App', () => {
+async function completeOnboarding(page: Page) {
+  await expect(page.getByTestId('onboarding-page')).toBeVisible()
+
+  await page.getByTestId('onboarding-next').click()
+  await page.getByTestId('onboarding-name').fill('夏夏')
+  await page.getByTestId('onboarding-nickname').fill('小夏')
+  await page.getByTestId('onboarding-description').fill('最近开始频繁聊天的同事')
+  await page.getByTestId('onboarding-next').click()
+
+  await page.getByTestId('onboarding-phase-2').click()
+  await page.getByTestId('onboarding-next').click()
+
+  await expect(page.getByTestId('onboarding-finish')).toBeVisible()
+  await page.getByTestId('onboarding-finish').click()
+}
+
+test.describe('首次上手体验', () => {
   test.beforeEach(async ({ page }) => {
     await injectMockElectronAPI(page)
     await page.goto('/')
   })
 
-  test('should display sidebar', async ({ page }) => {
-    await expect(page.locator('text=yourcrush')).toBeVisible()
-    await expect(page.locator('text=日常写作')).toBeVisible()
-    await expect(page.locator('text=碎片日记')).toBeVisible()
-    await expect(page.locator('text=角色管理')).toBeVisible()
-    await expect(page.locator('text=设置')).toBeVisible()
-    await expect(page.locator('text=帮助')).toBeVisible()
-    await expect(page.locator('text=更新')).toBeVisible()
+  test('新用户打开应用时默认进入 onboarding', async ({ page }) => {
+    await expect(page.getByTestId('app-title')).toBeVisible()
+    await expect(page.getByTestId('nav-day')).toBeVisible()
+    await expect(page.getByTestId('nav-fragment')).toBeVisible()
+    await expect(page.getByTestId('nav-progress')).toBeVisible()
+    await expect(page.getByTestId('nav-update')).toHaveCount(0)
+
+    await expect(page).toHaveURL(/#\/onboarding$/)
+    await expect(page.getByTestId('onboarding-page')).toBeVisible()
+    await expect(page.getByText('你的数据只保存在本地')).toBeVisible()
   })
 
-  test('should navigate to day page', async ({ page }) => {
-    await page.click('text=日常写作')
-    await expect(page.locator('text=日常写作')).toBeVisible()
+  test('完成 onboarding 后进入关系页并看到首次上手 CTA', async ({ page }) => {
+    await completeOnboarding(page)
+
+    await expect(page).toHaveURL(/#\/progress$/)
+    await expect(page.getByTestId('progress-page')).toBeVisible()
+    await expect(page.getByTestId('progress-first-use')).toBeVisible()
+    await expect(page.getByTestId('progress-current-phase')).toContainText('暧昧')
+    await expect(page.getByTestId('progress-cta-fragment')).toBeVisible()
+    await expect(page.getByTestId('progress-cta-day')).toBeVisible()
+
+    const progressStore = await page.evaluate(() => (window as any).__mockProgressStore)
+    const slugs = Object.keys(progressStore)
+    expect(slugs).toHaveLength(1)
+    expect(progressStore[slugs[0]].current_phase).toBe(2)
+    expect(progressStore[slugs[0]].total_narratives).toBe(0)
   })
 
-  test('should navigate to fragment page', async ({ page }) => {
-    await page.click('text=碎片日记')
-    await expect(page.locator('text=碎片日记')).toBeVisible()
-  })
+  test('完成 onboarding 后可以记录第一条碎片', async ({ page }) => {
+    await completeOnboarding(page)
 
-  test('should navigate to crush page', async ({ page }) => {
-    await page.click('text=角色管理')
-    await expect(page.locator('text=角色管理')).toBeVisible()
-  })
+    await page.getByTestId('progress-cta-fragment').click()
+    await expect(page.getByTestId('fragment-page')).toBeVisible()
 
-  test('should navigate to settings page', async ({ page }) => {
-    await page.click('text=设置')
-    await expect(page.locator('text=设置')).toBeVisible()
-  })
+    await page.getByTestId('open-record-fragment').click()
+    await page.getByTestId('fragment-origin').selectOption('crush')
+    await page.getByTestId('fragment-mood').selectOption('positive')
+    await page.getByTestId('fragment-content').fill('她今天主动问我要不要一起吃午饭')
+    await page.getByTestId('fragment-submit').click()
 
-  test('should navigate to help page', async ({ page }) => {
-    await page.click('text=帮助')
-    await expect(page.locator('text=帮助')).toBeVisible()
-  })
+    await expect(
+      page.getByTestId('fragment-page').getByText('她今天主动问我要不要一起吃午饭')
+    ).toBeVisible()
 
-  test('should navigate to update page', async ({ page }) => {
-    await page.click('text=更新')
-    await expect(page.locator('text=更新')).toBeVisible()
-  })
-})
-
-test.describe('Fragment smoke test', () => {
-  test.beforeEach(async ({ page }) => {
-    await injectMockElectronAPI(page)
-    await page.goto('/')
-  })
-
-  test('should record a fragment and show success toast', async ({ page }) => {
-    // 导航到碎片日记页
-    await page.click('text=碎片日记')
-    await expect(page.locator('text=碎片日记')).toBeVisible()
-
-    // 点击"记录碎片"按钮打开 Modal
-    await page.click('text=记录碎片')
-
-    // 等待 Modal 出现
-    await expect(page.locator('text=记录碎片').first()).toBeVisible()
-
-    // 填写表单
-    await page.fill('[placeholder="输入角色标识"]', 'smoke_test')
-    await page.fill('[placeholder="输入碎片内容"]', '这是一条端到端冒烟测试碎片内容')
-    await page.selectOption('select>>nth=0', 'user')     // 来源
-    await page.selectOption('select>>nth=1', 'positive')  // 情绪
-
-    // 提交
-    await page.click('button:has-text("记录")')
-
-    // 验证成功 toast 出现
-    const toast = page.locator('[role="alert"]')
-    await expect(toast).toBeVisible({ timeout: 5000 })
-    await expect(toast.locator('text=记录成功')).toBeVisible()
-
-    // 验证 mock API 被调用
-    const mockCalls = await page.evaluate(() => (window as any).__mockCalls)
-    const recordCall = mockCalls.find((c: any) => c.channel === 'fragment:record')
+    const calls = await page.evaluate(() => (window as any).__mockCalls)
+    const recordCall = calls.find((call: any) => call.channel === 'fragment:record')
     expect(recordCall).toBeDefined()
-    expect(recordCall.params.slug).toBe('smoke_test')
-    expect(recordCall.params.origin).toBe('user')
+    expect(recordCall.params.slug).toBe('小夏')
+    expect(recordCall.params.origin).toBe('crush')
     expect(recordCall.params.mood).toBe('positive')
   })
 
-  test('should record fragment and verify data in mock store', async ({ page }) => {
-    // 导航到碎片日记页
-    await page.click('text=碎片日记')
+  test('Day 生成后检测到可推进阶段时显示提示卡', async ({ page }) => {
+    await completeOnboarding(page)
+    await page.getByTestId('progress-cta-day').click()
+    await expect(page.getByTestId('day-page')).toBeVisible()
 
-    // 打开 Modal 并填写
-    await page.click('text=记录碎片')
-    await page.fill('[placeholder="输入角色标识"]', 'store_test')
-    await page.fill('[placeholder="输入碎片内容"]', '验证 mock store 数据')
-    await page.selectOption('select>>nth=0', 'crush')
-    await page.selectOption('select>>nth=1', 'mixed')
+    await page.evaluate(() => {
+      ;(window as any).__mockGenerateDayResponse = {
+        success: true,
+        data: {
+          slug: '小夏',
+          day_number: 1,
+          content: 'Mock day content',
+          summary: '一起散步',
+          relationship: {
+            signals: [],
+            shouldTransition: true,
+            transitionMessage: '关系已经可以往下一阶段确认了。',
+            progress: {
+              crush_slug: '小夏',
+              current_phase: 2,
+              phase_name: '暧昧',
+              total_narratives: 1,
+              interaction_narratives: 1,
+              flirting_signals: 1,
+              accumulated_score: 70,
+              threshold: 70,
+              signals: [],
+              phase_history: [
+                {
+                  phase: 2,
+                  phase_name: '暧昧',
+                  started_at: '2026-01-01T00:00:00.000Z',
+                  narrative_count: 1,
+                },
+              ],
+              created_at: '2026-01-01T00:00:00.000Z',
+              updated_at: '2026-01-01T00:00:00.000Z',
+            },
+          },
+        },
+      }
+    })
 
-    await page.click('button:has-text("记录")')
+    await page.getByTestId('open-generate-day').click()
+    await page.getByTestId('day-number-input').fill('1')
+    await page.getByTestId('day-summary-input').fill('一起散步')
+    await page.getByTestId('submit-generate-day').click()
 
-    // 等待 toast
-    await expect(page.locator('[role="alert"]')).toBeVisible({ timeout: 5000 })
+    await expect(page.getByTestId('day-relationship-alert')).toBeVisible()
+    await expect(page.getByTestId('day-relationship-alert')).toContainText(
+      '关系已经可以往下一阶段确认了。'
+    )
+    await expect(page.getByTestId('day-relationship-alert-cta')).toBeVisible()
+  })
 
-    // 验证 mock store 中有碎片数据
-    const store = await page.evaluate(() => (window as any).__mockStore)
-    expect(store.length).toBeGreaterThan(0)
-    expect(store[0].slug).toBe('store_test')
-    expect(store[0].origin).toBe('crush')
-    expect(store[0].mood).toBe('mixed')
-    expect(store[0].content).toContain('验证 mock store 数据')
+  test('Day 生成成功但关系同步失败时显示 warning toast', async ({ page }) => {
+    await completeOnboarding(page)
+    await page.getByTestId('progress-cta-day').click()
+    await expect(page.getByTestId('day-page')).toBeVisible()
+
+    await page.evaluate(() => {
+      ;(window as any).__mockGenerateDayResponse = {
+        success: true,
+        data: {
+          slug: '小夏',
+          day_number: 1,
+          content: 'Mock day content',
+          summary: '一起散步',
+        },
+        warnings: ['关系进度更新失败: disk full'],
+      }
+    })
+
+    await page.getByTestId('open-generate-day').click()
+    await page.getByTestId('day-number-input').fill('1')
+    await page.getByTestId('day-summary-input').fill('一起散步')
+    await page.getByTestId('submit-generate-day').click()
+
+    await expect(page.getByText('Day 已生成，但关系进度未能同步')).toBeVisible()
+    await expect(page.getByText('关系进度更新失败: disk full')).toBeVisible()
   })
 })

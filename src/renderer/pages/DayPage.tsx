@@ -1,35 +1,51 @@
-import React, { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
   Box,
   Button,
   Card,
   CardBody,
   CardHeader,
   Heading,
+  HStack,
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  ModalOverlay,
+  Progress,
+  Spinner,
   Stack,
   Text,
   Textarea,
-  useToast,
-  Modal,
-  ModalOverlay,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-  ModalCloseButton,
   useDisclosure,
-  Alert,
-  AlertIcon,
-  AlertTitle,
-  AlertDescription,
-  Progress,
-  HStack,
-  Spinner,
+  useToast,
 } from '@chakra-ui/react'
+import { useNavigate } from 'react-router-dom'
+import type {
+  DayPromptPreviewData,
+  GeneratedDayData,
+} from '../../shared/day/dayService'
 import { useDayStore } from '../stores/dayStore'
 import { useAppStore } from '../stores/appStore'
 
+interface RelationshipPromptState {
+  message: string
+}
+
+function isGeneratedDayData(
+  data: GeneratedDayData | DayPromptPreviewData
+): data is GeneratedDayData {
+  return 'content' in data
+}
+
 function DayPage() {
+  const navigate = useNavigate()
   const [dayNumber, setDayNumber] = useState(1)
   const [summary, setSummary] = useState('')
   const [editingDay, setEditingDay] = useState<{ dayNumber: number; content: string } | null>(null)
@@ -37,20 +53,31 @@ function DayPage() {
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState(0)
   const [expandedDay, setExpandedDay] = useState<number | null>(null)
-  const [expandedContent, setExpandedContent] = useState<string>('')
-  const { items: days, loading, error, fetch: fetchDays, generate: generateDay, update: updateDay, delete: deleteDay, get: getDay } = useDayStore()
-  const { activeSlug, crushes } = useAppStore()
+  const [expandedContent, setExpandedContent] = useState('')
+  const [relationshipPrompt, setRelationshipPrompt] = useState<RelationshipPromptState | null>(null)
+  const {
+    items: days,
+    fetch: fetchDays,
+    generate: generateDay,
+    update: updateDay,
+    delete: deleteDay,
+    get: getDay,
+  } = useDayStore()
+  const { activeSlug, crushes, needsOnboarding } = useAppStore()
   const { isOpen, onOpen, onClose } = useDisclosure()
   const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure()
   const toast = useToast()
 
   useEffect(() => {
     if (activeSlug) {
-      // 切换角色时重置生成状态
       setGenerating(false)
       setProgress(0)
+      setRelationshipPrompt(null)
       fetchDays(activeSlug)
+      return
     }
+
+    setRelationshipPrompt(null)
   }, [activeSlug, fetchDays])
 
   const handleGenerate = async () => {
@@ -58,7 +85,6 @@ function DayPage() {
     setGenerating(true)
     setProgress(0)
 
-    // 模拟进度（实际进度无法从 fetch 获取）
     const progressInterval = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 90) return prev
@@ -70,13 +96,36 @@ function DayPage() {
       const result = await generateDay(activeSlug, dayNumber, summary)
       if (result.success) {
         setProgress(100)
+
+        const generatedData = isGeneratedDayData(result.data) ? result.data : null
+        const relationship = generatedData?.relationship
+        if (relationship?.shouldTransition) {
+          setRelationshipPrompt({
+            message:
+              relationship.transitionMessage ??
+              '检测到关系阶段可能可以推进，去关系进度页确认。',
+          })
+        } else {
+          setRelationshipPrompt(null)
+        }
+
         toast({
           title: '生成成功',
           status: 'success',
           duration: 3000,
         })
+
+        if (result.warnings && result.warnings.length > 0) {
+          toast({
+            title: 'Day 已生成，但关系进度未能同步',
+            description: result.warnings[0],
+            status: 'warning',
+            duration: 5000,
+            isClosable: true,
+          })
+        }
+
         onClose()
-        // 生成成功后重新加载列表
         fetchDays(activeSlug)
       } else {
         toast({
@@ -99,25 +148,6 @@ function DayPage() {
         setGenerating(false)
         setProgress(0)
       }, 500)
-    }
-  }
-
-  const handleUpdate = async (dayNumber: number, content: string) => {
-    if (!activeSlug) return
-    try {
-      await updateDay(activeSlug, dayNumber, content)
-      toast({
-        title: '更新成功',
-        status: 'success',
-        duration: 3000,
-      })
-    } catch (error: any) {
-      toast({
-        title: '更新失败',
-        description: error.message,
-        status: 'error',
-        duration: 3000,
-      })
     }
   }
 
@@ -148,17 +178,16 @@ function DayPage() {
     }
   }
 
-  const handleDelete = async (dayNumber: number) => {
+  const handleDelete = async (dayNumberToDelete: number) => {
     if (!activeSlug) return
     try {
-      const result = await deleteDay(activeSlug, dayNumber)
+      const result = await deleteDay(activeSlug, dayNumberToDelete)
       if (result.success) {
         toast({
           title: '删除成功',
           status: 'success',
           duration: 3000,
         })
-        // 删除成功后重新加载列表
         fetchDays(activeSlug)
       } else {
         toast({
@@ -178,20 +207,29 @@ function DayPage() {
     }
   }
 
-  // 没有选中角色时显示引导
   if (!activeSlug) {
     return (
-      <Box>
-        <Heading mb={4}>日常写作</Heading>
+      <Box data-testid="day-page">
+        <Heading mb={4} data-testid="day-page-title">日常写作</Heading>
         <Alert status="info" borderRadius="md">
           <AlertIcon />
           <Box>
-            <AlertTitle>欢迎使用 yourcrush</AlertTitle>
+            <AlertTitle>{needsOnboarding() ? '先完成首次设置' : '请选择一个角色'}</AlertTitle>
             <AlertDescription>
-              {crushes.length === 0
-                ? '请先在「角色管理」页面创建一个角色，或检查预置角色是否正确安装。'
-                : '请在侧边栏选择一个角色开始使用。'}
+              {needsOnboarding()
+                ? '先创建角色并确认关系起点，再回来写第一篇 Day，会更容易理解这条故事线。'
+                : crushes.length === 0
+                  ? '当前还没有可用角色，请先创建一个角色。'
+                  : '请在侧边栏选择一个角色开始使用。'}
             </AlertDescription>
+            <Button
+              mt={3}
+              size="sm"
+              colorScheme="blue"
+              onClick={() => navigate(needsOnboarding() ? '/onboarding' : '/crush')}
+            >
+              {needsOnboarding() ? '去完成首次设置' : '去角色管理'}
+            </Button>
           </Box>
         </Alert>
       </Box>
@@ -199,18 +237,57 @@ function DayPage() {
   }
 
   return (
-    <Box>
-      <Heading mb={4}>日常写作</Heading>
+    <Box data-testid="day-page">
+      <Heading mb={4} data-testid="day-page-title">日常写作</Heading>
 
-      <Button onClick={onOpen} mb={4} isDisabled={generating}>
+      <Button
+        onClick={onOpen}
+        mb={4}
+        isDisabled={generating}
+        data-testid="open-generate-day"
+      >
         生成日常写作
       </Button>
+
+      {relationshipPrompt && (
+        <Alert
+          status="success"
+          borderRadius="md"
+          mb={4}
+          alignItems="flex-start"
+          data-testid="day-relationship-alert"
+        >
+          <AlertIcon mt={1} />
+          <Box flex="1">
+            <AlertTitle>关系进度可能可以推进</AlertTitle>
+            <AlertDescription>{relationshipPrompt.message}</AlertDescription>
+          </Box>
+          <HStack ml={4} alignSelf="center">
+            <Button
+              size="sm"
+              colorScheme="green"
+              onClick={() => navigate('/progress')}
+              data-testid="day-relationship-alert-cta"
+            >
+              去关系进度页
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setRelationshipPrompt(null)}
+              data-testid="day-relationship-alert-dismiss"
+            >
+              关闭
+            </Button>
+          </HStack>
+        </Alert>
+      )}
 
       {generating && (
         <Box mb={4}>
           <HStack mb={2}>
             <Spinner size="sm" />
-            <Text fontSize="sm">正在生成叙事，请稍候...</Text>
+            <Text fontSize="sm">正在生成叙事，请稍候..</Text>
           </HStack>
           <Progress value={progress} size="sm" colorScheme="blue" borderRadius="md" />
         </Box>
@@ -242,8 +319,9 @@ function DayPage() {
                       if (!activeSlug) return
                       const result = await getDay(activeSlug, day.day_number)
                       if (result.success) {
+                        const fullDay = result.data as { content: string }
                         setExpandedDay(day.day_number)
-                        setExpandedContent(result.data.content)
+                        setExpandedContent(fullDay.content)
                       }
                     }}
                   >
@@ -278,6 +356,7 @@ function DayPage() {
                   value={dayNumber}
                   onChange={(e) => setDayNumber(Number(e.target.value))}
                   placeholder="输入 Day 编号"
+                  data-testid="day-number-input"
                 />
               </Box>
               <Box>
@@ -285,13 +364,21 @@ function DayPage() {
                 <Textarea
                   value={summary}
                   onChange={(e) => setSummary(e.target.value)}
-                  placeholder="输入当天摘要（例如：今天和夏夏一起去了西湖边散步）"
+                  placeholder="输入当天摘要，例如：今天和夏夏一起去了西湖边散步"
+                  data-testid="day-summary-input"
                 />
               </Box>
             </Stack>
           </ModalBody>
           <ModalFooter>
-            <Button colorScheme="blue" mr={3} onClick={handleGenerate} isLoading={generating} loadingText="生成中...">
+            <Button
+              colorScheme="blue"
+              mr={3}
+              onClick={handleGenerate}
+              isLoading={generating}
+              loadingText="生成中.."
+              data-testid="submit-generate-day"
+            >
               生成
             </Button>
             <Button variant="ghost" onClick={onClose} isDisabled={generating}>
