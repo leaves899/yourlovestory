@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Box,
   Button,
@@ -8,7 +8,6 @@ import {
   Heading,
   Stack,
   Text,
-  Textarea,
   useToast,
   Modal,
   ModalOverlay,
@@ -18,8 +17,11 @@ import {
   ModalFooter,
   ModalCloseButton,
   useDisclosure,
+  Input,
 } from '@chakra-ui/react'
 import { useCrushStore } from '../stores/crushStore'
+import { useAppStore } from '../stores/appStore'
+import { buildDefaultCrushSlug } from '../../shared/crush/slug'
 
 function CrushPage() {
   const [name, setName] = useState('')
@@ -28,7 +30,8 @@ function CrushPage() {
   const [editingCrush, setEditingCrush] = useState<{ slug: string; name: string; nickname: string } | null>(null)
   const [editName, setEditName] = useState('')
   const [editNickname, setEditNickname] = useState('')
-  const { items: crushes, loading, error, fetch: fetchCrushes, create: createCrush, update: updateCrush, delete: deleteCrush } = useCrushStore()
+  const { items: crushes, fetch: fetchCrushes, create: createCrush, update: updateCrush, delete: deleteCrush } = useCrushStore()
+  const { fetchCrushes: refreshAppCrushes, setActiveSlug } = useAppStore()
   const { isOpen, onOpen, onClose } = useDisclosure()
   const { isOpen: isEditOpen, onOpen: onEditOpen, onClose: onEditClose } = useDisclosure()
   const toast = useToast()
@@ -39,7 +42,17 @@ function CrushPage() {
 
   const handleCreate = async () => {
     try {
-      await createCrush(name, nickname, slug)
+      const response = await createCrush({
+        name,
+        nickname,
+        slug: slug.trim() || buildDefaultCrushSlug(name, nickname),
+      })
+      if (!response.success || !response.data) {
+        throw new Error(response.errors?.[0] || '创建失败')
+      }
+      const created = response.data as { slug: string }
+      await refreshAppCrushes()
+      setActiveSlug(created.slug)
       toast({
         title: '创建成功',
         status: 'success',
@@ -72,6 +85,7 @@ function CrushPage() {
         status: 'success',
         duration: 3000,
       })
+      await refreshAppCrushes()
       onEditClose()
       setEditingCrush(null)
     } catch (error: any) {
@@ -88,6 +102,7 @@ function CrushPage() {
     try {
       const result = await deleteCrush(slug)
       if (result.success) {
+        await refreshAppCrushes()
         toast({
           title: '删除成功',
           status: 'success',
@@ -156,27 +171,27 @@ function CrushPage() {
           <ModalBody>
             <Stack spacing={4}>
               <Box>
-                <Text mb={2}>真实姓名</Text>
-                <Textarea
+                <Text mb={2}>角色名</Text>
+                <Input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="输入真实姓名"
+                  placeholder="你想怎么称呼 ta"
                 />
               </Box>
               <Box>
-                <Text mb={2}>昵称</Text>
-                <Textarea
+                <Text mb={2}>平时称呼</Text>
+                <Input
                   value={nickname}
                   onChange={(e) => setNickname(e.target.value)}
-                  placeholder="输入昵称"
+                  placeholder="例如：夏夏、小周、阿琳"
                 />
               </Box>
               <Box>
                 <Text mb={2}>标识</Text>
-                <Textarea
+                <Input
                   value={slug}
                   onChange={(e) => setSlug(e.target.value)}
-                  placeholder="输入标识"
+                  placeholder="留空则自动生成"
                 />
               </Box>
             </Stack>
@@ -200,19 +215,19 @@ function CrushPage() {
           <ModalBody>
             <Stack spacing={4}>
               <Box>
-                <Text mb={2}>真实姓名</Text>
-                <Textarea
+                <Text mb={2}>角色名</Text>
+                <Input
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
-                  placeholder="输入真实姓名"
+                  placeholder="输入角色名"
                 />
               </Box>
               <Box>
-                <Text mb={2}>昵称</Text>
-                <Textarea
+                <Text mb={2}>平时称呼</Text>
+                <Input
                   value={editNickname}
                   onChange={(e) => setEditNickname(e.target.value)}
-                  placeholder="输入昵称"
+                  placeholder="输入平时称呼"
                 />
               </Box>
             </Stack>

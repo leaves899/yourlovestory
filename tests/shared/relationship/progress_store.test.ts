@@ -2,6 +2,8 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import {
+  createInitialProgress,
+  initializeProgress,
   loadProgress,
   saveProgress,
   recordSignals,
@@ -48,6 +50,18 @@ describe('Progress Store', () => {
     })
   })
 
+  describe('createInitialProgress', () => {
+    test('按指定阶段创建初始进度', () => {
+      const progress = createInitialProgress(testSlug, 3)
+
+      expect(progress.current_phase).toBe(3)
+      expect(progress.phase_name).toBe('表白')
+      expect(progress.threshold).toBe(-1)
+      expect(progress.phase_history).toHaveLength(1)
+      expect(progress.phase_history[0].phase).toBe(3)
+    })
+  })
+
   describe('saveProgress', () => {
     test('保存成功', () => {
       const progress = loadProgress(testRoot, testSlug)
@@ -68,6 +82,25 @@ describe('Progress Store', () => {
       const loaded = loadProgress(testRoot, testSlug)
       expect(loaded.updated_at).not.toBe('')
       expect(loaded.updated_at).toBeDefined()
+    })
+  })
+
+  describe('initializeProgress', () => {
+    test('首次初始化会写入指定起点', () => {
+      const result = initializeProgress(testRoot, testSlug, 2)
+
+      expect(result.success).toBe(true)
+      expect(result.progress.current_phase).toBe(2)
+      expect(loadProgress(testRoot, testSlug).current_phase).toBe(2)
+    })
+
+    test('已有进度时不覆盖原始阶段', () => {
+      initializeProgress(testRoot, testSlug, 1)
+      const result = initializeProgress(testRoot, testSlug, 4)
+
+      expect(result.success).toBe(true)
+      expect(result.progress.current_phase).toBe(1)
+      expect(loadProgress(testRoot, testSlug).current_phase).toBe(1)
     })
   })
 
@@ -114,10 +147,10 @@ describe('Progress Store', () => {
 
     test('已是最高阶段时不推进', () => {
       // 先推进到最高阶段
-      setPhase(testRoot, testSlug, 3)
+      setPhase(testRoot, testSlug, 4)
       const progress = advancePhase(testRoot, testSlug)
 
-      expect(progress.current_phase).toBe(3)
+      expect(progress.current_phase).toBe(4)
       expect(progress.phase_history).toHaveLength(2) // 默认 + 手动设置
     })
   })

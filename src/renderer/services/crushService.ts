@@ -1,9 +1,14 @@
 const crushService = {
-  async create(name: string, nickname: string, slug: string) {
+  async create(params: {
+    name: string
+    nickname: string
+    slug?: string
+    gender?: string
+    description?: string
+    initialPhase?: number
+  }) {
     const response = await window.electronAPI.createCrush({
-      name,
-      nickname,
-      slug,
+      ...params,
     })
     return response
   },

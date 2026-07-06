@@ -1,31 +1,43 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
-  Box,
-  VStack,
-  HStack,
-  Text,
+  Alert,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
   Badge,
-  Progress,
+  Box,
+  Button,
   Card,
   CardBody,
   CardHeader,
+  Center,
+  Divider,
   Heading,
+  HStack,
+  Progress,
+  Stack,
+  Spinner,
   Stat,
   StatLabel,
   StatNumber,
-  StatHelpText,
-  Divider,
-  Button,
+  Text,
+  VStack,
   useToast,
-  Spinner,
-  Center,
 } from '@chakra-ui/react'
-import { FaArrowRight, FaHeart, FaStar, FaClock } from 'react-icons/fa'
+import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../stores/appStore'
+import {
+  PHASE_PROMPT_CONFIG,
+  PHASE_PROMPT_ORDER,
+} from '../../shared/relationship/phase_prompts'
+import {
+  PHASE_NAMES,
+  type RelationshipPhase,
+} from '../../shared/relationship/models'
 
 interface ProgressData {
   crush_slug: string
-  current_phase: number
+  current_phase: RelationshipPhase
   phase_name: string
   total_narratives: number
   interaction_narratives: number
@@ -40,7 +52,7 @@ interface ProgressData {
     narrative_excerpt?: string
   }>
   phase_history: Array<{
-    phase: number
+    phase: RelationshipPhase
     phase_name: string
     started_at: string
     ended_at?: string
@@ -52,32 +64,23 @@ interface ProgressData {
   updated_at: string
 }
 
-const PHASE_NAMES: Record<number, string> = {
-  0: '陌生人',
-  1: '认识',
-  2: '暧昧',
-  3: '表白',
-  4: '热恋',
-}
-
-const PHASE_COLORS: Record<number, string> = {
+const PHASE_COLORS: Record<RelationshipPhase, string> = {
   0: 'gray',
   1: 'blue',
   2: 'pink',
   3: 'red',
-  4: 'purple',
+  4: 'orange',
 }
 
-const PHASE_ICONS: Record<number, any> = {
-  0: FaStar,
-  1: FaClock,
-  2: FaHeart,
-  3: FaHeart,
-  4: FaHeart,
+function getAdvanceLabel(phase: RelationshipPhase): string {
+  if (phase === 2) return '进入表白'
+  if (phase === 3) return '进入热恋'
+  return '手动推进阶段'
 }
 
 function ProgressPage() {
-  const { activeSlug } = useAppStore()
+  const navigate = useNavigate()
+  const { activeSlug, needsOnboarding } = useAppStore()
   const [progress, setProgress] = useState<ProgressData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -86,7 +89,12 @@ function ProgressPage() {
   useEffect(() => {
     if (activeSlug) {
       loadProgress()
+      return
     }
+
+    setLoading(false)
+    setProgress(null)
+    setError(null)
   }, [activeSlug])
 
   const loadProgress = async () => {
@@ -118,7 +126,7 @@ function ProgressPage() {
         setProgress(result.data)
         toast({
           title: '阶段推进成功',
-          description: `已进入${PHASE_NAMES[result.data.current_phase]}阶段`,
+          description: `已进入${PHASE_NAMES[result.data.current_phase as RelationshipPhase]}阶段`,
           status: 'success',
           duration: 3000,
           isClosable: true,
@@ -145,15 +153,35 @@ function ProgressPage() {
 
   if (!activeSlug) {
     return (
-      <Center h="100%">
-        <Text color="gray.500">请先选择一个角色</Text>
+      <Center h="100%" data-testid="progress-page">
+        <Box maxW="560px">
+          <Alert status="info" borderRadius="md">
+            <AlertIcon />
+            <Box>
+              <AlertTitle>{needsOnboarding() ? '先完成首次设置' : '请先选择一个角色'}</AlertTitle>
+              <AlertDescription>
+                {needsOnboarding()
+                  ? '先创建角色并确认你们现在的关系起点，再回来查看完整的关系路线图。'
+                  : '选定角色后，这里会展示关系阶段、进展信号和下一步建议。'}
+              </AlertDescription>
+              <Button
+                mt={3}
+                size="sm"
+                colorScheme="blue"
+                onClick={() => navigate(needsOnboarding() ? '/onboarding' : '/')}
+              >
+                {needsOnboarding() ? '去完成首次设置' : '回到日常写作'}
+              </Button>
+            </Box>
+          </Alert>
+        </Box>
       </Center>
     )
   }
 
   if (loading) {
     return (
-      <Center h="100%">
+      <Center h="100%" data-testid="progress-page">
         <Spinner size="xl" color="blue.500" />
       </Center>
     )
@@ -161,7 +189,7 @@ function ProgressPage() {
 
   if (error) {
     return (
-      <Center h="100%">
+      <Center h="100%" data-testid="progress-page">
         <VStack>
           <Text color="red.500">{error}</Text>
           <Button onClick={loadProgress}>重试</Button>
@@ -172,51 +200,127 @@ function ProgressPage() {
 
   if (!progress) {
     return (
-      <Center h="100%">
+      <Center h="100%" data-testid="progress-page">
         <Text color="gray.500">暂无进度数据</Text>
       </Center>
     )
   }
 
   const currentPhase = progress.current_phase
+  const currentPhaseConfig = PHASE_PROMPT_CONFIG[currentPhase]
+  const firstUseMode = progress.total_narratives === 0
   const phaseProgress = progress.threshold > 0
     ? Math.min(100, (progress.accumulated_score / progress.threshold) * 100)
     : 100
 
   return (
-    <Box p={6} maxW="800px" mx="auto">
+    <Box p={6} maxW="860px" mx="auto" data-testid="progress-page">
       <VStack spacing={6} align="stretch">
-        {/* 标题 */}
-        <Heading size="lg">关系进度</Heading>
+        <Heading size="lg" data-testid="progress-page-title">关系进度</Heading>
 
-        {/* 当前阶段卡片 */}
+        {firstUseMode && (
+          <Card borderWidth="1px" borderColor="blue.200" bg="blue.50" data-testid="progress-first-use">
+            <CardHeader>
+              <Heading size="md">你已经站在这段关系的起点上</Heading>
+            </CardHeader>
+            <CardBody>
+              <Stack spacing={5}>
+                <Box>
+                  <HStack spacing={3} mb={2}>
+                    <Badge colorScheme={currentPhaseConfig.color} fontSize="md" px={3} py={1}>
+                      {currentPhaseConfig.name}
+                    </Badge>
+                    <Text color="gray.700">
+                      当前起点：阶段 {currentPhase + 1} / {PHASE_PROMPT_ORDER.length}
+                    </Text>
+                  </HStack>
+                  <Text color="gray.700">
+                    {currentPhaseConfig.description}。接下来你可以先去记录一条碎片，或者直接写第一篇 Day，让这条关系线开始真正动起来。
+                  </Text>
+                </Box>
+
+                <Box>
+                  <Heading size="sm" mb={3}>完整路线图</Heading>
+                  <Stack spacing={3}>
+                    {PHASE_PROMPT_ORDER.map((phase) => {
+                      const config = PHASE_PROMPT_CONFIG[phase]
+                      const isCurrent = phase === currentPhase
+
+                      return (
+                        <HStack
+                          key={phase}
+                          spacing={3}
+                          p={3}
+                          borderRadius="md"
+                          bg={isCurrent ? 'white' : 'transparent'}
+                          borderWidth={isCurrent ? '1px' : '0px'}
+                          borderColor={isCurrent ? `${config.color}.200` : 'transparent'}
+                        >
+                          <Badge colorScheme={config.color} minW="56px" textAlign="center">
+                            {config.name}
+                          </Badge>
+                          <Text fontSize="sm" color="gray.600" flex="1">
+                            {config.description}
+                          </Text>
+                          {isCurrent && <Badge colorScheme="green">当前起点</Badge>}
+                        </HStack>
+                      )
+                    })}
+                  </Stack>
+                </Box>
+
+                <HStack spacing={3}>
+                  <Button
+                    colorScheme="blue"
+                    onClick={() => navigate('/fragment')}
+                    data-testid="progress-cta-fragment"
+                  >
+                    去记录第一条碎片
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate('/')}
+                    data-testid="progress-cta-day"
+                  >
+                    去写第一篇 Day
+                  </Button>
+                </HStack>
+              </Stack>
+            </CardBody>
+          </Card>
+        )}
+
         <Card>
           <CardHeader>
             <HStack justify="space-between">
               <HStack>
-                <Badge colorScheme={PHASE_COLORS[currentPhase]} fontSize="md" px={3} py={1}>
+                <Badge
+                  colorScheme={PHASE_COLORS[currentPhase]}
+                  fontSize="md"
+                  px={3}
+                  py={1}
+                  data-testid="progress-current-phase"
+                >
                   {PHASE_NAMES[currentPhase]}
                 </Badge>
                 <Text fontSize="sm" color="gray.500">
-                  阶段 {currentPhase + 1} / 4
+                  阶段 {currentPhase + 1} / {PHASE_PROMPT_ORDER.length}
                 </Text>
               </HStack>
-              {currentPhase < 3 && (
+              {!firstUseMode && currentPhase < PHASE_PROMPT_ORDER.length - 1 && (
                 <Button
                   size="sm"
                   colorScheme={PHASE_COLORS[currentPhase]}
                   onClick={handleAdvancePhase}
-                  isDisabled={currentPhase === 2 && progress.accumulated_score < progress.threshold}
                 >
-                  {currentPhase === 2 ? '表白' : '推进阶段'}
+                  {getAdvanceLabel(currentPhase)}
                 </Button>
               )}
             </HStack>
           </CardHeader>
           <CardBody>
             <VStack spacing={4} align="stretch">
-              {/* 进度条 */}
-              {currentPhase < 3 && (
+              {progress.threshold > 0 && !firstUseMode && (
                 <Box>
                   <HStack justify="space-between" mb={2}>
                     <Text fontSize="sm">阶段进度</Text>
@@ -233,7 +337,8 @@ function ProgressPage() {
                 </Box>
               )}
 
-              {/* 统计数据 */}
+              <Text color="gray.600">{currentPhaseConfig.description}</Text>
+
               <HStack spacing={8}>
                 <Stat>
                   <StatLabel>总叙事数</StatLabel>
@@ -252,8 +357,7 @@ function ProgressPage() {
           </CardBody>
         </Card>
 
-        {/* 最近信号 */}
-        {progress.signals.length > 0 && (
+        {!firstUseMode && progress.signals.length > 0 && (
           <Card>
             <CardHeader>
               <Heading size="md">最近信号</Heading>
@@ -283,70 +387,42 @@ function ProgressPage() {
           </Card>
         )}
 
-        {/* 阶段历史 */}
-        <Card>
-          <CardHeader>
-            <Heading size="md">阶段历史</Heading>
-          </CardHeader>
-          <CardBody>
-            <VStack spacing={4} align="stretch">
-              {progress.phase_history.map((history, index) => (
-                <Box key={index}>
-                  <HStack justify="space-between">
-                    <HStack>
-                      <Badge colorScheme={PHASE_COLORS[history.phase]}>
-                        {history.phase_name}
-                      </Badge>
-                      <Text fontSize="sm">
-                        {history.narrative_count} 篇叙事
+        {!firstUseMode && (
+          <Card>
+            <CardHeader>
+              <Heading size="md">阶段历史</Heading>
+            </CardHeader>
+            <CardBody>
+              <VStack spacing={4} align="stretch">
+                {progress.phase_history.map((history, index) => (
+                  <Box key={`${history.phase}-${history.started_at}`}>
+                    <HStack justify="space-between">
+                      <HStack>
+                        <Badge colorScheme={PHASE_COLORS[history.phase]}>
+                          {history.phase_name}
+                        </Badge>
+                        <Text fontSize="sm">
+                          {history.narrative_count} 篇叙事
+                        </Text>
+                      </HStack>
+                      <Text fontSize="xs" color="gray.500">
+                        {new Date(history.started_at).toLocaleDateString()}
+                        {history.ended_at && ` - ${new Date(history.ended_at).toLocaleDateString()}`}
+                        {history.duration_days && ` (${history.duration_days} 天)`}
                       </Text>
                     </HStack>
-                    <Text fontSize="xs" color="gray.500">
-                      {new Date(history.started_at).toLocaleDateString()}
-                      {history.ended_at && ` - ${new Date(history.ended_at).toLocaleDateString()}`}
-                      {history.duration_days && ` (${history.duration_days} 天)`}
-                    </Text>
-                  </HStack>
-                  {history.transition_reason && (
-                    <Text fontSize="sm" color="gray.600" mt={1}>
-                      原因：{history.transition_reason}
-                    </Text>
-                  )}
-                  {index < progress.phase_history.length - 1 && <Divider mt={3} />}
-                </Box>
-              ))}
-            </VStack>
-          </CardBody>
-        </Card>
-
-        {/* 阶段说明 */}
-        <Card>
-          <CardHeader>
-            <Heading size="md">阶段说明</Heading>
-          </CardHeader>
-          <CardBody>
-            <VStack spacing={4} align="stretch">
-              {Object.entries(PHASE_NAMES).map(([phase, name]) => (
-                <HStack key={phase} spacing={4}>
-                  <Badge
-                    colorScheme={PHASE_COLORS[Number(phase)]}
-                    minW="60px"
-                    textAlign="center"
-                  >
-                    {name}
-                  </Badge>
-                  <Text fontSize="sm" color="gray.600">
-                    {Number(phase) === 0 && '单方面关注，几乎没有交集'}
-                    {Number(phase) === 1 && '有基本互动，知道彼此存在'}
-                    {Number(phase) === 2 && '频繁互动，有情感张力'}
-                    {Number(phase) === 3 && '明确关系，正式在一起'}
-                    {Number(phase) === 4 && '时时刻刻都想亲密，形影不离'}
-                  </Text>
-                </HStack>
-              ))}
-            </VStack>
-          </CardBody>
-        </Card>
+                    {history.transition_reason && (
+                      <Text fontSize="sm" color="gray.600" mt={1}>
+                        原因：{history.transition_reason}
+                      </Text>
+                    )}
+                    {index < progress.phase_history.length - 1 && <Divider mt={3} />}
+                  </Box>
+                ))}
+              </VStack>
+            </CardBody>
+          </Card>
+        )}
       </VStack>
     </Box>
   )

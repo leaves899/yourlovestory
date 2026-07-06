@@ -1,4 +1,3 @@
-import React, { useEffect } from 'react'
 import { Box, Select, Text, Spinner } from '@chakra-ui/react'
 import { useAppStore } from '../stores/appStore'
 
@@ -7,14 +6,12 @@ import { useAppStore } from '../stores/appStore'
  * 下拉列出所有角色，切换时更新全局 activeSlug。
  */
 function CharacterSelector() {
-  const { activeSlug, crushes, loading, fetchCrushes, setActiveSlug } = useAppStore()
-
-  // 加载角色列表（只加载一次）
-  useEffect(() => {
-    if (crushes.length === 0) {
-      fetchCrushes()
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const {
+    activeSlug,
+    crushes,
+    loading,
+    setActiveSlug,
+  } = useAppStore()
 
   // 过滤掉 TEMPLATE（模板不应出现在选择器中）
   const realCrushes = crushes.filter((c) => c.slug !== 'TEMPLATE')
@@ -45,6 +42,7 @@ function CharacterSelector() {
         onChange={(e) => setActiveSlug(e.target.value)}
         bg="white"
         borderRadius="md"
+        data-testid="character-selector"
       >
         {realCrushes.map((crush) => (
           <option key={crush.slug} value={crush.slug}>

@@ -10,13 +10,45 @@ import {
   type ProgressData,
   type RelationshipPhase,
   type PhaseSignal,
-  type PhaseHistory,
   PHASE_NAMES,
 } from './models'
 
 /** 获取进度文件路径 */
 function getProgressFilePath(projectRoot: string, crushSlug: string): string {
   return path.join(projectRoot, 'crushes', crushSlug, 'progress.json')
+}
+
+/**
+ * 创建初始进度数据。
+ *
+ * 用于 onboarding 场景下按用户选择的起始阶段初始化进度，
+ * 避免先创建 Phase 0 再手动跳转造成无意义的历史记录。
+ */
+export function createInitialProgress(
+  crushSlug: string,
+  initialPhase: RelationshipPhase = 0
+): ProgressData {
+  const now = new Date().toISOString()
+
+  return {
+    crush_slug: crushSlug,
+    current_phase: initialPhase,
+    phase_name: PHASE_NAMES[initialPhase],
+    total_narratives: 0,
+    interaction_narratives: 0,
+    flirting_signals: 0,
+    accumulated_score: 0,
+    threshold: getThresholdForPhase(initialPhase),
+    signals: [],
+    phase_history: [{
+      phase: initialPhase,
+      phase_name: PHASE_NAMES[initialPhase],
+      started_at: now,
+      narrative_count: 0,
+    }],
+    created_at: now,
+    updated_at: now,
+  }
 }
 
 /**
@@ -38,8 +70,7 @@ export function loadProgress(projectRoot: string, crushSlug: string): ProgressDa
     }
   }
 
-  // 返回默认进度数据
-  return createDefaultProgress(crushSlug)
+  return createInitialProgress(crushSlug)
 }
 
 /**
@@ -67,32 +98,32 @@ export function saveProgress(projectRoot: string, progress: ProgressData): { suc
 }
 
 /**
- * 创建默认进度数据。
+ * 初始化进度文件。
  *
- * @param crushSlug - 角色标识
- * @returns 默认进度数据
+ * 已存在进度文件时保持原样，避免重复创建角色时覆盖用户历史。
  */
-function createDefaultProgress(crushSlug: string): ProgressData {
-  const now = new Date().toISOString()
+export function initializeProgress(
+  projectRoot: string,
+  crushSlug: string,
+  initialPhase: RelationshipPhase = 0
+): { success: boolean; error: string; progress: ProgressData } {
+  const filePath = getProgressFilePath(projectRoot, crushSlug)
+
+  if (fs.existsSync(filePath)) {
+    return {
+      success: true,
+      error: '',
+      progress: loadProgress(projectRoot, crushSlug),
+    }
+  }
+
+  const progress = createInitialProgress(crushSlug, initialPhase)
+  const result = saveProgress(projectRoot, progress)
 
   return {
-    crush_slug: crushSlug,
-    current_phase: 0,
-    phase_name: PHASE_NAMES[0],
-    total_narratives: 0,
-    interaction_narratives: 0,
-    flirting_signals: 0,
-    accumulated_score: 0,
-    threshold: 60,
-    signals: [],
-    phase_history: [{
-      phase: 0,
-      phase_name: PHASE_NAMES[0],
-      started_at: now,
-      narrative_count: 0,
-    }],
-    created_at: now,
-    updated_at: now,
+    success: result.success,
+    error: result.error,
+    progress,
   }
 }
 
@@ -111,14 +142,11 @@ export function recordSignals(
 ): ProgressData {
   const progress = loadProgress(projectRoot, crushSlug)
 
-  // 添加新信号
   progress.signals.push(...signals)
 
-  // 更新累积分数
   const newScore = signals.reduce((sum, s) => sum + s.score, 0)
   progress.accumulated_score += newScore
 
-  // 更新统计
   if (signals.some(s => ['has_dialogue', 'knows_name', 'has_contact'].includes(s.type))) {
     progress.interaction_narratives += 1
   }
@@ -145,13 +173,12 @@ export function advancePhase(
 ): ProgressData {
   const progress = loadProgress(projectRoot, crushSlug)
 
-  if (progress.current_phase >= 3) {
-    return progress // 已是最高阶段
+  if (progress.current_phase >= 4) {
+    return progress
   }
 
   const now = new Date().toISOString()
 
-  // 结束当前阶段历史
   const currentHistory = progress.phase_history[progress.phase_history.length - 1]
   if (currentHistory && !currentHistory.ended_at) {
     currentHistory.ended_at = now
@@ -159,13 +186,11 @@ export function advancePhase(
     currentHistory.transition_reason = reason
   }
 
-  // 推进到下一阶段
   progress.current_phase = (progress.current_phase + 1) as RelationshipPhase
   progress.phase_name = PHASE_NAMES[progress.current_phase]
   progress.accumulated_score = 0
   progress.threshold = getThresholdForPhase(progress.current_phase)
 
-  // 添加新阶段历史
   progress.phase_history.push({
     phase: progress.current_phase,
     phase_name: progress.phase_name,
@@ -192,7 +217,6 @@ export function incrementNarrativeCount(
 
   progress.total_narratives += 1
 
-  // 更新当前阶段历史的叙事计数
   const currentHistory = progress.phase_history[progress.phase_history.length - 1]
   if (currentHistory) {
     currentHistory.narrative_count += 1
@@ -223,7 +247,6 @@ export function setPhase(
 
   const now = new Date().toISOString()
 
-  // 结束当前阶段历史
   const currentHistory = progress.phase_history[progress.phase_history.length - 1]
   if (currentHistory && !currentHistory.ended_at) {
     currentHistory.ended_at = now
@@ -231,16 +254,14 @@ export function setPhase(
     currentHistory.transition_reason = '手动调整'
   }
 
-  // 设置目标阶段
   progress.current_phase = targetPhase
   progress.phase_name = PHASE_NAMES[targetPhase]
   progress.accumulated_score = 0
   progress.threshold = getThresholdForPhase(targetPhase)
 
-  // 添加新阶段历史
   progress.phase_history.push({
     phase: targetPhase,
-    phase_name: PHASE_NAMES[targetPhase],
+    phase_name: progress.phase_name,
     started_at: now,
     narrative_count: 0,
     transition_reason: '手动调整',
@@ -249,8 +270,6 @@ export function setPhase(
   saveProgress(projectRoot, progress)
   return progress
 }
-
-// 辅助函数
 
 function calculateDays(startDate: string, endDate: string): number {
   const start = new Date(startDate)

@@ -1,8 +1,8 @@
-import React from 'react'
-import { Box, VStack, Link, Text, Icon } from '@chakra-ui/react'
+import { Badge, Box, VStack, Link, Text, Icon } from '@chakra-ui/react'
 import { Link as RouterLink, useLocation } from 'react-router-dom'
 import { FaBook, FaStickyNote, FaUser, FaHeart, FaCog, FaQuestionCircle, FaSync } from 'react-icons/fa'
 import CharacterSelector from './CharacterSelector'
+import { useAppStore } from '../stores/appStore'
 
 const navItems = [
   { path: '/', label: '日常写作', icon: FaBook },
@@ -16,15 +16,24 @@ const navItems = [
 
 function Sidebar() {
   const location = useLocation()
+  const { needsOnboarding } = useAppStore()
+  const visibleNavItems = needsOnboarding()
+    ? navItems.filter((item) => item.path !== '/update')
+    : navItems
 
   return (
     <Box w="250px" bg="gray.100" p={4} borderRight="1px" borderColor="gray.200">
-      <Text fontSize="xl" fontWeight="bold" mb={2}>
+      <Text fontSize="xl" fontWeight="bold" mb={2} data-testid="app-title">
         yourcrush
       </Text>
+      {needsOnboarding() && (
+        <Badge colorScheme="blue" mb={3}>
+          首次上手中
+        </Badge>
+      )}
       <CharacterSelector />
       <VStack align="stretch" spacing={2} mt={4}>
-        {navItems.map((item) => (
+        {visibleNavItems.map((item) => (
           <Link
             key={item.path}
             as={RouterLink}
@@ -36,6 +45,7 @@ function Sidebar() {
             display="flex"
             alignItems="center"
             gap={3}
+            data-testid={`nav-${item.path === '/' ? 'day' : item.path.slice(1)}`}
           >
             <Icon as={item.icon} />
             <Text>{item.label}</Text>

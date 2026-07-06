@@ -1,5 +1,6 @@
-import React from 'react'
-import { HashRouter, Routes, Route } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Box, Center, Spinner, Text, VStack } from '@chakra-ui/react'
+import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import DayPage from './pages/DayPage'
 import FragmentPage from './pages/FragmentPage'
@@ -8,21 +9,55 @@ import SettingsPage from './pages/SettingsPage'
 import HelpPage from './pages/HelpPage'
 import UpdatePage from './pages/UpdatePage'
 import ProgressPage from './pages/ProgressPage'
+import OnboardingPage from './pages/OnboardingPage'
+import { useAppStore } from './stores/appStore'
+
+function AppRoutes() {
+  const { hasFetchedCrushes, loading, fetchCrushes, needsOnboarding } = useAppStore()
+
+  useEffect(() => {
+    if (!hasFetchedCrushes && !loading) {
+      fetchCrushes()
+    }
+  }, [fetchCrushes, hasFetchedCrushes, loading])
+
+  if (!hasFetchedCrushes) {
+    return (
+      <Center h="100vh">
+        <VStack spacing={3}>
+          <Spinner size="xl" color="blue.500" />
+          <Text color="gray.500">正在加载角色与首次上手状态...</Text>
+        </VStack>
+      </Center>
+    )
+  }
+
+  return (
+    <Layout>
+      <Routes>
+        <Route
+          path="/"
+          element={needsOnboarding() ? <Navigate to="/onboarding" replace /> : <DayPage />}
+        />
+        <Route path="/onboarding" element={<OnboardingPage />} />
+        <Route path="/fragment" element={<FragmentPage />} />
+        <Route path="/crush" element={<CrushPage />} />
+        <Route path="/progress" element={<ProgressPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/help" element={<HelpPage />} />
+        <Route path="/update" element={<UpdatePage />} />
+        <Route path="*" element={<Navigate to={needsOnboarding() ? '/onboarding' : '/'} replace />} />
+      </Routes>
+    </Layout>
+  )
+}
 
 function App() {
   return (
     <HashRouter>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<DayPage />} />
-          <Route path="/fragment" element={<FragmentPage />} />
-          <Route path="/crush" element={<CrushPage />} />
-          <Route path="/progress" element={<ProgressPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/help" element={<HelpPage />} />
-          <Route path="/update" element={<UpdatePage />} />
-        </Routes>
-      </Layout>
+      <Box minH="100vh">
+        <AppRoutes />
+      </Box>
     </HashRouter>
   )
 }

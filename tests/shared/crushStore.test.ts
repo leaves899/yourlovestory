@@ -14,6 +14,7 @@ import {
   updateCrush,
   deleteCrush,
 } from '@/shared/crush/crushStore'
+import { loadProgress } from '@/shared/relationship/progress_store'
 
 let tmpRoot: string
 
@@ -101,6 +102,34 @@ describe('createCrush', () => {
     expect(result.success).toBe(false)
     if (result.success) return
     expect(result.errors.length).toBeGreaterThan(0)
+  })
+
+  test('slug 缺省时自动生成', () => {
+    const result = createCrush(tmpRoot, {
+      name: 'Summer',
+      nickname: 'Summer Crush',
+    })
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect((result.data as any).slug).toBe('summer-crush')
+    expect(fs.existsSync(path.join(tmpRoot, 'crushes', 'summer-crush'))).toBe(true)
+  })
+
+  test('按 initialPhase 初始化关系进度', () => {
+    const result = createCrush(tmpRoot, {
+      name: '阶段测试',
+      nickname: '阿夏',
+      slug: 'phase_seed',
+      initialPhase: 2,
+    })
+
+    expect(result.success).toBe(true)
+
+    const progress = loadProgress(tmpRoot, 'phase_seed')
+    expect(progress.current_phase).toBe(2)
+    expect(progress.phase_name).toBe('暧昧')
+    expect(progress.phase_history).toHaveLength(1)
+    expect(progress.phase_history[0].phase).toBe(2)
   })
 })
 

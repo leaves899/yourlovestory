@@ -15,6 +15,9 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { readJson, writeJson } from '../persistence/settingsStore'
+import type { RelationshipPhase } from '../relationship/models'
+import { initializeProgress } from '../relationship/progress_store'
+import { buildDefaultCrushSlug, sanitizeCrushSlug } from './slug'
 
 /** 角色元数据结构。 */
 export interface CrushMeta {
@@ -53,11 +56,13 @@ function copyTemplateFile(
   templateDir: string,
   targetDir: string,
   filename: string,
-  replacements: Record<string, string>
+  replacements: Record<string, string>,
+  overwrite: boolean = false
 ): void {
   const src = path.join(templateDir, filename)
   const dst = path.join(targetDir, filename)
   if (!fs.existsSync(src)) return
+  if (!overwrite && fs.existsSync(dst)) return
   let content = fs.readFileSync(src, 'utf-8')
   for (const [key, value] of Object.entries(replacements)) {
     content = content.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value)
@@ -76,15 +81,28 @@ function copyTemplateFile(
  */
 export function createCrush(
   projectRoot: string,
-  params: { name: string; nickname: string; slug: string; description?: string; gender?: string },
+  params: {
+    name: string
+    nickname: string
+    slug?: string
+    description?: string
+    gender?: string
+    initialPhase?: RelationshipPhase
+  },
   templateRoot?: string
 ): CrushResult {
-  const { name, nickname, slug } = params
-  if (!name || !nickname || !slug) {
-    return { success: false, errors: ['--name, --nickname, --slug are required for create'] }
+  const { name, nickname } = params
+  if (!name || !nickname) {
+    return { success: false, errors: ['--name and --nickname are required for create'] }
   }
   try {
-    const dir = crushDir(projectRoot, slug)
+    const resolvedSlug =
+      sanitizeCrushSlug(params.slug) || buildDefaultCrushSlug(name, nickname)
+    const dir = crushDir(projectRoot, resolvedSlug)
+    const metaFile = path.join(dir, 'meta.json')
+    const existingMeta = readJson<CrushMeta>(metaFile)
+    const now = nowISO()
+
     // 创建角色目录与子目录（幂等）
     fs.mkdirSync(path.join(dir, 'memories', 'chats'), { recursive: true })
     fs.mkdirSync(path.join(dir, 'fragments'), { recursive: true })
@@ -95,43 +113,31 @@ export function createCrush(
       ? path.join(templateRoot, 'crushes', 'TEMPLATE')
       : path.join(projectRoot, 'crushes', 'TEMPLATE')
     const templateExists = fs.existsSync(templateDir)
-    const now = nowISO()
     const replacements: Record<string, string> = {
       CHARACTER_NAME: name,
       CHARACTER_NICKNAME: nickname,
-      SLUG: slug,
+      SLUG: resolvedSlug,
       TIMESTAMP: now,
     }
 
     if (templateExists) {
       // 从 TEMPLATE 复制所有模板文件并替换占位符
       const templateFiles = [
-        'meta.json',
-        'persona.md',
-        'memory.md',
-        'INTIMATE_KNOWLEDGE.md',
-        'WEEKDAY.md',
-        'CONTEXT.md',
-        'SKILL.md',
-        'PROMPT.md',
+        { filename: 'meta.json', overwrite: true },
+        { filename: 'persona.md', overwrite: false },
+        { filename: 'memory.md', overwrite: false },
+        { filename: 'INTIMATE_KNOWLEDGE.md', overwrite: false },
+        { filename: 'WEEKDAY.md', overwrite: false },
+        { filename: 'CONTEXT.md', overwrite: false },
+        { filename: 'SKILL.md', overwrite: false },
+        { filename: 'PROMPT.md', overwrite: false },
       ]
-      for (const file of templateFiles) {
-        copyTemplateFile(templateDir, dir, file, replacements)
+      for (const { filename, overwrite } of templateFiles) {
+        copyTemplateFile(templateDir, dir, filename, replacements, overwrite)
       }
-    } else {
-      // TEMPLATE 不存在时回退到裸骨架（测试环境等场景）
-      const meta: CrushMeta = {
-        name,
-        nickname,
-        slug,
-        gender: params.gender || 'unknown',
-        description: params.description || '',
-        intimate_enabled: false,
-        version: 'v1',
-        created_at: now,
-        updated_at: now,
-      }
-      writeJson(path.join(dir, 'meta.json'), meta)
+    }
+
+    if (!templateExists) {
       const memoryFile = path.join(dir, 'memory.md')
       if (!fs.existsSync(memoryFile)) {
         fs.writeFileSync(memoryFile, `# ${nickname} 的记忆\n\n`, 'utf-8')
@@ -142,15 +148,35 @@ export function createCrush(
       }
     }
 
+    const meta: CrushMeta = {
+      name,
+      nickname,
+      slug: resolvedSlug,
+      gender: params.gender || existingMeta?.gender || 'unknown',
+      description: params.description || existingMeta?.description || '',
+      intimate_enabled: existingMeta?.intimate_enabled ?? false,
+      version: existingMeta?.version || 'v1',
+      created_at: existingMeta?.created_at || now,
+      updated_at: now,
+    }
+    writeJson(metaFile, meta)
+
     // .intimate_config：明确设为 false（用户安装后自行决定是否开启）
     const intimateFile = path.join(dir, '.intimate_config')
     if (!fs.existsSync(intimateFile)) {
       fs.writeFileSync(intimateFile, 'intimate=false\n', 'utf-8')
     }
 
-    // 返回创建后的 meta
-    const meta = readJson<CrushMeta>(path.join(dir, 'meta.json'))
-    return { success: true, data: meta ?? { name, nickname, slug } as CrushMeta }
+    const progressInit = initializeProgress(
+      projectRoot,
+      resolvedSlug,
+      params.initialPhase ?? 0
+    )
+    if (!progressInit.success) {
+      return { success: false, errors: [progressInit.error] }
+    }
+
+    return { success: true, data: meta }
   } catch (e: any) {
     return { success: false, errors: [String(e?.message ?? e)] }
   }
