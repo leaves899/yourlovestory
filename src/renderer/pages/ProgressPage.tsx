@@ -26,6 +26,7 @@ import {
 } from '@chakra-ui/react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../stores/appStore'
+import { InkPage } from '../components/InkDesign'
 import {
   PHASE_PROMPT_CONFIG,
   PHASE_PROMPT_ORDER,
@@ -65,11 +66,11 @@ interface ProgressData {
 }
 
 const PHASE_COLORS: Record<RelationshipPhase, string> = {
-  0: 'gray',
-  1: 'blue',
-  2: 'pink',
-  3: 'red',
-  4: 'orange',
+  0: 'ink',
+  1: 'bamboo',
+  2: 'cinnabar',
+  3: 'cinnabar',
+  4: 'bamboo',
 }
 
 function getAdvanceLabel(phase: RelationshipPhase): string {
@@ -167,7 +168,7 @@ function ProgressPage() {
               <Button
                 mt={3}
                 size="sm"
-                colorScheme="blue"
+                colorScheme="cinnabar"
                 onClick={() => navigate(needsOnboarding() ? '/onboarding' : '/')}
               >
                 {needsOnboarding() ? '去完成首次设置' : '回到日常写作'}
@@ -182,7 +183,7 @@ function ProgressPage() {
   if (loading) {
     return (
       <Center h="100%" data-testid="progress-page">
-        <Spinner size="xl" color="blue.500" />
+        <Spinner size="xl" color="cinnabar.500" />
       </Center>
     )
   }
@@ -191,7 +192,7 @@ function ProgressPage() {
     return (
       <Center h="100%" data-testid="progress-page">
         <VStack>
-          <Text color="red.500">{error}</Text>
+          <Text color="cinnabar.600">{error}</Text>
           <Button onClick={loadProgress}>重试</Button>
         </VStack>
       </Center>
@@ -201,7 +202,7 @@ function ProgressPage() {
   if (!progress) {
     return (
       <Center h="100%" data-testid="progress-page">
-        <Text color="gray.500">暂无进度数据</Text>
+        <Text color="ink.500">暂无进度数据</Text>
       </Center>
     )
   }
@@ -214,12 +215,20 @@ function ProgressPage() {
     : 100
 
   return (
-    <Box p={6} maxW="860px" mx="auto" data-testid="progress-page">
-      <VStack spacing={6} align="stretch">
-        <Heading size="lg" data-testid="progress-page-title">关系进度</Heading>
-
+    <InkPage
+      data-testid="progress-page"
+      title="关系进度"
+      titleTestId="progress-page-title"
+      eyebrow="RELATIONSHIP"
+      subtitle="把阶段、信号和历史放在一张关系地图里，观察这段故事如何往前走。"
+    >
         {firstUseMode && (
-          <Card borderWidth="1px" borderColor="blue.200" bg="blue.50" data-testid="progress-first-use">
+          <Card
+            borderWidth="1px"
+            borderColor="cinnabar.200"
+            bg="cinnabar.50"
+            data-testid="progress-first-use"
+          >
             <CardHeader>
               <Heading size="md">你已经站在这段关系的起点上</Heading>
             </CardHeader>
@@ -227,14 +236,14 @@ function ProgressPage() {
               <Stack spacing={5}>
                 <Box>
                   <HStack spacing={3} mb={2}>
-                    <Badge colorScheme={currentPhaseConfig.color} fontSize="md" px={3} py={1}>
+                    <Badge colorScheme={PHASE_COLORS[currentPhase]} fontSize="md" px={3} py={1}>
                       {currentPhaseConfig.name}
                     </Badge>
-                    <Text color="gray.700">
+                    <Text color="ink.700">
                       当前起点：阶段 {currentPhase + 1} / {PHASE_PROMPT_ORDER.length}
                     </Text>
                   </HStack>
-                  <Text color="gray.700">
+                  <Text color="ink.700">
                     {currentPhaseConfig.description}。接下来你可以先去记录一条碎片，或者直接写第一篇 Day，让这条关系线开始真正动起来。
                   </Text>
                 </Box>
@@ -252,17 +261,17 @@ function ProgressPage() {
                           spacing={3}
                           p={3}
                           borderRadius="md"
-                          bg={isCurrent ? 'white' : 'transparent'}
+                          bg={isCurrent ? 'paper.50' : 'transparent'}
                           borderWidth={isCurrent ? '1px' : '0px'}
-                          borderColor={isCurrent ? `${config.color}.200` : 'transparent'}
+                          borderColor={isCurrent ? 'cinnabar.200' : 'transparent'}
                         >
-                          <Badge colorScheme={config.color} minW="56px" textAlign="center">
+                          <Badge colorScheme={PHASE_COLORS[phase]} minW="56px" textAlign="center">
                             {config.name}
                           </Badge>
-                          <Text fontSize="sm" color="gray.600" flex="1">
+                          <Text fontSize="sm" color="ink.600" flex="1">
                             {config.description}
                           </Text>
-                          {isCurrent && <Badge colorScheme="green">当前起点</Badge>}
+                          {isCurrent && <Badge colorScheme="bamboo">当前起点</Badge>}
                         </HStack>
                       )
                     })}
@@ -271,7 +280,7 @@ function ProgressPage() {
 
                 <HStack spacing={3}>
                   <Button
-                    colorScheme="blue"
+                    colorScheme="cinnabar"
                     onClick={() => navigate('/fragment')}
                     data-testid="progress-cta-fragment"
                   >
@@ -303,7 +312,7 @@ function ProgressPage() {
                 >
                   {PHASE_NAMES[currentPhase]}
                 </Badge>
-                <Text fontSize="sm" color="gray.500">
+                <Text fontSize="sm" color="ink.500">
                   阶段 {currentPhase + 1} / {PHASE_PROMPT_ORDER.length}
                 </Text>
               </HStack>
@@ -324,7 +333,7 @@ function ProgressPage() {
                 <Box>
                   <HStack justify="space-between" mb={2}>
                     <Text fontSize="sm">阶段进度</Text>
-                    <Text fontSize="sm" color="gray.500">
+                    <Text fontSize="sm" color="ink.500">
                       {progress.accumulated_score} / {progress.threshold} 分
                     </Text>
                   </HStack>
@@ -337,7 +346,7 @@ function ProgressPage() {
                 </Box>
               )}
 
-              <Text color="gray.600">{currentPhaseConfig.description}</Text>
+              <Text color="ink.600">{currentPhaseConfig.description}</Text>
 
               <HStack spacing={8}>
                 <Stat>
@@ -365,18 +374,25 @@ function ProgressPage() {
             <CardBody>
               <VStack spacing={3} align="stretch">
                 {progress.signals.slice(-5).reverse().map((signal, index) => (
-                  <Box key={index} p={3} bg="gray.50" borderRadius="md">
+                  <Box
+                    key={index}
+                    p={3}
+                    bg="paper.50"
+                    borderRadius="md"
+                    border="1px solid"
+                    borderColor="ink.100"
+                  >
                     <HStack justify="space-between">
                       <HStack>
-                        <Badge colorScheme="purple">{signal.description}</Badge>
+                        <Badge colorScheme="bamboo">{signal.description}</Badge>
                         <Text fontSize="sm">+{signal.score} 分</Text>
                       </HStack>
-                      <Text fontSize="xs" color="gray.500">
+                      <Text fontSize="xs" color="ink.500">
                         {new Date(signal.detected_at).toLocaleDateString()}
                       </Text>
                     </HStack>
                     {signal.narrative_excerpt && (
-                      <Text fontSize="sm" color="gray.600" mt={2} fontStyle="italic">
+                      <Text fontSize="sm" color="ink.600" mt={2} fontStyle="italic">
                         "{signal.narrative_excerpt}"
                       </Text>
                     )}
@@ -405,14 +421,14 @@ function ProgressPage() {
                           {history.narrative_count} 篇叙事
                         </Text>
                       </HStack>
-                      <Text fontSize="xs" color="gray.500">
+                      <Text fontSize="xs" color="ink.500">
                         {new Date(history.started_at).toLocaleDateString()}
                         {history.ended_at && ` - ${new Date(history.ended_at).toLocaleDateString()}`}
                         {history.duration_days && ` (${history.duration_days} 天)`}
                       </Text>
                     </HStack>
                     {history.transition_reason && (
-                      <Text fontSize="sm" color="gray.600" mt={1}>
+                      <Text fontSize="sm" color="ink.600" mt={1}>
                         原因：{history.transition_reason}
                       </Text>
                     )}
@@ -423,8 +439,7 @@ function ProgressPage() {
             </CardBody>
           </Card>
         )}
-      </VStack>
-    </Box>
+    </InkPage>
   )
 }
 

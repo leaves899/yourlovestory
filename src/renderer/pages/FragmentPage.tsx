@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import {
   Box,
+  Badge,
   Button,
   Card,
   CardBody,
   CardHeader,
   Heading,
+  HStack,
   Stack,
   Text,
   Textarea,
@@ -27,6 +29,7 @@ import {
 import { useNavigate } from 'react-router-dom'
 import { useFragmentStore } from '../stores/fragmentStore'
 import { useAppStore } from '../stores/appStore'
+import { InkPage } from '../components/InkDesign'
 
 function FragmentPage() {
   const navigate = useNavigate()
@@ -115,8 +118,13 @@ function FragmentPage() {
 
   if (!activeSlug) {
     return (
-      <Box data-testid="fragment-page">
-        <Heading mb={4} data-testid="fragment-page-title">碎片日记</Heading>
+      <InkPage
+        data-testid="fragment-page"
+        title="碎片日记"
+        titleTestId="fragment-page-title"
+        eyebrow="FRAGMENTS"
+        subtitle="先记一句话、一个动作、一个眼神，之后再把它们织成完整叙事。"
+      >
         <Alert status="info" borderRadius="md">
           <AlertIcon />
           <Box>
@@ -129,47 +137,56 @@ function FragmentPage() {
             <Button
               mt={3}
               size="sm"
-              colorScheme="blue"
+              colorScheme="cinnabar"
               onClick={() => navigate(needsOnboarding() ? '/onboarding' : '/')}
             >
               {needsOnboarding() ? '去完成首次设置' : '回到日常写作'}
             </Button>
           </Box>
         </Alert>
-      </Box>
+      </InkPage>
     )
   }
 
   return (
-    <Box data-testid="fragment-page">
-      <Heading mb={4} data-testid="fragment-page-title">碎片日记</Heading>
-
-      <Button onClick={onOpen} mb={4} data-testid="open-record-fragment">
-        记录碎片
-      </Button>
-
+    <InkPage
+      data-testid="fragment-page"
+      title="碎片日记"
+      titleTestId="fragment-page-title"
+      eyebrow="FRAGMENTS"
+      subtitle="用最小单位记录相处细节，给后续 Day 写作提供真实线索。"
+      action={
+        <Button onClick={onOpen} data-testid="open-record-fragment">
+          记录碎片
+        </Button>
+      }
+    >
       <Stack spacing={4}>
         {fragments.map((fragment) => (
-          <Card key={fragment.id}>
+          <Card key={fragment.id} borderLeft="4px solid" borderLeftColor="ink.400">
             <CardHeader>
-              <Heading size="md">{fragment.origin} - {fragment.mood}</Heading>
+              <HStack justify="space-between" align="center">
+                <Heading size="md">{fragment.origin}</Heading>
+                <Badge colorScheme="bamboo">{fragment.mood}</Badge>
+              </HStack>
             </CardHeader>
             <CardBody>
-              <Text>{fragment.content}</Text>
-              <Button
-                mt={4}
-                onClick={() => handleUpdate(fragment.id, fragment.content)}
-              >
-                编辑
-              </Button>
-              <Button
-                mt={4}
-                ml={2}
-                colorScheme="red"
-                onClick={() => handleDelete(fragment.id)}
-              >
-                删除
-              </Button>
+              <Text color="ink.800" lineHeight="1.8">{fragment.content}</Text>
+              <HStack mt={4} spacing={2}>
+                <Button
+                  variant="outline"
+                  onClick={() => handleUpdate(fragment.id, fragment.content)}
+                >
+                  编辑
+                </Button>
+                <Button
+                  variant="outline"
+                  colorScheme="cinnabar"
+                  onClick={() => handleDelete(fragment.id)}
+                >
+                  删除
+                </Button>
+              </HStack>
             </CardBody>
           </Card>
         ))}
@@ -219,7 +236,7 @@ function FragmentPage() {
             </Stack>
           </ModalBody>
           <ModalFooter>
-            <Button colorScheme="blue" mr={3} onClick={handleRecord} data-testid="fragment-submit">
+            <Button colorScheme="cinnabar" mr={3} onClick={handleRecord} data-testid="fragment-submit">
               记录
             </Button>
             <Button variant="ghost" onClick={onClose}>
@@ -228,7 +245,7 @@ function FragmentPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </Box>
+    </InkPage>
   )
 }
 

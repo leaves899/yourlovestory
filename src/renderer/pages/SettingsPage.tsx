@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Box,
   Button,
@@ -6,7 +6,6 @@ import {
   Stack,
   Text,
   Select,
-  Switch,
   Input,
   Textarea,
   useToast,
@@ -28,6 +27,7 @@ import {
   DEFAULT_SYSTEM_PROMPT_RULES,
   DEFAULT_USER_PROMPT_TEMPLATE,
 } from '../../shared/ai/promptBuilder'
+import { InkPage, InkPanel } from '../components/InkDesign'
 import {
   PHASE_PROMPT_CONFIG,
   PHASE_PROMPT_ORDER,
@@ -35,10 +35,18 @@ import {
 import type { RelationshipPhase } from '../../shared/relationship/models'
 import { useAppStore } from '../stores/appStore'
 
+const PHASE_COLORS: Record<RelationshipPhase, string> = {
+  0: 'ink',
+  1: 'bamboo',
+  2: 'cinnabar',
+  3: 'cinnabar',
+  4: 'bamboo',
+}
+
 function SettingsPage() {
   const [theme, setTheme] = useState('auto')
   const [language, setLanguage] = useState('zh')
-  const { colorMode, setColorMode } = useColorMode()
+  const { setColorMode } = useColorMode()
   const [storagePath, setStoragePath] = useState('')
   const [backupEnabled, setBackupEnabled] = useState(false)
   const [backupPath, setBackupPath] = useState('')
@@ -163,9 +171,11 @@ function SettingsPage() {
   const currentPhasePrompt = PHASE_PROMPT_CONFIG[currentPhase]
 
   return (
-    <Box p={6}>
-      <Heading mb={6}>设置</Heading>
-
+    <InkPage
+      title="设置"
+      eyebrow="SETTINGS"
+      subtitle="调整模型、提示词和外观偏好，保持这些配置像案头工具一样安静可控。"
+    >
       <Tabs>
         <TabList>
           <Tab>AI 配置</Tab>
@@ -177,7 +187,7 @@ function SettingsPage() {
         <TabPanels>
           {/* AI 配置 */}
           <TabPanel>
-            <Box p={4} bg="gray.50" borderRadius="md">
+            <InkPanel>
               <Stack spacing={4}>
                 <Box>
                   <Text mb={2}>AI 提供商</Text>
@@ -208,7 +218,7 @@ function SettingsPage() {
                     type="password"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="sk-..."
+                    placeholder="sk-"
                   />
                 </Box>
 
@@ -246,15 +256,15 @@ function SettingsPage() {
                   />
                 </Box>
               </Stack>
-            </Box>
+            </InkPanel>
           </TabPanel>
 
           {/* 提示词配置 */}
           <TabPanel>
             <Stack spacing={6}>
-              <Box p={4} bg="gray.50" borderRadius="md">
+              <InkPanel>
                 <Heading size="sm" mb={2}>自定义系统提示词</Heading>
-                <Text fontSize="sm" color="gray.500" mb={4}>
+                <Text fontSize="sm" color="ink.500" mb={4}>
                   追加到默认写作规则之后。留空则使用默认规则。
                 </Text>
                 <Textarea
@@ -263,11 +273,11 @@ function SettingsPage() {
                   placeholder={DEFAULT_SYSTEM_PROMPT_RULES}
                   minH="200px"
                 />
-              </Box>
+              </InkPanel>
 
-              <Box p={4} bg="gray.50" borderRadius="md">
+              <InkPanel>
                 <Heading size="sm" mb={2}>自定义用户提示词模板</Heading>
-                <Text fontSize="sm" color="gray.500" mb={2}>
+                <Text fontSize="sm" color="ink.500" mb={2}>
                   替换默认的用户提示词。可用变量：
                 </Text>
                 <Stack direction="row" spacing={4} mb={4}>
@@ -281,33 +291,33 @@ function SettingsPage() {
                   placeholder={DEFAULT_USER_PROMPT_TEMPLATE}
                   minH="200px"
                 />
-              </Box>
+              </InkPanel>
             </Stack>
           </TabPanel>
 
           {/* 阶段提示词 */}
           <TabPanel>
             <Stack spacing={6}>
-              <Box p={4} bg="gray.50" borderRadius="md">
+              <InkPanel>
                 <Heading size="sm" mb={2}>当前阶段</Heading>
-                <Text fontSize="sm" color="gray.500" mb={4}>
+                <Text fontSize="sm" color="ink.500" mb={4}>
                   根据关系进度自动切换的专属写作规则
                 </Text>
                 {currentPhasePrompt ? (
                   <HStack spacing={2}>
-                    <Badge colorScheme={currentPhasePrompt.color} fontSize="md" px={3} py={1}>
+                    <Badge colorScheme={PHASE_COLORS[currentPhase]} fontSize="md" px={3} py={1}>
                       {currentPhasePrompt.name}
                     </Badge>
-                    <Text fontSize="sm" color="gray.600">
+                    <Text fontSize="sm" color="ink.600">
                       {currentPhasePrompt.description}
                     </Text>
                   </HStack>
                 ) : (
-                  <Text fontSize="sm" color="gray.500">
+                  <Text fontSize="sm" color="ink.500">
                     暂无阶段数据
                   </Text>
                 )}
-              </Box>
+              </InkPanel>
 
               <Accordion allowMultiple>
                 {PHASE_PROMPT_ORDER.map((phase) => {
@@ -319,14 +329,14 @@ function SettingsPage() {
                       <AccordionButton>
                         <Box flex="1" textAlign="left">
                           <HStack>
-                            <Badge colorScheme={prompt.color}>
+                            <Badge colorScheme={PHASE_COLORS[phase]}>
                               {prompt.name}
                             </Badge>
                             <Text fontSize="sm">
                               {prompt.description}
                             </Text>
                             {phase === currentPhase && (
-                              <Badge colorScheme="green" ml={2}>当前</Badge>
+                              <Badge colorScheme="bamboo" ml={2}>当前</Badge>
                             )}
                           </HStack>
                         </Box>
@@ -339,7 +349,7 @@ function SettingsPage() {
                         bg="white"
                         borderRadius="md"
                         border="1px"
-                        borderColor="gray.200"
+                        borderColor="ink.200"
                         whiteSpace="pre-wrap"
                         fontSize="sm"
                         fontFamily="monospace"
@@ -356,7 +366,7 @@ function SettingsPage() {
 
           {/* 外观设置 */}
           <TabPanel>
-            <Box p={4} bg="gray.50" borderRadius="md">
+            <InkPanel>
               <Stack spacing={4}>
                 <Box>
                   <Text mb={2}>主题</Text>
@@ -375,15 +385,15 @@ function SettingsPage() {
                   </Select>
                 </Box>
               </Stack>
-            </Box>
+            </InkPanel>
           </TabPanel>
         </TabPanels>
       </Tabs>
 
-      <Button colorScheme="blue" onClick={handleSave} size="lg" mt={6}>
+      <Button colorScheme="cinnabar" onClick={handleSave} size="lg" mt={6}>
         保存设置
       </Button>
-    </Box>
+    </InkPage>
   )
 }
 

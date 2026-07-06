@@ -22,6 +22,7 @@ import {
 import { useCrushStore } from '../stores/crushStore'
 import { useAppStore } from '../stores/appStore'
 import { buildDefaultCrushSlug } from '../../shared/crush/slug'
+import { InkPage } from '../components/InkDesign'
 
 function CrushPage() {
   const [name, setName] = useState('')
@@ -129,13 +130,12 @@ function CrushPage() {
   }
 
   return (
-    <Box>
-      <Heading mb={4}>角色管理</Heading>
-
-      <Button onClick={onOpen} mb={4}>
-        创建角色
-      </Button>
-
+    <InkPage
+      title="角色管理"
+      eyebrow="CHARACTERS"
+      subtitle="维护这段故事里的角色资料，角色切换后会影响日记、碎片和关系进度。"
+      action={<Button onClick={onOpen}>创建角色</Button>}
+    >
       <Stack spacing={4}>
         {crushes.map((crush) => (
           <Card key={crush.slug}>
@@ -153,7 +153,7 @@ function CrushPage() {
               <Button
                 mt={4}
                 ml={2}
-                colorScheme="red"
+                colorScheme="cinnabar"
                 onClick={() => handleDelete(crush.slug)}
               >
                 删除
@@ -197,7 +197,7 @@ function CrushPage() {
             </Stack>
           </ModalBody>
           <ModalFooter>
-            <Button colorScheme="blue" mr={3} onClick={handleCreate}>
+            <Button colorScheme="cinnabar" mr={3} onClick={handleCreate}>
               创建
             </Button>
             <Button variant="ghost" onClick={onClose}>
@@ -233,7 +233,7 @@ function CrushPage() {
             </Stack>
           </ModalBody>
           <ModalFooter>
-            <Button colorScheme="blue" mr={3} onClick={handleSaveEdit}>
+            <Button colorScheme="cinnabar" mr={3} onClick={handleSaveEdit}>
               保存
             </Button>
             <Button variant="ghost" onClick={onEditClose}>
@@ -242,7 +242,7 @@ function CrushPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </Box>
+    </InkPage>
   )
 }
 

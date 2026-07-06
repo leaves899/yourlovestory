@@ -4,7 +4,6 @@ import {
   AlertDescription,
   AlertIcon,
   AlertTitle,
-  Badge,
   Box,
   Button,
   Card,
@@ -30,6 +29,7 @@ import {
 import { Navigate, useNavigate } from 'react-router-dom'
 import crushService from '../services/crushService'
 import { useAppStore } from '../stores/appStore'
+import { InkPage } from '../components/InkDesign'
 import { buildDefaultCrushSlug, sanitizeCrushSlug } from '../../shared/crush/slug'
 import {
   PHASE_PROMPT_CONFIG,
@@ -84,8 +84,8 @@ function OnboardingPage() {
     return (
       <Center h="100%">
         <VStack spacing={3}>
-          <Spinner size="xl" color="blue.500" />
-          <Text color="gray.500">正在准备首次上手体验...</Text>
+          <Spinner size="xl" color="cinnabar.500" />
+          <Text color="ink.500">正在准备首次上手体验。</Text>
         </VStack>
       </Center>
     )
@@ -158,17 +158,13 @@ function OnboardingPage() {
   const phaseConfig = PHASE_PROMPT_CONFIG[initialPhase]
 
   return (
-    <Box maxW="860px" mx="auto" p={6} data-testid="onboarding-page">
-      <Stack spacing={6}>
-        <Box>
-          <Badge colorScheme="blue" mb={3}>首次上手</Badge>
-          <Heading size="lg" mb={2}>先把这段关系放进你的故事里</Heading>
-          <Text color="gray.600">
-            我们会先帮你创建角色、确定关系起点，再带你进入关系页看清接下来怎么玩。
-          </Text>
-        </Box>
-
-        <Progress value={stepProgress} size="sm" borderRadius="full" colorScheme="blue" />
+    <InkPage
+      data-testid="onboarding-page"
+      title="先把这段关系放进你的故事里"
+      eyebrow="首次上手"
+      subtitle="先创建角色、确定关系起点，再进入关系页看清接下来怎么玩。"
+    >
+        <Progress value={stepProgress} size="sm" borderRadius="full" colorScheme="cinnabar" />
 
         <Card>
           <CardHeader>
@@ -179,7 +175,7 @@ function OnboardingPage() {
                 {step === 2 && '3. 关系起点'}
                 {step === 3 && '4. 完成'}
               </Heading>
-              <Text fontSize="sm" color="gray.500">步骤 {step + 1} / 4</Text>
+              <Text fontSize="sm" color="ink.500">步骤 {step + 1} / 4</Text>
             </HStack>
           </CardHeader>
           <CardBody>
@@ -200,15 +196,15 @@ function OnboardingPage() {
                   <Stack spacing={3}>
                     <Box>
                       <Text fontWeight="medium">角色</Text>
-                      <Text color="gray.600">先定义 ta 是谁，你们现在走到了哪一步。</Text>
+                      <Text color="ink.600">先定义 ta 是谁，你们现在走到了哪一步。</Text>
                     </Box>
                     <Box>
                       <Text fontWeight="medium">碎片</Text>
-                      <Text color="gray.600">把一句话、一个动作、一次相处，先记成最小的心动片段。</Text>
+                      <Text color="ink.600">把一句话、一个动作、一次相处，先记成最小的心动片段。</Text>
                     </Box>
                     <Box>
                       <Text fontWeight="medium">关系进度</Text>
-                      <Text color="gray.600">把这段关系放到阶段地图里，知道下一步为什么值得继续写。</Text>
+                      <Text color="ink.600">把这段关系放到阶段地图里，知道下一步为什么值得继续写。</Text>
                     </Box>
                   </Stack>
                 </Box>
@@ -269,7 +265,7 @@ function OnboardingPage() {
                 <HStack justify="space-between" align="center">
                   <Box>
                     <Text fontWeight="medium">高级设置</Text>
-                    <Text fontSize="sm" color="gray.500">
+                    <Text fontSize="sm" color="ink.500">
                       默认会自动生成角色标识，只有在你需要手动控制目录名时再打开。
                     </Text>
                   </Box>
@@ -288,7 +284,7 @@ function OnboardingPage() {
                     placeholder="自动生成"
                     data-testid="onboarding-slug"
                   />
-                  <Text mt={2} fontSize="sm" color="gray.500">
+                  <Text mt={2} fontSize="sm" color="ink.500">
                     当前将保存为：<code>{sanitizeCrushSlug(slug) || buildDefaultCrushSlug(name, nickname)}</code>
                   </Text>
                 </FormControl>
@@ -298,7 +294,7 @@ function OnboardingPage() {
             {step === 2 && (
               <Stack spacing={5}>
                 <Box>
-                  <Text color="gray.600" mb={4}>
+                  <Text color="ink.600" mb={4}>
                     先选择你们现在最接近的阶段。后续关系页会以这里为起点，帮你看清接下来能怎么推进。
                   </Text>
                   <Stack spacing={3}>
@@ -310,7 +306,7 @@ function OnboardingPage() {
                         <Button
                           key={phase}
                           variant={selected ? 'solid' : 'outline'}
-                          colorScheme={selected ? config.color : 'gray'}
+                          colorScheme={selected ? 'cinnabar' : 'ink'}
                           justifyContent="flex-start"
                           h="auto"
                           py={4}
@@ -356,7 +352,7 @@ function OnboardingPage() {
 
                 <Box>
                   <Heading size="sm" mb={3}>接下来你会看到什么</Heading>
-                  <Stack spacing={2} color="gray.600">
+                  <Stack spacing={2} color="ink.600">
                     <Text>1. 关系页会展示完整 5 阶段路线图，帮你确认现在在故事里的位置。</Text>
                     <Text>2. 你会看到推荐下一步，例如先记第一条碎片，或者直接写第一篇 Day。</Text>
                     <Text>3. 以后每次记录内容，都能回到这条关系线里继续推进。</Text>
@@ -364,7 +360,7 @@ function OnboardingPage() {
                 </Box>
 
                 <Button
-                  colorScheme="blue"
+                  colorScheme="cinnabar"
                   size="lg"
                   onClick={() => navigate('/progress')}
                   data-testid="onboarding-finish"
@@ -387,18 +383,17 @@ function OnboardingPage() {
 
           {step < 3 && (
             <Button
-              colorScheme="blue"
+              colorScheme="cinnabar"
               onClick={handleNext}
               isLoading={submitting}
-              loadingText="创建中..."
+              loadingText="创建中"
               data-testid="onboarding-next"
             >
               {step === 2 ? '创建并继续' : '下一步'}
             </Button>
           )}
         </HStack>
-      </Stack>
-    </Box>
+    </InkPage>
   )
 }
 

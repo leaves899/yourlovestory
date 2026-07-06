@@ -23,10 +23,10 @@ function AppRoutes() {
 
   if (!hasFetchedCrushes) {
     return (
-      <Center h="100vh">
+      <Center h="100vh" bg="paper.100">
         <VStack spacing={3}>
-          <Spinner size="xl" color="blue.500" />
-          <Text color="gray.500">正在加载角色与首次上手状态...</Text>
+          <Spinner size="xl" color="cinnabar.500" />
+          <Text color="ink.600">正在加载角色与首次上手状态。</Text>
         </VStack>
       </Center>
     )

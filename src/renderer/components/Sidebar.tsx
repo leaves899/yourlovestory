@@ -1,4 +1,13 @@
-import { Badge, Box, VStack, Link, Text, Icon } from '@chakra-ui/react'
+import {
+  Badge,
+  Box,
+  HStack,
+  Stack,
+  Link,
+  Text,
+  Icon,
+  type BoxProps,
+} from '@chakra-ui/react'
 import { Link as RouterLink, useLocation } from 'react-router-dom'
 import { FaBook, FaStickyNote, FaUser, FaHeart, FaCog, FaQuestionCircle, FaSync } from 'react-icons/fa'
 import CharacterSelector from './CharacterSelector'
@@ -14,6 +23,15 @@ const navItems = [
   { path: '/update', label: '更新', icon: FaSync },
 ]
 
+const sidebarStyles: BoxProps = {
+  w: { base: '100%', md: '292px' },
+  bg: 'rgba(234, 223, 206, 0.86)',
+  borderRight: { base: '0', md: '1px solid' },
+  borderBottom: { base: '1px solid', md: '0' },
+  borderColor: 'ink.300',
+  boxShadow: '14px 0 36px rgba(55, 48, 38, 0.10)',
+}
+
 function Sidebar() {
   const location = useLocation()
   const { needsOnboarding } = useAppStore()
@@ -22,36 +40,117 @@ function Sidebar() {
     : navItems
 
   return (
-    <Box w="250px" bg="gray.100" p={4} borderRight="1px" borderColor="gray.200">
-      <Text fontSize="xl" fontWeight="bold" mb={2} data-testid="app-title">
-        yourcrush
-      </Text>
-      {needsOnboarding() && (
-        <Badge colorScheme="blue" mb={3}>
-          首次上手中
-        </Badge>
-      )}
-      <CharacterSelector />
-      <VStack align="stretch" spacing={2} mt={4}>
-        {visibleNavItems.map((item) => (
-          <Link
-            key={item.path}
-            as={RouterLink}
-            to={item.path}
-            p={3}
-            borderRadius="md"
-            bg={location.pathname === item.path ? 'blue.100' : 'transparent'}
-            _hover={{ bg: 'blue.50' }}
-            display="flex"
-            alignItems="center"
-            gap={3}
-            data-testid={`nav-${item.path === '/' ? 'day' : item.path.slice(1)}`}
-          >
-            <Icon as={item.icon} />
-            <Text>{item.label}</Text>
-          </Link>
-        ))}
-      </VStack>
+    <Box
+      p={4}
+      position="relative"
+      overflow="hidden"
+      flexShrink={0}
+      sx={{
+        WebkitAppRegion: 'no-drag',
+      }}
+      {...sidebarStyles}
+    >
+      <Box
+        position="absolute"
+        inset={0}
+        pointerEvents="none"
+        opacity={0.45}
+        backgroundImage="radial-gradient(circle at 20% 14%, rgba(27, 29, 26, 0.10), transparent 18%), repeating-linear-gradient(0deg, transparent 0, transparent 30px, rgba(59, 58, 53, 0.035) 31px)"
+      />
+      <Box position="relative">
+        <HStack align="center" spacing={3} mb={2}>
+          <Box
+            w="22px"
+            h="22px"
+            borderRadius="4px"
+            bg="cinnabar.500"
+            boxShadow="0 8px 22px rgba(159, 70, 53, 0.26)"
+          />
+          <Box>
+            <Text fontSize="xl" fontWeight="bold" data-testid="app-title">
+              yourcrush
+            </Text>
+            <Text fontSize="xs" color="ink.500">
+              章节
+            </Text>
+          </Box>
+        </HStack>
+        {needsOnboarding() && (
+          <Badge colorScheme="cinnabar" mb={3}>
+            首次上手中
+          </Badge>
+        )}
+        <CharacterSelector />
+        <Stack
+          direction={{ base: 'row', md: 'column' }}
+          align={{ base: 'center', md: 'stretch' }}
+          spacing={1.5}
+          mt={{ base: 3, md: 5 }}
+          pb={{ base: 1, md: 0 }}
+          overflowX={{ base: 'auto', md: 'visible' }}
+          position="relative"
+        >
+          {visibleNavItems.map((item, index) => {
+            const active = location.pathname === item.path
+
+            return (
+              <Link
+                key={item.path}
+                as={RouterLink}
+                to={item.path}
+                bg={active ? 'paper.50' : 'transparent'}
+                borderLeftColor={{ base: 'transparent', md: active ? 'cinnabar.500' : 'transparent' }}
+                borderBottomColor={{ base: active ? 'cinnabar.500' : 'transparent', md: 'transparent' }}
+                color={active ? 'ink.900' : 'ink.600'}
+                boxShadow={active ? 'inkLine' : 'none'}
+                _hover={{ bg: 'rgba(255, 252, 244, 0.68)', color: 'ink.900' }}
+                display="flex"
+                alignItems="center"
+                gap={3}
+                textDecoration="none"
+                position="relative"
+                flexShrink={0}
+                borderLeft={{ base: '0', md: '3px solid' }}
+                borderBottom={{ base: '3px solid', md: '0' }}
+                borderRadius="4px"
+                px={4}
+                py={3}
+                data-testid={`nav-${item.path === '/' ? 'day' : item.path.slice(1)}`}
+              >
+                <Text fontSize="xs" color="cinnabar.600" minW="24px">
+                  {String(index + 1).padStart(2, '0')}
+                </Text>
+                <Box
+                  w="24px"
+                  h="24px"
+                  borderRadius="6px"
+                  display="grid"
+                  placeItems="center"
+                  bg={active ? 'cinnabar.500' : 'ink.100'}
+                  color={active ? 'paper.50' : 'ink.600'}
+                  flexShrink={0}
+                >
+                  <Icon as={item.icon} boxSize={3.5} />
+                </Box>
+                <Text>{item.label}</Text>
+              </Link>
+            )
+          })}
+        </Stack>
+        <Box
+          mt={6}
+          pt={4}
+          borderTop="1px solid"
+          borderColor="ink.200"
+          color="ink.500"
+          display={{ base: 'none', md: 'block' }}
+        >
+          <Text fontSize="xs">本地手稿</Text>
+          <Text fontSize="xs" mt={1}>
+            角色、碎片和 Day 都保存在这台设备。
+          </Text>
+        </Box>
+      </Box>
     </Box>
   )
 }

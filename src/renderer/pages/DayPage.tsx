@@ -4,6 +4,7 @@ import {
   AlertDescription,
   AlertIcon,
   AlertTitle,
+  Badge,
   Box,
   Button,
   Card,
@@ -33,6 +34,7 @@ import type {
 } from '../../shared/day/dayService'
 import { useDayStore } from '../stores/dayStore'
 import { useAppStore } from '../stores/appStore'
+import { InkPage } from '../components/InkDesign'
 
 interface RelationshipPromptState {
   message: string
@@ -209,8 +211,13 @@ function DayPage() {
 
   if (!activeSlug) {
     return (
-      <Box data-testid="day-page">
-        <Heading mb={4} data-testid="day-page-title">日常写作</Heading>
+      <InkPage
+        data-testid="day-page"
+        title="日常写作"
+        titleTestId="day-page-title"
+        eyebrow="DAY WRITING"
+        subtitle="把当天的线索写成完整叙事，像在纸上慢慢铺开一段关系。"
+      >
         <Alert status="info" borderRadius="md">
           <AlertIcon />
           <Box>
@@ -225,30 +232,34 @@ function DayPage() {
             <Button
               mt={3}
               size="sm"
-              colorScheme="blue"
+              colorScheme="cinnabar"
               onClick={() => navigate(needsOnboarding() ? '/onboarding' : '/crush')}
             >
               {needsOnboarding() ? '去完成首次设置' : '去角色管理'}
             </Button>
           </Box>
         </Alert>
-      </Box>
+      </InkPage>
     )
   }
 
   return (
-    <Box data-testid="day-page">
-      <Heading mb={4} data-testid="day-page-title">日常写作</Heading>
-
-      <Button
-        onClick={onOpen}
-        mb={4}
-        isDisabled={generating}
-        data-testid="open-generate-day"
-      >
-        生成日常写作
-      </Button>
-
+    <InkPage
+      data-testid="day-page"
+      title="日常写作"
+      titleTestId="day-page-title"
+      eyebrow="DAY WRITING"
+      subtitle="把摘要扩展成一篇 Day，留下关系推进中的具体场景。"
+      action={
+        <Button
+          onClick={onOpen}
+          isDisabled={generating}
+          data-testid="open-generate-day"
+        >
+          生成日常写作
+        </Button>
+      }
+    >
       {relationshipPrompt && (
         <Alert
           status="success"
@@ -265,7 +276,7 @@ function DayPage() {
           <HStack ml={4} alignSelf="center">
             <Button
               size="sm"
-              colorScheme="green"
+              colorScheme="bamboo"
               onClick={() => navigate('/progress')}
               data-testid="day-relationship-alert-cta"
             >
@@ -287,25 +298,33 @@ function DayPage() {
         <Box mb={4}>
           <HStack mb={2}>
             <Spinner size="sm" />
-            <Text fontSize="sm">正在生成叙事，请稍候..</Text>
+            <Text fontSize="sm" color="ink.600">正在生成叙事，请稍候。</Text>
           </HStack>
-          <Progress value={progress} size="sm" colorScheme="blue" borderRadius="md" />
+          <Progress value={progress} size="sm" colorScheme="cinnabar" borderRadius="md" />
         </Box>
       )}
 
       <Stack spacing={4}>
         {days.map((day) => (
-          <Card key={day.day_number}>
+          <Card
+            key={day.day_number}
+            borderLeft="4px solid"
+            borderLeftColor="cinnabar.500"
+          >
             <CardHeader>
-              <Heading size="md">Day {day.day_number}</Heading>
+              <HStack justify="space-between" align="center">
+                <Heading size="md">Day {day.day_number}</Heading>
+                <Badge colorScheme="ink">手稿</Badge>
+              </HStack>
             </CardHeader>
             <CardBody>
-              <Text whiteSpace="pre-wrap">
+              <Text whiteSpace="pre-wrap" color="ink.800" lineHeight="1.9">
                 {expandedDay === day.day_number ? expandedContent : day.content}
               </Text>
               <HStack mt={4} spacing={2}>
                 {expandedDay === day.day_number ? (
                   <Button
+                    variant="outline"
                     onClick={() => {
                       setExpandedDay(null)
                       setExpandedContent('')
@@ -315,6 +334,7 @@ function DayPage() {
                   </Button>
                 ) : (
                   <Button
+                    variant="outline"
                     onClick={async () => {
                       if (!activeSlug) return
                       const result = await getDay(activeSlug, day.day_number)
@@ -332,7 +352,8 @@ function DayPage() {
                   编辑
                 </Button>
                 <Button
-                  colorScheme="red"
+                  variant="outline"
+                  colorScheme="cinnabar"
                   onClick={() => handleDelete(day.day_number)}
                 >
                   删除
@@ -372,11 +393,11 @@ function DayPage() {
           </ModalBody>
           <ModalFooter>
             <Button
-              colorScheme="blue"
+              colorScheme="cinnabar"
               mr={3}
               onClick={handleGenerate}
               isLoading={generating}
-              loadingText="生成中.."
+              loadingText="生成中"
               data-testid="submit-generate-day"
             >
               生成
@@ -402,7 +423,7 @@ function DayPage() {
             />
           </ModalBody>
           <ModalFooter>
-            <Button colorScheme="blue" mr={3} onClick={handleSaveEdit}>
+            <Button colorScheme="cinnabar" mr={3} onClick={handleSaveEdit}>
               保存
             </Button>
             <Button variant="ghost" onClick={onEditClose}>
@@ -411,7 +432,7 @@ function DayPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </Box>
+    </InkPage>
   )
 }
 

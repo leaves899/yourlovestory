@@ -2,7 +2,7 @@ import { Box, Select, Text, Spinner } from '@chakra-ui/react'
 import { useAppStore } from '../stores/appStore'
 
 /**
- * 全局角色选择器 —— 嵌入侧边栏或页面顶部。
+ * 全局角色选择器，嵌入侧边栏或页面顶部。
  * 下拉列出所有角色，切换时更新全局 activeSlug。
  */
 function CharacterSelector() {
@@ -27,7 +27,7 @@ function CharacterSelector() {
   if (realCrushes.length === 0) {
     return (
       <Box py={2}>
-        <Text fontSize="sm" color="gray.500">
+        <Text fontSize="sm" color="ink.500">
           还没有角色
         </Text>
       </Box>
@@ -35,13 +35,22 @@ function CharacterSelector() {
   }
 
   return (
-    <Box py={2}>
+    <Box
+      py={2}
+      px={3}
+      borderTop="1px solid"
+      borderBottom="1px solid"
+      borderColor="ink.200"
+    >
+      <Text fontSize="xs" color="ink.500" mb={2}>
+        当前角色
+      </Text>
       <Select
         size="sm"
         value={activeSlug ?? ''}
         onChange={(e) => setActiveSlug(e.target.value)}
-        bg="white"
-        borderRadius="md"
+        bg="paper.50"
+        borderRadius="6px"
         data-testid="character-selector"
       >
         {realCrushes.map((crush) => (
