@@ -86,6 +86,20 @@ describe('promptBuilder', () => {
       expect(result).not.toContain('亲密写作规则')
     })
 
+    test('intimateEnabled=false 即使有知识库也不拼接亲密规则', () => {
+      const ctx: CrushContext = {
+        persona: '',
+        memory: '',
+        weekday: '',
+        contextSummary: '',
+        intimateKnowledge: '亲密知识',
+        intimateEnabled: false,
+      }
+      const result = buildSystemPrompt(ctx)
+      expect(result).not.toContain('## 亲密知识库')
+      expect(result).not.toContain('## 亲密写作规则')
+    })
+
     test('intimateEnabled=true 且有知识库', () => {
       const ctx: CrushContext = {
         persona: '',

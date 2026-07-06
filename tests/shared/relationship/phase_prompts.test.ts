@@ -1,6 +1,29 @@
-import { getPhaseWritingRules, buildPhaseAwareSystemPrompt } from '@/shared/relationship/phase_prompts'
+import {
+  PHASE_PROMPT_CONFIG,
+  PHASE_PROMPT_ORDER,
+  getPhaseWritingRules,
+  buildPhaseAwareSystemPrompt,
+} from '@/shared/relationship/phase_prompts'
 
 describe('Phase Prompts', () => {
+  describe('PHASE_PROMPT_CONFIG', () => {
+    test('按既定顺序覆盖所有阶段', () => {
+      expect(PHASE_PROMPT_ORDER).toEqual([0, 1, 2, 3, 4])
+    })
+
+    test('展示信息与规则由同一来源提供', () => {
+      PHASE_PROMPT_ORDER.forEach((phase) => {
+        const config = PHASE_PROMPT_CONFIG[phase]
+
+        expect(config.name).toBeTruthy()
+        expect(config.description).toBeTruthy()
+        expect(config.color).toBeTruthy()
+        expect(config.rules).toContain(`Phase ${phase}`)
+        expect(getPhaseWritingRules(phase)).toBe(config.rules)
+      })
+    })
+  })
+
   describe('getPhaseWritingRules', () => {
     test('Phase 0 规则', () => {
       const rules = getPhaseWritingRules(0)
@@ -41,11 +64,11 @@ describe('Phase Prompts', () => {
       expect(result).toContain('---')
     })
 
-    test('不包含阶段规则时返回原 Prompt', () => {
+    test('按当前阶段附加对应规则', () => {
       const basePrompt = '基础 Prompt'
-      const result = buildPhaseAwareSystemPrompt(basePrompt, 0)
+      const result = buildPhaseAwareSystemPrompt(basePrompt, 4)
 
-      expect(result).toContain('基础 Prompt')
+      expect(result.endsWith(PHASE_PROMPT_CONFIG[4].rules)).toBe(true)
     })
   })
 })
