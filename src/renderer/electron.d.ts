@@ -1,5 +1,13 @@
 import type { GenerateDayResponse } from '../shared/day/dayService'
 import type { ServiceResponse } from './stores/createCrudStore'
+import type { StartTaskInput } from '../main/tasks'
+import type {
+  TaskChunkEvent,
+  TaskEndEvent,
+  TaskErrorEvent,
+  TaskStageEvent,
+  TaskStartEvent,
+} from '../main/tasks'
 
 interface ElectronAPI {
   // 日常写作
@@ -38,6 +46,17 @@ interface ElectronAPI {
   getAppInfo: () => Promise<any>
   checkUpdate: () => Promise<any>
   quitApp: () => Promise<any>
+
+  // 长篇工作台任务
+  startTask: (params: StartTaskInput) => Promise<any>
+  cancelTask: (taskId: string) => Promise<any>
+  getTask: (taskId: string) => Promise<any>
+  listTasks: (projectId: string) => Promise<any>
+  onTaskStart: (listener: (event: TaskStartEvent) => void) => () => void
+  onTaskStage: (listener: (event: TaskStageEvent) => void) => () => void
+  onTaskChunk: (listener: (event: TaskChunkEvent) => void) => () => void
+  onTaskEnd: (listener: (event: TaskEndEvent) => void) => () => void
+  onTaskError: (listener: (event: TaskErrorEvent) => void) => () => void
 }
 
 declare global {

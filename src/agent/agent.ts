@@ -1,71 +1,194 @@
-import { Agent } from '@earendil-works/pi-agent-core'
-import { getModel } from '@earendil-works/pi-ai'
-import { dayTool } from './tools/dayTool'
-import { fragmentTool } from './tools/fragmentTool'
-import { crushTool } from './tools/crushTool'
+import type {
+  Agent,
+  AgentEvent,
+  AgentMessage,
+  AgentOptions,
+  AgentTool,
+} from '@earendil-works/pi-agent-core'
+import type { AssistantMessage, Message, StopReason } from '@earendil-works/pi-ai'
+import { createContextBudgetTransformer } from './llm/context'
+import { normalizeLlmConfig } from './llm/config'
+import { createDynamicPiModel } from './llm/model'
+import { createRetryingStreamFn } from './llm/stream'
+import {
+  emptyTokenUsage,
+  toTokenUsage,
+  type LlmConfig,
+  type LlmConfigInput,
+  type LlmRunStats,
+} from './llm/types'
+import { configureToolExecution, createDangerousOperationHook, type DangerousOperationConfirmation } from './permissions'
+import { loadDefaultAgentTools, loadDefaultPiRuntime, type PiRuntime } from './runtime'
 
-/**
- * Pi Agent 实例
- *
- * 配置：
- * - 并行执行工具
- * - 中等思考深度
- * - 使用 Anthropic Claude Sonnet 4 模型
- *
- * 注意：streamFn 使用默认的 streamSimple（从 @earendil-works/pi-ai 自动加载），
- * 需通过 ANTHROPIC_API_KEY 环境变量提供 API 密钥。
- */
-const agent = new Agent({
-  initialState: {
-    systemPrompt: `你是一个恋爱日记助手，帮助用户记录与 crush 的日常生活。
-请使用温暖、细腻的语言，注重心理描写和情感表达。
+const DEFAULT_SYSTEM_PROMPT = '你是长篇创作项目助手，只依据当前项目和会话上下文工作。'
 
-核心功能：
-- 日常写作：生成一天的生活叙事
-- 碎片日记：记录零散的恋爱瞬间
-- 角色管理：创建和管理 crush 角色
+export interface AgentCreationOptions {
+  projectId: string
+  sessionId: string
+  llm: LlmConfigInput
+  systemPrompt?: string
+  initialMessages?: AgentMessage[]
+  tools?: readonly AgentTool[]
+  confirmDangerousOperation?: DangerousOperationConfirmation
+  mutatingToolNames?: readonly string[]
+  dangerousToolNames?: readonly string[]
+}
 
-写作原则：
-- 三维描写：环境、动作、心理
-- 时间标签：## HH:MM · 事件
-- 禁止破折号「——」
-- 禁止过度省略号「...」
-- 细腻的心理描写和情感表达`,
-    model: getModel('anthropic', 'claude-sonnet-4-20250514'),
-    thinkingLevel: 'medium',
-    tools: [dayTool, fragmentTool, crushTool],
-  },
-  toolExecution: 'parallel',
-  steeringMode: 'one-at-a-time',
-  followUpMode: 'one-at-a-time',
-})
+export interface AgentPromptOptions {
+  signal?: AbortSignal
+  onEvent?: (event: AgentEvent) => Promise<void> | void
+}
 
-agent.subscribe((event) => {
-  switch (event.type) {
-    case 'message_start':
-      console.log('开始处理消息...')
-      break
-    case 'message_update': {
-      // AssistantMessageEvent 是联合类型，delta 只在 text_delta/thinking_delta 子类型上存在
-      const e = event.assistantMessageEvent
-      if (e.type === 'text_delta') {
-        process.stdout.write(e.delta)
-      }
-      break
-    }
-    case 'message_end':
-      // 消息完成
-      break
-    case 'tool_execution_start':
-      console.log(`执行工具: ${event.toolName}`)
-      break
-    case 'tool_execution_end':
-      console.log(`工具执行完成: ${event.toolName}`)
-      break
-    case 'agent_end':
-      console.log('处理完成')
-      break
+export interface AgentRunResult extends LlmRunStats {
+  text: string
+  assistantMessage?: AssistantMessage
+}
+
+export interface ProjectSessionAgent {
+  readonly projectId: string
+  readonly sessionId: string
+  prompt(prompt: string, options?: AgentPromptOptions): Promise<AgentRunResult>
+  abort(): void
+  dispose(): void
+}
+
+export interface AgentFactory {
+  create(options: AgentCreationOptions): Promise<ProjectSessionAgent>
+}
+
+export interface AgentFactoryDependencies {
+  loadRuntime?: () => Promise<PiRuntime>
+  loadTools?: () => Promise<readonly AgentTool[]>
+  sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>
+}
+
+function isAssistantMessage(message: AgentMessage): message is AssistantMessage {
+  return message.role === 'assistant'
+}
+
+function findLastAssistant(messages: readonly AgentMessage[]): AssistantMessage | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (isAssistantMessage(message)) return message
   }
-})
+  return undefined
+}
 
-export { agent }
+function assistantText(message: AssistantMessage | undefined): string {
+  if (!message) return ''
+  return message.content
+    .filter((content): content is Extract<AssistantMessage['content'][number], { type: 'text' }> => content.type === 'text')
+    .map((content) => content.text)
+    .join('')
+}
+
+function createFallbackStats(signal?: AbortSignal): LlmRunStats {
+  return {
+    finishReason: signal?.aborted ? 'aborted' : 'error',
+    usage: emptyTokenUsage(),
+    errorMessage: signal?.aborted ? 'Agent run was cancelled' : 'Agent did not return an assistant message',
+  }
+}
+
+class PiProjectSessionAgent implements ProjectSessionAgent {
+  public constructor(
+    public readonly projectId: string,
+    public readonly sessionId: string,
+    private readonly agent: Agent,
+  ) {}
+
+  public async prompt(prompt: string, options: AgentPromptOptions = {}): Promise<AgentRunResult> {
+    let lastAssistant: AssistantMessage | undefined
+    const unsubscribe = this.agent.subscribe(async (event) => {
+      if (event.type === 'message_end' && isAssistantMessage(event.message)) {
+        lastAssistant = event.message
+      }
+      if (event.type === 'agent_end') {
+        lastAssistant = findLastAssistant(event.messages) ?? lastAssistant
+      }
+      await options.onEvent?.(event)
+    })
+
+    const abort = (): void => this.agent.abort()
+    options.signal?.addEventListener('abort', abort, { once: true })
+    try {
+      await this.agent.prompt(prompt)
+    } finally {
+      options.signal?.removeEventListener('abort', abort)
+      unsubscribe()
+    }
+
+    const assistant = lastAssistant ?? findLastAssistant(this.agent.state.messages)
+    if (!assistant) return { text: '', ...createFallbackStats(options.signal) }
+
+    return {
+      text: assistantText(assistant),
+      finishReason: assistant.stopReason,
+      usage: toTokenUsage(assistant.usage),
+      responseModel: assistant.responseModel,
+      errorMessage: assistant.errorMessage,
+      assistantMessage: assistant,
+    }
+  }
+
+  public abort(): void {
+    this.agent.abort()
+  }
+
+  public dispose(): void {
+    this.agent.abort()
+    this.agent.clearAllQueues()
+  }
+}
+
+export function createProjectSessionAgentFactory(
+  dependencies: AgentFactoryDependencies = {},
+): AgentFactory {
+  const loadRuntime = dependencies.loadRuntime ?? loadDefaultPiRuntime
+  const loadTools = dependencies.loadTools ?? loadDefaultAgentTools
+
+  return {
+    create: async (options) => {
+      const [runtime, configuredLlm] = await Promise.all([
+        loadRuntime(),
+        Promise.resolve(normalizeLlmConfig(options.llm)),
+      ])
+      const tools = options.tools ?? (await loadTools())
+      const model = createDynamicPiModel(configuredLlm)
+      const permissionHook = createDangerousOperationHook({
+        projectId: options.projectId,
+        sessionId: options.sessionId,
+        mutatingToolNames: options.mutatingToolNames,
+        dangerousToolNames: options.dangerousToolNames,
+        confirm: options.confirmDangerousOperation,
+      })
+      const agentOptions: AgentOptions = {
+        initialState: {
+          systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+          model,
+          messages: options.initialMessages ?? [],
+          tools: configureToolExecution(tools, options.mutatingToolNames),
+        },
+        streamFn: createRetryingStreamFn(
+          runtime.streamSimple,
+          runtime.createStream,
+          configuredLlm,
+          dependencies.sleep,
+        ),
+        getApiKey: () => configuredLlm.apiKey,
+        transformContext: createContextBudgetTransformer(configuredLlm.contextBudget),
+        beforeToolCall: permissionHook,
+        sessionId: options.sessionId,
+        toolExecution: 'parallel',
+        maxRetryDelayMs: configuredLlm.maxRetryDelayMs,
+      }
+      return new PiProjectSessionAgent(
+        options.projectId,
+        options.sessionId,
+        new runtime.Agent(agentOptions),
+      )
+    },
+  }
+}
+
+export type { LlmConfig, LlmConfigInput, StopReason, Message }

@@ -1,4 +1,23 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import type { StartTaskInput } from './tasks'
+import type {
+  TaskChunkEvent,
+  TaskEndEvent,
+  TaskErrorEvent,
+  TaskStageEvent,
+  TaskStartEvent,
+} from './tasks'
+
+function subscribeTaskEvent<T>(
+  channel: 'task:start' | 'task:stage' | 'task:chunk' | 'task:end' | 'task:error',
+  listener: (event: T) => void,
+): () => void {
+  const wrapped = (_event: IpcRendererEvent, payload: unknown): void => {
+    listener(payload as T)
+  }
+  ipcRenderer.on(channel, wrapped)
+  return () => ipcRenderer.removeListener(channel, wrapped)
+}
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // 日常写作
@@ -40,4 +59,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppInfo: () => ipcRenderer.invoke('app:info'),
   checkUpdate: () => ipcRenderer.invoke('app:checkUpdate'),
   quitApp: () => ipcRenderer.invoke('app:quit'),
+
+  // 长篇工作台任务
+  startTask: (params: StartTaskInput) => ipcRenderer.invoke('task:run', params),
+  cancelTask: (taskId: string) => ipcRenderer.invoke('task:cancel', { taskId }),
+  getTask: (taskId: string) => ipcRenderer.invoke('task:get', { taskId }),
+  listTasks: (projectId: string) => ipcRenderer.invoke('task:list', { projectId }),
+  onTaskStart: (listener: (event: TaskStartEvent) => void) =>
+    subscribeTaskEvent('task:start', listener),
+  onTaskStage: (listener: (event: TaskStageEvent) => void) =>
+    subscribeTaskEvent('task:stage', listener),
+  onTaskChunk: (listener: (event: TaskChunkEvent) => void) =>
+    subscribeTaskEvent('task:chunk', listener),
+  onTaskEnd: (listener: (event: TaskEndEvent) => void) =>
+    subscribeTaskEvent('task:end', listener),
+  onTaskError: (listener: (event: TaskErrorEvent) => void) =>
+    subscribeTaskEvent('task:error', listener),
 })

@@ -2,8 +2,14 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import * as fs from 'fs'
 import path from 'path'
 import { setupIPC } from './ipc'
+import { initializeDatabase, TaskRepository } from './database'
+import type { SqliteDatabase } from './database'
+import { createProjectSessionAgentFactory } from '../agent/agent'
+import { createWebContentsTaskEventSink, TaskManager } from './tasks'
 
 let mainWindow: BrowserWindow | null = null
+let database: SqliteDatabase | null = null
+let taskManager: TaskManager | null = null
 
 /**
  * 数据迁移逻辑：将旧数据从项目根目录迁移到 userData 目录。
@@ -98,9 +104,15 @@ function createWindow() {
 app.whenReady().then(() => {
   // 启动时执行数据迁移
   migrateData()
+  database = initializeDatabase(app.getPath('userData'))
 
   createWindow()
-  setupIPC()
+  taskManager = new TaskManager({
+    store: new TaskRepository(database),
+    agentFactory: createProjectSessionAgentFactory(),
+    events: createWebContentsTaskEventSink(() => mainWindow?.webContents ?? null),
+  })
+  setupIPC({ taskManager })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -113,4 +125,11 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('will-quit', () => {
+  taskManager?.dispose()
+  taskManager = null
+  database?.close()
+  database = null
 })

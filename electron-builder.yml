@@ -6,6 +6,9 @@ directories:
 files:
   - dist/**/*
   - package.json
+npmRebuild: true
+asarUnpack:
+  - node_modules/better-sqlite3/**/*
 win:
   target:
     - nsis
