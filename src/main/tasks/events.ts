@@ -1,7 +1,14 @@
 import type { LlmRunStats } from '../../agent/llm'
 import type { JsonObject, Task, TaskStatus } from '../database'
 
-export type TaskEventChannel = 'task:start' | 'task:stage' | 'task:chunk' | 'task:end' | 'task:error'
+export type TaskEventChannel =
+  | 'task:start'
+  | 'task:stage'
+  | 'task:chunk'
+  | 'task:checkpoint'
+  | 'task:review'
+  | 'task:end'
+  | 'task:error'
 
 export interface TaskStartEvent {
   type: 'task:start'
@@ -19,6 +26,21 @@ export interface TaskChunkEvent {
   type: 'task:chunk'
   taskId: string
   chunk: string
+  stage?: string
+}
+
+export interface TaskCheckpointEvent {
+  type: 'task:checkpoint'
+  taskId: string
+  checkpoint: JsonObject
+}
+
+export interface TaskReviewEvent {
+  type: 'task:review'
+  taskId: string
+  versionId: string
+  required: boolean
+  status: 'review' | 'approved'
 }
 
 export interface TaskEndEvent {
@@ -39,6 +61,8 @@ export type TaskEvent =
   | TaskStartEvent
   | TaskStageEvent
   | TaskChunkEvent
+  | TaskCheckpointEvent
+  | TaskReviewEvent
   | TaskEndEvent
   | TaskErrorEvent
 

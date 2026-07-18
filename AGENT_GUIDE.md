@@ -71,7 +71,7 @@ docker-compose down
 
 | Job | 功能 |
 |-----|------|
-| `lint` | 检查敏感信息（小明/xiaoming/李薇/Day N）和 Python 语法 |
+| `lint` | 检查敏感信息（私密标记 A、私密标记 B、私密标记 C、Day N）和 Python 语法 |
 | `test-scripts` | 测试 toggle_intimate.py --help 和 init_template.py --help |
 | `markdown-lint` | 检查 docs/*.md 格式（空标题、尾随空格、README 结构） |
 
@@ -169,7 +169,7 @@ python scripts/toggle_intimate.py --slug "<slug>" --status   # 查看状态
 
 ## 禁止事项
 
-- 禁止在代码中添加真实人物信息（如"小明"、"xiaoming"、"李薇"）
+- 禁止在代码中添加真实人物信息（如私密标记 A、私密标记 B、私密标记 C）
 - 禁止硬编码 Day 数字或具体日期
 - 禁止使用破折号「——」
 - 禁止过度使用省略号「...」
@@ -183,7 +183,7 @@ python scripts/toggle_intimate.py --slug "<slug>" --status   # 查看状态
 python -m py_compile scripts/*.py
 
 # 2. 私密信息检测
-grep -r "小明\|xiaoming\|李薇" . --include="*.py" --include="*.md"
+grep -r "<private-name-[a-c]>" . --include="*.py" --include="*.md"
 
 # 3. CI 检查（本地模拟）
 docker-compose run --rm yourcrush pytest

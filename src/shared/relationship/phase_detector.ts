@@ -8,7 +8,6 @@ import {
   type RelationshipPhase,
   type PhaseSignal,
   type PhaseTransitionResult,
-  type SignalConfig,
   SIGNAL_CONFIGS,
   PHASE_THRESHOLDS,
   PHASE_NAMES,

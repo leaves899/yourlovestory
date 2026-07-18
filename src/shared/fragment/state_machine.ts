@@ -61,7 +61,7 @@ export function canRegenerate(editState: EditState): boolean {
   return editState === 'readonly_regenerable'
 }
 
-export function canDelete(status: FragmentStatus, completed: boolean): boolean {
+export function canDelete(_status: FragmentStatus, completed: boolean): boolean {
   if (completed) return false
   return true
 }
@@ -82,7 +82,7 @@ export function canAddFragment(status: FragmentStatus): boolean {
 export function transitionToCompleted(
   day: FragmentDay,
   writingContext: string,
-  currentDate?: string | null
+  _currentDate?: string | null
 ): FragmentDay {
   return {
     ...day,

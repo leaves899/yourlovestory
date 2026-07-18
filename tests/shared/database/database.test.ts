@@ -5,6 +5,7 @@ import {
   ChapterRepository,
   ProjectRepository,
   initializeDatabase,
+  migrations,
   runMigrations,
   type Migration,
   type SqliteDatabase,
@@ -50,10 +51,12 @@ describe('SQLite database initialization', () => {
         'arcs',
         'chapters',
         'chapter_revisions',
+        'chapter_versions',
         'foreshadows',
         'foreshadow_events',
         'narrative_memories',
         'source_materials',
+        'fragments',
         'tasks',
         'chat_sessions',
         'chat_messages',
@@ -61,6 +64,9 @@ describe('SQLite database initialization', () => {
         'project_skills',
         'postprocess_reports',
         'roadmap_items',
+        'volumes',
+        'volume_outlines',
+        'chapter_outlines',
       ]),
     )
   })
@@ -69,24 +75,24 @@ describe('SQLite database initialization', () => {
     const firstRun = database!
       .prepare<{ version: number }>('SELECT version FROM schema_migrations')
       .all()
-    expect(firstRun).toHaveLength(1)
+    expect(firstRun).toHaveLength(migrations.length)
 
     const secondRun = runMigrations(database!)
-    expect(secondRun).toHaveLength(1)
+    expect(secondRun).toHaveLength(migrations.length)
     expect(
       database!.prepare<{ count: number }>('SELECT COUNT(*) AS count FROM schema_migrations').get(),
-    ).toEqual({ count: 1 })
+    ).toEqual({ count: migrations.length })
   })
 
   test('rolls back all statements when a migration fails', () => {
     const failingMigrations: readonly Migration[] = [
       {
-        version: 2,
+        version: 3,
         name: 'temporary table',
         up: 'CREATE TABLE rollback_probe (id INTEGER PRIMARY KEY)',
       },
       {
-        version: 3,
+        version: 4,
         name: 'failing migration',
         up: 'INSERT INTO table_that_does_not_exist (id) VALUES (1)',
       },
@@ -96,7 +102,7 @@ describe('SQLite database initialization', () => {
     expect(() => database!.prepare('SELECT * FROM rollback_probe').all()).toThrow()
     expect(
       database!.prepare<{ count: number }>('SELECT COUNT(*) AS count FROM schema_migrations').get(),
-    ).toEqual({ count: 1 })
+    ).toEqual({ count: migrations.length })
   })
 })
 

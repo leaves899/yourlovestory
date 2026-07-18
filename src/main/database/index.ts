@@ -1,4 +1,5 @@
 export * from './database'
+export * from './json'
 export * from './migrations'
 export * from './repositories'
 export * from './types'

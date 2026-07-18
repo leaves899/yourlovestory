@@ -41,6 +41,22 @@ describe('工具执行与危险操作确认', () => {
     })
   })
 
+  test('blocks advanced outline and narrative mutations until confirmed', async () => {
+    const hook = createDangerousOperationHook({
+      projectId: 'project',
+      sessionId: 'session',
+      dangerousToolNames: ['outline_manager', 'narrative_manager'],
+    })
+    await expect(hook(context('outline_manager', { action: 'create_chapter_outline' }))).resolves.toEqual({
+      block: true,
+      reason: '危险操作需要明确确认',
+    })
+    await expect(hook(context('narrative_manager', { action: 'toggle_skill' }))).resolves.toEqual({
+      block: true,
+      reason: '危险操作需要明确确认',
+    })
+  })
+
   test('passes the complete confirmation request to an injected confirmer', async () => {
     const requests: unknown[] = []
     const hook = createDangerousOperationHook({

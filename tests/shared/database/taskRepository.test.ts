@@ -37,20 +37,28 @@ describe('TaskRepository', () => {
     expect(task.status).toBe('pending')
     expect(task.input).toEqual({ prompt: 'hello', attempt: 1 })
 
+    const startedAt = new Date().toISOString()
+    const finishedAt = new Date(Date.now() + 1).toISOString()
     const running = tasks.update(task.id, {
       status: 'running',
       stage: 'agent',
       progress: 0.25,
-      started_at: '2026-07-18T00:00:00.000Z',
+      checkpoint: { stage: 'body', body: 'partial' },
+      started_at: startedAt,
     })
-    expect(running).toEqual(expect.objectContaining({ status: 'running', stage: 'agent', progress: 0.25 }))
+    expect(running).toEqual(expect.objectContaining({
+      status: 'running',
+      stage: 'agent',
+      progress: 0.25,
+      checkpoint: { stage: 'body', body: 'partial' },
+    }))
 
     const completed = tasks.update(task.id, {
       status: 'completed',
       stage: 'completed',
       progress: 1,
       result: { text: 'done', finishReason: 'stop' },
-      finished_at: '2026-07-18T00:00:01.000Z',
+      finished_at: finishedAt,
     })
     expect(completed?.result).toEqual({ text: 'done', finishReason: 'stop' })
     expect(tasks.listByProject(project.id)).toHaveLength(1)

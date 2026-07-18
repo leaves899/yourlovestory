@@ -1,4 +1,5 @@
-import { Type } from 'typebox'
+import { Type, type Static } from 'typebox'
+import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { app } from 'electron'
 import {
   managerRecordFragment,
@@ -10,67 +11,67 @@ import {
   recommendTags,
 } from '../../shared/fragment/manager'
 import { getCurrentDate } from '../../shared/fragment/utils'
+import type { Mood, Origin } from '../../shared/fragment/models'
 
 /**
  * 碎片日记工具 - 支持 CRUD + integrate + recommend 操作
  *
  * 直接调用 TS fragment 模块（不再 spawn Python）。
  */
-export const fragmentTool = {
+const fragmentParameters = Type.Object({
+  action: Type.Union([
+    Type.Literal('record'),
+    Type.Literal('list'),
+    Type.Literal('get'),
+    Type.Literal('update'),
+    Type.Literal('delete'),
+    Type.Literal('integrate'),
+    Type.Literal('recommend'),
+  ]),
+  slug: Type.String({ pattern: '^[a-z0-9-]+$' }),
+  fragment_id: Type.Optional(Type.String()),
+  origin: Type.Optional(Type.Union([
+    Type.Literal('user'),
+    Type.Literal('crush'),
+    Type.Literal('ambient'),
+  ])),
+  mood: Type.Optional(Type.Union([
+    Type.Literal('positive'),
+    Type.Literal('negative'),
+    Type.Literal('neutral'),
+    Type.Literal('mixed'),
+  ])),
+  content: Type.Optional(Type.String()),
+  env_tags: Type.Optional(Type.Array(Type.String())),
+  behavior_tags: Type.Optional(Type.Array(Type.String())),
+  date: Type.Optional(Type.String()),
+  expected_version: Type.Optional(Type.Number()),
+  session_id: Type.Optional(Type.String()),
+})
+
+type FragmentParameters = Static<typeof fragmentParameters>
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export const fragmentTool: AgentTool<typeof fragmentParameters, { success: boolean; error?: string }> = {
   name: 'fragment_manager',
   label: 'Fragment Manager',
   description: '管理碎片日记：记录、查看、更新、删除、整合碎片、推荐标签',
-  parameters: Type.Object({
-    action: Type.Union(
-      [
-        Type.Literal('record'),
-        Type.Literal('list'),
-        Type.Literal('get'),
-        Type.Literal('update'),
-        Type.Literal('delete'),
-        Type.Literal('integrate'),
-        Type.Literal('recommend'),
-      ],
-      { description: '操作类型' }
-    ),
-    slug: Type.String({
-      description: '角色标识（仅允许小写字母、数字、连字符）',
-      pattern: '^[a-z0-9-]+$',
-    }),
-    fragment_id: Type.Optional(Type.String({ description: '碎片 ID（get/update/delete 必需）' })),
-    origin: Type.Optional(
-      Type.Union(
-        [Type.Literal('user'), Type.Literal('crush'), Type.Literal('ambient')],
-        { description: '来源' }
-      )
-    ),
-    mood: Type.Optional(
-      Type.Union(
-        [
-          Type.Literal('positive'),
-          Type.Literal('negative'),
-          Type.Literal('neutral'),
-          Type.Literal('mixed'),
-        ],
-        { description: '情绪' }
-      )
-    ),
-    content: Type.Optional(Type.String({ description: '碎片内容（record/update 必需）' })),
-    env_tags: Type.Optional(Type.Array(Type.String(), { description: '环境标签' })),
-    behavior_tags: Type.Optional(Type.Array(Type.String(), { description: '行为标签' })),
-    date: Type.Optional(Type.String({ description: '日期 YYYY-MM-DD（record/list/integrate 可选）' })),
-    expected_version: Type.Optional(Type.Number({ description: '乐观锁版本号（update/delete 可选，不传则跳过锁检查）' })),
-    session_id: Type.Optional(Type.String({ description: '会话 ID（recommend 操作需要）' })),
-  }),
-  execute: async (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
+  parameters: fragmentParameters,
+  execute: async (toolCallId: string, params: FragmentParameters) => {
     try {
       const projectRoot = app.getPath('userData')
-      let result: any
+      let result: unknown
 
       switch (params.action) {
         case 'record':
           result = managerRecordFragment(projectRoot, params.slug, {
-            origin: params.origin,
+            origin: params.origin as Origin | undefined,
             mood: params.mood,
             content: params.content,
             env_tags: params.env_tags,
@@ -82,20 +83,22 @@ export const fragmentTool = {
           result = { success: true, data: getFragmentsByDate(projectRoot, params.slug, params.date ?? getCurrentDate()) }
           break
         case 'get':
-          result = getFragment(projectRoot, params.fragment_id)
-          result = result ? { success: true, data: result } : { success: false, errors: ['碎片不存在'] }
+          {
+            const fragment = getFragment(projectRoot, params.fragment_id ?? '')
+            result = fragment ? { success: true, data: fragment } : { success: false, errors: ['碎片不存在'] }
+          }
           break
         case 'update':
-          result = managerUpdateFragment(projectRoot, params.fragment_id, {
+          result = managerUpdateFragment(projectRoot, params.fragment_id ?? '', {
             content: params.content,
-            origin: params.origin,
-            mood: params.mood,
+            origin: params.origin as Origin | undefined,
+            mood: params.mood as Mood | undefined,
             env_tags: params.env_tags,
             behavior_tags: params.behavior_tags,
           }, params.expected_version)
           break
         case 'delete':
-          result = managerDeleteFragment(projectRoot, params.fragment_id, params.expected_version)
+          result = managerDeleteFragment(projectRoot, params.fragment_id ?? '', params.expected_version)
           break
         case 'integrate':
           result = { success: true, data: { prompt: managerIntegrateFragments(projectRoot, params.slug, params.date ?? getCurrentDate()) } }
@@ -107,21 +110,23 @@ export const fragmentTool = {
           break
         }
         default:
-          result = { success: false, errors: [`Unknown action: ${params.action}`] }
+          result = { success: false, error: `Unknown action: ${params.action}` }
       }
 
-      const isSuccess =
+      const isSuccess = isRecord(result) && (
         result.success === true ||
-        (result.fragment !== null && result.fragment !== undefined)
+        ('fragment' in result && result.fragment !== null && result.fragment !== undefined)
+      )
 
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
         details: { success: isSuccess },
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = errorText(error)
       return {
-        content: [{ type: 'text' as const, text: `错误: ${error.message}` }],
-        details: { success: false, error: error.message },
+        content: [{ type: 'text' as const, text: `错误: ${message}` }],
+        details: { success: false, error: message },
       }
     }
   },

@@ -48,7 +48,7 @@ claude skill run create-crush
 ```bash
 # 使用 init_template.py 脚本
 python scripts/init_template.py \
-    --name "小明" \
+    --name "示例角色" \
     --nickname "小雪" \
     --slug "xiaoxue"
 

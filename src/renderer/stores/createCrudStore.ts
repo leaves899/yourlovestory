@@ -170,7 +170,7 @@ export function createCrudStore<
 
     if (config.mutations) {
       for (const [name, serviceFn] of Object.entries(config.mutations)) {
-        ;(wrappedMutations as Record<string, unknown>)[name] = async (
+        (wrappedMutations as Record<string, unknown>)[name] = async (
           ...args: unknown[]
         ): Promise<ServiceResponse> => {
           _mutationCount++

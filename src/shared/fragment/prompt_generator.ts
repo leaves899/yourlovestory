@@ -5,7 +5,6 @@
  */
 import {
   DIRECTION_PROMPTS,
-  DIRECTION_MOOD_MAP,
   THEME_PROMPTS,
   MOOD_MODIFIERS,
   type Fragment,

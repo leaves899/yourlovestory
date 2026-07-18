@@ -12,6 +12,8 @@ function normalizeSlug(raw: string): string {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, '-')
+    // 控制字符是这里要清理的输入，保留显式范围比放宽文件名校验更安全。
+    // eslint-disable-next-line no-control-regex
     .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, '')
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '')

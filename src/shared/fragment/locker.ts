@@ -6,7 +6,7 @@
  */
 import { loadFragmentDay, saveFragmentDay } from './storage'
 import { getStatus, getEditState, transitionToCompleted } from './state_machine'
-import { getCurrentDate, getCurrentDatetime } from './utils'
+import { getCurrentDate } from './utils'
 import type { FragmentDay, FragmentStatus, EditState } from './models'
 
 /** 获取日期级别碎片数据 */

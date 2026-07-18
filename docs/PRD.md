@@ -249,7 +249,7 @@ d:\CLAUDECODE\yourcrush\
 - 所有数据本地存储，不上传任何服务器
 - `.gitignore` 排除 `crushes/*/` 和 `user/`，防止意外提交
 - 亲密内容默认关闭，需显式启用（编辑 `crushes/<slug>/.intimate_config` 写入 `intimate=true`，原 `toggle_intimate.py` 已迁移为 `src/shared/persistence/intimateToggle.ts`）
-- CI 流水线检测真实人物信息泄露（小明、xiaoming、李薇等）
+- CI 流水线检测真实人物信息泄露（使用私密标记规则）
 
 ### 3.8 离线运行支持
 

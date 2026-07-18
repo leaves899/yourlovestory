@@ -9,11 +9,13 @@ import {
   type BoxProps,
 } from '@chakra-ui/react'
 import { Link as RouterLink, useLocation } from 'react-router-dom'
-import { FaBook, FaStickyNote, FaUser, FaHeart, FaCog, FaQuestionCircle, FaSync } from 'react-icons/fa'
+import { FaBook, FaStickyNote, FaUser, FaHeart, FaCog, FaQuestionCircle, FaSync, FaRobot, FaFeatherAlt } from 'react-icons/fa'
 import CharacterSelector from './CharacterSelector'
 import { useAppStore } from '../stores/appStore'
 
 const navItems = [
+  { path: '/workbench', label: '长篇工作台', icon: FaFeatherAlt },
+  { path: '/assistant', label: 'Agent 助手', icon: FaRobot },
   { path: '/', label: '日常写作', icon: FaBook },
   { path: '/fragment', label: '碎片日记', icon: FaStickyNote },
   { path: '/crush', label: '角色管理', icon: FaUser },

@@ -1,15 +1,28 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import * as fs from 'fs'
 import path from 'path'
 import { setupIPC } from './ipc'
-import { initializeDatabase, TaskRepository } from './database'
+import { ChatRepository, initializeDatabase, TaskRepository } from './database'
 import type { SqliteDatabase } from './database'
 import { createProjectSessionAgentFactory } from '../agent/agent'
-import { createWebContentsTaskEventSink, TaskManager } from './tasks'
+import {
+  createChapterGenerationTaskRunner,
+  createChapterPolishTaskRunner,
+  createWebContentsTaskEventSink,
+  TaskManager,
+} from './tasks'
+import { createWorkbenchService, type WorkbenchService } from './workbench'
+import {
+  AssistantService,
+  createWebContentsAssistantEventSink,
+} from './assistant'
+import { createNovelAgentTools } from '../agent/tools/novelTools'
 
 let mainWindow: BrowserWindow | null = null
 let database: SqliteDatabase | null = null
 let taskManager: TaskManager | null = null
+let workbenchService: WorkbenchService | null = null
+let assistantService: AssistantService | null = null
 
 /**
  * 数据迁移逻辑：将旧数据从项目根目录迁移到 userData 目录。
@@ -105,14 +118,46 @@ app.whenReady().then(() => {
   // 启动时执行数据迁移
   migrateData()
   database = initializeDatabase(app.getPath('userData'))
+  workbenchService = createWorkbenchService(database, { projectRoot: app.getPath('userData') })
 
   createWindow()
+  const agentFactory = createProjectSessionAgentFactory()
   taskManager = new TaskManager({
     store: new TaskRepository(database),
-    agentFactory: createProjectSessionAgentFactory(),
+    agentFactory,
     events: createWebContentsTaskEventSink(() => mainWindow?.webContents ?? null),
+    runners: {
+      'chapter-generation': createChapterGenerationTaskRunner({
+        service: workbenchService.chapterGeneration,
+        agentFactory,
+      }),
+      'chapter-polish': createChapterPolishTaskRunner({
+        service: workbenchService.narrative,
+        agentFactory,
+      }),
+    },
   })
-  setupIPC({ taskManager })
+  assistantService = new AssistantService({
+    store: new ChatRepository(database),
+    agentFactory,
+    events: createWebContentsAssistantEventSink(() => mainWindow?.webContents ?? null),
+    loadAdditionalTools: async (projectId, sessionId, llm) =>
+      workbenchService
+        ? createNovelAgentTools(workbenchService, projectId, {
+            sessionId,
+            llm,
+            startChapterGeneration: (input) => taskManager!.startChapterGeneration(input),
+            startChapterPolish: (input) => taskManager!.startChapterPolish(input),
+          })
+        : [],
+  })
+  setupIPC({
+    taskManager,
+    workbenchService,
+    assistantService,
+    chapterGenerationService: workbenchService.chapterGeneration,
+    narrativeWorkbenchService: workbenchService.narrative,
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -130,6 +175,9 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   taskManager?.dispose()
   taskManager = null
+  assistantService?.dispose()
+  assistantService = null
+  workbenchService = null
   database?.close()
   database = null
 })

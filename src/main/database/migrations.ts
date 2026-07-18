@@ -1,5 +1,10 @@
 import type { SqliteDatabase } from './types'
 import { initialSchemaMigration } from './migrations/001_initial_schema'
+import { fragmentLibraryMigration } from './migrations/002_fragment_library'
+import { novelProjectWorkbenchMigration } from './migrations/003_novel_project_workbench'
+import { outlineWorkbenchMigration } from './migrations/004_outline_workbench'
+import { chapterGenerationMigration } from './migrations/005_chapter_generation'
+import { narrativeWorkbenchMigration } from './migrations/006_narrative_workbench'
 
 export interface Migration {
   version: number
@@ -13,7 +18,14 @@ export interface AppliedMigration {
   applied_at: string
 }
 
-export const migrations: readonly Migration[] = [initialSchemaMigration]
+export const migrations: readonly Migration[] = [
+  initialSchemaMigration,
+  fragmentLibraryMigration,
+  novelProjectWorkbenchMigration,
+  outlineWorkbenchMigration,
+  chapterGenerationMigration,
+  narrativeWorkbenchMigration,
+]
 
 function ensureMigrationsTable(database: SqliteDatabase): void {
   database.exec(`

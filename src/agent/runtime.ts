@@ -1,6 +1,8 @@
 import type { Agent, AgentOptions, AgentTool } from '@earendil-works/pi-agent-core'
 import type { AssistantMessageEventStream } from '@earendil-works/pi-ai'
 import type { StreamFn } from '@earendil-works/pi-agent-core'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 export interface PiRuntime {
   Agent: new (options?: AgentOptions) => Agent
@@ -47,8 +49,6 @@ export interface DefaultToolModules {
 }
 
 function localModuleSpecifier(fileName: string): string {
-  const path = require('node:path') as typeof import('node:path')
-  const { pathToFileURL } = require('node:url') as typeof import('node:url')
   return pathToFileURL(path.join(__dirname, 'tools', `${fileName}.js`)).href
 }
 

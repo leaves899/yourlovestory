@@ -37,7 +37,7 @@ npm run lint           # ESLint
 npx tsc --noEmit -p tsconfig.main.json   # 类型检查（CI 跑此命令）
 
 # 提交前私密信息检查（应返回空）
-grep -r "小明\|xiaoming\|李薇" . --include="*.ts" --include="*.tsx" --include="*.md" --include="*.yml"
+grep -r "<private-name-[a-c]>" . --include="*.ts" --include="*.tsx" --include="*.md" --include="*.yml"
 ```
 
 ## 硬性约束

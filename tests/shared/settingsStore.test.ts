@@ -32,11 +32,11 @@ afterEach(() => {
 describe('settingsStore - readJson / writeJson', () => {
   it('写入后能读回，中文不转义', () => {
     const file = path.join(tmpRoot, 'a.json')
-    expect(writeJson(file, { name: '小明', n: 1 })).toBe(true)
-    expect(readJson(file)).toEqual({ name: '小明', n: 1 })
+    expect(writeJson(file, { name: '示例记录', n: 1 })).toBe(true)
+    expect(readJson(file)).toEqual({ name: '示例记录', n: 1 })
     // 验证文件内容中文未转义（对齐 Python ensure_ascii=False）
     const raw = fs.readFileSync(file, 'utf-8')
-    expect(raw).toContain('小明')
+    expect(raw).toContain('示例记录')
     expect(raw).not.toContain('\\u')
   })
 

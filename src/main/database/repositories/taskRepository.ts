@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto'
+import {
+  parseJsonObject,
+  stringifyJsonObject,
+  type JsonObject,
+} from '../json'
 import type { SqliteDatabase } from '../types'
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
 
-export type JsonPrimitive = string | number | boolean | null
-export type JsonValue = JsonPrimitive | JsonValue[] | JsonObject
-export interface JsonObject {
-  [key: string]: JsonValue
-}
+export type { JsonObject, JsonPrimitive, JsonValue } from '../json'
 
 export interface Task {
   id: string
@@ -19,6 +20,7 @@ export interface Task {
   stage: string
   progress: number
   input: JsonObject
+  checkpoint: JsonObject | null
   result: JsonObject | null
   error_message: string | null
   cancel_requested: boolean
@@ -41,6 +43,7 @@ export interface UpdateTaskInput {
   status?: TaskStatus
   stage?: string
   progress?: number
+  checkpoint?: JsonObject | null
   result?: JsonObject | null
   error_message?: string | null
   cancel_requested?: boolean
@@ -68,29 +71,12 @@ interface TaskRow {
   input_json: string
   result_json: string | null
   error_message: string | null
+  checkpoint_json: string | null
   cancel_requested: number
   started_at: string | null
   finished_at: string | null
   created_at: string
   updated_at: string
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return true
-  }
-  if (Array.isArray(value)) return value.every(isJsonValue)
-  if (typeof value !== 'object') return false
-  return Object.values(value).every(isJsonValue)
-}
-
-function parseJsonObject(value: string | null, field: string): JsonObject | null {
-  if (value === null) return null
-  const parsed: unknown = JSON.parse(value)
-  if (!isJsonValue(parsed) || Array.isArray(parsed) || typeof parsed !== 'object') {
-    throw new Error(`Invalid ${field} JSON`)
-  }
-  return parsed
 }
 
 function toTask(row: TaskRow): Task {
@@ -116,6 +102,7 @@ function toTask(row: TaskRow): Task {
     stage: row.stage,
     progress: row.progress,
     input,
+    checkpoint: parseJsonObject(row.checkpoint_json, 'checkpoint'),
     result: parseJsonObject(row.result_json, 'result'),
     error_message: row.error_message,
     cancel_requested: row.cancel_requested === 1,
@@ -140,8 +127,8 @@ export class TaskRepository implements TaskStore {
       .prepare(
         `INSERT INTO tasks (
           id, project_id, chapter_id, parent_task_id, task_type, status, stage, progress,
-          input_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'pending', '', 0, ?, ?, ?)`,
+          input_json, checkpoint_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'pending', '', 0, ?, NULL, ?, ?)`,
       )
       .run(
         id,
@@ -149,7 +136,7 @@ export class TaskRepository implements TaskStore {
         input.chapter_id ?? null,
         input.parent_task_id ?? null,
         input.task_type,
-        JSON.stringify(input.input ?? {}),
+        stringifyJsonObject(input.input ?? {}),
         timestamp,
         timestamp,
       )
@@ -177,6 +164,7 @@ export class TaskRepository implements TaskStore {
       status: input.status ?? current.status,
       stage: input.stage ?? current.stage,
       progress: input.progress ?? current.progress,
+      checkpoint: input.checkpoint === undefined ? current.checkpoint : input.checkpoint,
       result: input.result === undefined ? current.result : input.result,
       error_message: input.error_message === undefined ? current.error_message : input.error_message,
       cancel_requested: input.cancel_requested ?? current.cancel_requested,
@@ -186,15 +174,16 @@ export class TaskRepository implements TaskStore {
     this.database
       .prepare(
         `UPDATE tasks
-         SET status = ?, stage = ?, progress = ?, result_json = ?, error_message = ?,
-             cancel_requested = ?, started_at = ?, finished_at = ?, updated_at = ?
+         SET status = ?, stage = ?, progress = ?, checkpoint_json = ?, result_json = ?,
+             error_message = ?, cancel_requested = ?, started_at = ?, finished_at = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
         next.status,
         next.stage,
         next.progress,
-        next.result === null ? null : JSON.stringify(next.result),
+        next.checkpoint === null ? null : stringifyJsonObject(next.checkpoint),
+        next.result === null ? null : stringifyJsonObject(next.result),
         next.error_message,
         next.cancel_requested ? 1 : 0,
         next.started_at,

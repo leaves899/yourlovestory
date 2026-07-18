@@ -92,7 +92,7 @@ Skill 的配置文件，定义角色 Skill 的元数据。
 
 ```bash
 python scripts/init_template.py \
-    --name "小明" \
+    --name "示例角色" \
     --nickname "小雪" \
     --slug "xiaoxue"
 ```
@@ -150,9 +150,9 @@ python scripts/init_template.py --name <name> --nickname <nickname> --slug <slug
 ```bash
 # 创建男性角色
 python scripts/init_template.py \
-    --name "李明" \
-    --nickname "小明" \
-    --slug "liming" \
+    --name "示例角色" \
+    --nickname "示例昵称" \
+    --slug "sample-character" \
     --gender "male" \
     --description "大学同学，土木工程专业"
 
@@ -175,7 +175,7 @@ python scripts/init_template.py \
 
 ## {{CHARACTER_NAME}} 的基本信息
 
-- **姓名**：李明
+- **姓名**：示例角色
 - **年龄**：22
 - **职业**：土木工程专业学生
 - **性格**：内向但温柔，做事认真

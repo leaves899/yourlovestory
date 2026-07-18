@@ -1,2 +1,5 @@
 export * from './events'
 export * from './taskManager'
+export * from './chapterGenerationTask'
+export * from './chapterPolishTask'
+export * from './input'

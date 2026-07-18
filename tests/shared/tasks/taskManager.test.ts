@@ -80,7 +80,6 @@ describe('TaskManager', () => {
       store: new TaskRepository(database),
       agentFactory,
       events: eventSink,
-      now: () => '2026-07-18T00:00:00.000Z',
     })
 
     const handle = manager.start({

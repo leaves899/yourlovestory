@@ -29,6 +29,7 @@ export interface AgentCreationOptions {
   systemPrompt?: string
   initialMessages?: AgentMessage[]
   tools?: readonly AgentTool[]
+  additionalTools?: readonly AgentTool[]
   confirmDangerousOperation?: DangerousOperationConfirmation
   mutatingToolNames?: readonly string[]
   dangerousToolNames?: readonly string[]
@@ -49,6 +50,8 @@ export interface ProjectSessionAgent {
   readonly sessionId: string
   prompt(prompt: string, options?: AgentPromptOptions): Promise<AgentRunResult>
   abort(): void
+  steer?(prompt: string): void
+  followUp?(prompt: string): void
   dispose(): void
 }
 
@@ -135,6 +138,14 @@ class PiProjectSessionAgent implements ProjectSessionAgent {
     this.agent.abort()
   }
 
+  public steer(prompt: string): void {
+    this.agent.steer({ role: 'user', content: prompt, timestamp: Date.now() })
+  }
+
+  public followUp(prompt: string): void {
+    this.agent.followUp({ role: 'user', content: prompt, timestamp: Date.now() })
+  }
+
   public dispose(): void {
     this.agent.abort()
     this.agent.clearAllQueues()
@@ -153,7 +164,8 @@ export function createProjectSessionAgentFactory(
         loadRuntime(),
         Promise.resolve(normalizeLlmConfig(options.llm)),
       ])
-      const tools = options.tools ?? (await loadTools())
+      const baseTools = options.tools ?? (await loadTools())
+      const tools = [...baseTools, ...(options.additionalTools ?? [])]
       const model = createDynamicPiModel(configuredLlm)
       const permissionHook = createDangerousOperationHook({
         projectId: options.projectId,

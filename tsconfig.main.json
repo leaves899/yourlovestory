@@ -19,5 +19,5 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/main", "src/shared"]
+  "include": ["src/main", "src/shared", "src/agent"]
 }

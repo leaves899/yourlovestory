@@ -1,6 +1,14 @@
-import { Type } from 'typebox'
+import { Type, type Static } from 'typebox'
+import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { app } from 'electron'
-import { createCrush, getCrush, listCrushes, updateCrush, deleteCrush } from '../../shared/crush/crushStore'
+import {
+  createCrush,
+  deleteCrush,
+  getCrush,
+  listCrushes,
+  updateCrush,
+  type CrushResult,
+} from '../../shared/crush/crushStore'
 
 /**
  * 角色管理工具 - 支持创建、查看、列表、更新、删除操作。
@@ -12,63 +20,83 @@ import { createCrush, getCrush, listCrushes, updateCrush, deleteCrush } from '..
  */
 const PROJECT_ROOT = app.getPath('userData')
 
-export const crushTool = {
+const crushParameters = Type.Object({
+  action: Type.Union([
+    Type.Literal('create'),
+    Type.Literal('get'),
+    Type.Literal('list'),
+    Type.Literal('update'),
+    Type.Literal('delete'),
+  ]),
+  name: Type.Optional(Type.String({ description: '角色姓名（create 必需）' })),
+  nickname: Type.Optional(Type.String({ description: '角色昵称（create 必需）' })),
+  slug: Type.Optional(Type.String({ pattern: '^[a-z0-9-]+$' })),
+  description: Type.Optional(Type.String({ description: '角色描述' })),
+  gender: Type.Optional(Type.Union([
+    Type.Literal('male'),
+    Type.Literal('female'),
+    Type.Literal('unknown'),
+  ])),
+})
+
+type CrushParameters = Static<typeof crushParameters>
+
+function requiredString(value: string | undefined, field: string): string {
+  if (!value || value.trim() === '') throw new Error(`${field} is required`)
+  return value
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+export const crushTool: AgentTool<typeof crushParameters, { success: boolean; error?: string }> = {
   name: 'crush_manager',
   label: 'Crush Manager',
   description: '管理 crush 角色：创建、查看、列表、更新、删除',
-  parameters: Type.Object({
-    action: Type.Union(
-      [Type.Literal('create'), Type.Literal('get'), Type.Literal('list'),
-       Type.Literal('update'), Type.Literal('delete')],
-      { description: '操作类型' }
-    ),
-    name: Type.Optional(Type.String({ description: '角色真实姓名（create 必需）' })),
-    nickname: Type.Optional(Type.String({ description: '角色昵称（create 必需）' })),
-    slug: Type.Optional(
-      Type.String({
-        description: 'URL slug（仅允许小写字母、数字、连字符）',
-        pattern: '^[a-z0-9-]+$',
-      })
-    ),
-    description: Type.Optional(Type.String({ description: '角色描述' })),
-    gender: Type.Optional(
-      Type.Union(
-        [Type.Literal('male'), Type.Literal('female'), Type.Literal('unknown')],
-        { description: '性别' }
-      )
-    ),
-  }),
-  execute: async (toolCallId: string, params: any, signal?: AbortSignal, onUpdate?: any) => {
+  parameters: crushParameters,
+  execute: async (_toolCallId: string, params: CrushParameters) => {
     try {
-      let result: any
+      let result: CrushResult
       switch (params.action) {
         case 'create':
-          result = createCrush(PROJECT_ROOT, params)
+          result = createCrush(PROJECT_ROOT, {
+            name: requiredString(params.name, 'name'),
+            nickname: requiredString(params.nickname, 'nickname'),
+            slug: params.slug,
+            description: params.description,
+            gender: params.gender,
+          })
           break
         case 'list':
           result = listCrushes(PROJECT_ROOT)
           break
         case 'get':
-          result = getCrush(PROJECT_ROOT, params.slug)
+          result = getCrush(PROJECT_ROOT, requiredString(params.slug, 'slug'))
           break
         case 'update':
-          result = updateCrush(PROJECT_ROOT, params)
+          result = updateCrush(PROJECT_ROOT, {
+            slug: requiredString(params.slug, 'slug'),
+            name: params.name,
+            nickname: params.nickname,
+            description: params.description,
+            gender: params.gender,
+          })
           break
         case 'delete':
-          result = deleteCrush(PROJECT_ROOT, params.slug)
+          result = deleteCrush(PROJECT_ROOT, requiredString(params.slug, 'slug'))
           break
-        default:
-          result = { success: false, errors: [`未知 action: ${params.action}`] }
       }
 
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result) }],
         details: { success: result.success === true },
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = errorText(error)
       return {
-        content: [{ type: 'text' as const, text: `错误: ${error.message}` }],
-        details: { success: false, error: error.message },
+        content: [{ type: 'text' as const, text: `错误: ${message}` }],
+        details: { success: false, error: message },
       }
     }
   },

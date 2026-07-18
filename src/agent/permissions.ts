@@ -29,12 +29,28 @@ export interface ToolPermissionOptions {
 const DEFAULT_MUTATING_TOOLS = ['day_writer', 'fragment_manager', 'crush_manager'] as const
 const DEFAULT_DANGEROUS_TOOLS = ['fragment_manager', 'crush_manager'] as const
 const DEFAULT_DANGEROUS_ACTIONS = new Set([
+  'create',
+  'update',
   'delete',
   'overwrite',
   'publish',
   'lock',
   'confirm',
+  'approve',
+  'reject',
+  'apply',
+  'transition',
+  'toggle',
+  'enable',
+  'disable',
 ])
+
+function isDangerousAction(action: string): boolean {
+  return DEFAULT_DANGEROUS_ACTIONS.has(action) ||
+    ['create_', 'update_', 'delete_', 'confirm_', 'lock_', 'approve_', 'reject_', 'apply_', 'transition_', 'toggle_', 'start_'].some(
+      (prefix) => action.startsWith(prefix),
+    )
+}
 
 function readAction(args: unknown): string | undefined {
   if (typeof args !== 'object' || args === null || !('action' in args)) return undefined
@@ -66,7 +82,7 @@ export function createDangerousOperationHook(
     ((context: BeforeToolCallContext): boolean => {
       const action = readAction(context.args)
       return dangerousTools.has(context.toolCall.name) && action !== undefined
-        ? DEFAULT_DANGEROUS_ACTIONS.has(action)
+        ? isDangerousAction(action)
         : false
     })
 

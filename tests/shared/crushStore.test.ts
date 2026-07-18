@@ -75,9 +75,9 @@ describe('createCrush', () => {
   })
 
   test('meta.json 中文不转义（对齐 Python ensure_ascii=False）', () => {
-    createCrush(tmpRoot, { name: '小明', nickname: '小雪', slug: 'zh_test' })
+    createCrush(tmpRoot, { name: '示例角色', nickname: '示例昵称', slug: 'zh_test' })
     const raw = fs.readFileSync(path.join(tmpRoot, 'crushes', 'zh_test', 'meta.json'), 'utf-8')
-    expect(raw).toContain('小明')
+    expect(raw).toContain('示例角色')
     expect(raw).not.toContain('\\u')
   })
 

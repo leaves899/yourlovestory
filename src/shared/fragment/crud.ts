@@ -18,7 +18,7 @@ import {
   validateContent,
   MAX_FRAGMENTS_PER_DAY,
 } from './utils'
-import type { Fragment, FragmentDay, EditState } from './models'
+import type { Fragment, FragmentDay } from './models'
 
 // ============================================================
 // 创建碎片
@@ -154,7 +154,7 @@ export function updateFragment(
   // 更新
   for (const [key, value] of Object.entries(updates)) {
     if (key in fragment) {
-      ;(fragment as any)[key] = value
+      (fragment as any)[key] = value
     }
   }
   fragment.updated_at = getCurrentDatetime()
@@ -166,7 +166,7 @@ export function updateFragment(
   if (!success) {
     // 回滚
     for (const [key, value] of Object.entries(oldValues)) {
-      ;(fragment as any)[key] = value
+      (fragment as any)[key] = value
     }
     day.version -= 1
     return { fragment: null, error }

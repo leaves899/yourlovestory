@@ -15,7 +15,7 @@ function isContentEvent(event: AssistantMessageEvent): boolean {
 }
 
 function createErrorMessage(
-  model: Model<string & {}>,
+  model: Model<string>,
   reason: Extract<StopReason, 'error' | 'aborted'>,
   error: unknown,
 ): AssistantMessage {
@@ -50,8 +50,7 @@ function defaultSleep(milliseconds: number, signal?: AbortSignal): Promise<void>
 async function runAttempt(
   output: AssistantMessageEventStream,
   baseStream: StreamFn,
-  createStream: () => AssistantMessageEventStream,
-  model: Model<string & {}>,
+  model: Model<string>,
   context: Context,
   options: Parameters<StreamFn>[2],
   config: LlmConfig,
@@ -60,7 +59,7 @@ async function runAttempt(
   const signal = options?.signal
   let attempt = 0
 
-  while (true) {
+  for (;;) {
     if (signal?.aborted) {
       const error = createErrorMessage(model, 'aborted', 'LLM request was cancelled')
       output.push({ type: 'error', reason: 'aborted', error })
@@ -170,7 +169,6 @@ export function createRetryingStreamFn(
     void runAttempt(
       output,
       baseStream,
-      createStream,
       model,
       context,
       options,

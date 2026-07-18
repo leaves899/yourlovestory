@@ -2,9 +2,9 @@
  * 碎片整合模块（TS 等价实现，取代 src/scripts/fragment/integrator.py）。
  */
 import { loadFragmentDay, saveFragmentDay } from './storage'
-import { canIntegrate, canRegenerate, getEditState, getStatus, transitionToCompleted } from './state_machine'
+import { canIntegrate, canRegenerate, getEditState, getStatus } from './state_machine'
 import { generateMultiFragmentPrompt } from './prompt_generator'
-import { getCurrentDate, getCurrentDatetime } from './utils'
+import { getCurrentDatetime } from './utils'
 import type { FragmentDay } from './models'
 
 /** 整合当天碎片为写作上下文（生成 Prompt） */
