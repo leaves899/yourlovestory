@@ -1,6 +1,7 @@
-import { Type, type Static } from 'typebox'
+import type { Static } from 'typebox'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import type { LlmConfigInput } from '../llm'
+import { loadTypeBoxRuntime, type TypeBoxBuilder } from '../runtime'
 import type { WorkbenchService } from '../../main/workbench'
 import type {
   StartChapterGenerationInput,
@@ -14,122 +15,119 @@ import type {
 } from '../../shared/novelProject'
 import type { ForeshadowStatus } from '../../shared/narrativeWorkbench'
 
-const contextParameters = Type.Object({
-  action: Type.Union([
-    Type.Literal('full'),
-    Type.Literal('project'),
-    Type.Literal('characters'),
-    Type.Literal('worldview'),
-    Type.Literal('organizations'),
-    Type.Literal('relations'),
-    Type.Literal('materials'),
-    Type.Literal('volumes'),
-    Type.Literal('outlines'),
-    Type.Literal('chapters'),
-    Type.Literal('memories'),
-    Type.Literal('foreshadows'),
-    Type.Literal('skills'),
-  ]),
-})
+function createToolSchemas(Type: TypeBoxBuilder) {
+  return {
+    context: Type.Object({
+      action: Type.Union([
+        Type.Literal('full'),
+        Type.Literal('project'),
+        Type.Literal('characters'),
+        Type.Literal('worldview'),
+        Type.Literal('organizations'),
+        Type.Literal('relations'),
+        Type.Literal('materials'),
+        Type.Literal('volumes'),
+        Type.Literal('outlines'),
+        Type.Literal('chapters'),
+        Type.Literal('memories'),
+        Type.Literal('foreshadows'),
+        Type.Literal('skills'),
+      ]),
+    }),
+    outline: Type.Object({
+      action: Type.Union([
+        Type.Literal('create_volume_outline'),
+        Type.Literal('update_volume_outline'),
+        Type.Literal('confirm_volume_outline'),
+        Type.Literal('lock_volume_outline'),
+        Type.Literal('create_chapter_outline'),
+        Type.Literal('update_chapter_outline'),
+        Type.Literal('confirm_chapter_outline'),
+        Type.Literal('lock_chapter_outline'),
+      ]),
+      volume_id: Type.Optional(Type.String()),
+      outline_id: Type.Optional(Type.String()),
+      chapter_number: Type.Optional(Type.Integer({ minimum: 1 })),
+      title: Type.Optional(Type.String()),
+      summary: Type.Optional(Type.String()),
+      theme: Type.Optional(Type.String()),
+      main_conflict: Type.Optional(Type.String()),
+      purpose: Type.Optional(Type.String()),
+      opening: Type.Optional(Type.String()),
+      conflict: Type.Optional(Type.String()),
+      ending: Type.Optional(Type.String()),
+      ending_hook: Type.Optional(Type.String()),
+      key_turning_points: Type.Optional(Type.Array(Type.String())),
+      key_events: Type.Optional(Type.Array(Type.String())),
+      expected_version: Type.Optional(Type.Integer({ minimum: 1 })),
+    }),
+    narrative: Type.Object({
+      action: Type.Union([
+        Type.Literal('list_memories'),
+        Type.Literal('list_memory_proposals'),
+        Type.Literal('list_foreshadows'),
+        Type.Literal('list_skills'),
+        Type.Literal('list_revisions'),
+        Type.Literal('get_blocks'),
+        Type.Literal('approve_memory'),
+        Type.Literal('reject_memory'),
+        Type.Literal('apply_revision'),
+        Type.Literal('transition_foreshadow'),
+        Type.Literal('toggle_skill'),
+        Type.Literal('diff_revisions'),
+        Type.Literal('diff_versions'),
+      ]),
+      proposal_id: Type.Optional(Type.String()),
+      revision_id: Type.Optional(Type.String()),
+      chapter_id: Type.Optional(Type.String()),
+      foreshadow_id: Type.Optional(Type.String()),
+      from_revision_id: Type.Optional(Type.String()),
+      to_revision_id: Type.Optional(Type.String()),
+      from_version_id: Type.Optional(Type.String()),
+      to_version_id: Type.Optional(Type.String()),
+      status: Type.Optional(
+        Type.Union([
+          Type.Literal('suggested'),
+          Type.Literal('planned'),
+          Type.Literal('planted'),
+          Type.Literal('active'),
+          Type.Literal('revealed'),
+          Type.Literal('paid_off'),
+          Type.Literal('resolved'),
+          Type.Literal('abandoned'),
+        ]),
+      ),
+      note: Type.Optional(Type.String()),
+      skill_name: Type.Optional(Type.String()),
+      enabled: Type.Optional(Type.Boolean()),
+    }),
+    chapter: Type.Object({
+      action: Type.Union([Type.Literal('list'), Type.Literal('get')]),
+      chapter_id: Type.Optional(Type.String()),
+    }),
+    creative: Type.Object({
+      action: Type.Union([
+        Type.Literal('start_chapter_generation'),
+        Type.Literal('start_chapter_polish'),
+      ]),
+      chapter_outline_id: Type.Optional(Type.String()),
+      chapter_id: Type.Optional(Type.String()),
+      mode: Type.Optional(Type.Union([Type.Literal('chapter'), Type.Literal('paragraph')])),
+      block_id: Type.Optional(Type.String()),
+      instruction: Type.Optional(Type.String()),
+      source_revision_id: Type.Optional(Type.String()),
+      auto_confirm: Type.Optional(Type.Boolean()),
+      auto_apply: Type.Optional(Type.Boolean()),
+    }),
+  }
+}
 
-type ContextParameters = Static<typeof contextParameters>
-
-const outlineParameters = Type.Object({
-  action: Type.Union([
-    Type.Literal('create_volume_outline'),
-    Type.Literal('update_volume_outline'),
-    Type.Literal('confirm_volume_outline'),
-    Type.Literal('lock_volume_outline'),
-    Type.Literal('create_chapter_outline'),
-    Type.Literal('update_chapter_outline'),
-    Type.Literal('confirm_chapter_outline'),
-    Type.Literal('lock_chapter_outline'),
-  ]),
-  volume_id: Type.Optional(Type.String()),
-  outline_id: Type.Optional(Type.String()),
-  chapter_number: Type.Optional(Type.Integer({ minimum: 1 })),
-  title: Type.Optional(Type.String()),
-  summary: Type.Optional(Type.String()),
-  theme: Type.Optional(Type.String()),
-  main_conflict: Type.Optional(Type.String()),
-  purpose: Type.Optional(Type.String()),
-  opening: Type.Optional(Type.String()),
-  conflict: Type.Optional(Type.String()),
-  ending: Type.Optional(Type.String()),
-  ending_hook: Type.Optional(Type.String()),
-  key_turning_points: Type.Optional(Type.Array(Type.String())),
-  key_events: Type.Optional(Type.Array(Type.String())),
-  expected_version: Type.Optional(Type.Integer({ minimum: 1 })),
-})
-
-type OutlineParameters = Static<typeof outlineParameters>
-
-const narrativeParameters = Type.Object({
-  action: Type.Union([
-    Type.Literal('list_memories'),
-    Type.Literal('list_memory_proposals'),
-    Type.Literal('list_foreshadows'),
-    Type.Literal('list_skills'),
-    Type.Literal('list_revisions'),
-    Type.Literal('get_blocks'),
-    Type.Literal('approve_memory'),
-    Type.Literal('reject_memory'),
-    Type.Literal('apply_revision'),
-    Type.Literal('transition_foreshadow'),
-    Type.Literal('toggle_skill'),
-    Type.Literal('diff_revisions'),
-    Type.Literal('diff_versions'),
-  ]),
-  proposal_id: Type.Optional(Type.String()),
-  revision_id: Type.Optional(Type.String()),
-  chapter_id: Type.Optional(Type.String()),
-  foreshadow_id: Type.Optional(Type.String()),
-  from_revision_id: Type.Optional(Type.String()),
-  to_revision_id: Type.Optional(Type.String()),
-  from_version_id: Type.Optional(Type.String()),
-  to_version_id: Type.Optional(Type.String()),
-  status: Type.Optional(
-    Type.Union([
-      Type.Literal('suggested'),
-      Type.Literal('planned'),
-      Type.Literal('planted'),
-      Type.Literal('active'),
-      Type.Literal('revealed'),
-      Type.Literal('paid_off'),
-      Type.Literal('resolved'),
-      Type.Literal('abandoned'),
-    ]),
-  ),
-  note: Type.Optional(Type.String()),
-  skill_name: Type.Optional(Type.String()),
-  enabled: Type.Optional(Type.Boolean()),
-})
-
-type NarrativeParameters = Static<typeof narrativeParameters>
-
-const chapterParameters = Type.Object({
-  action: Type.Union([Type.Literal('list'), Type.Literal('get')]),
-  chapter_id: Type.Optional(Type.String()),
-})
-
-type ChapterParameters = Static<typeof chapterParameters>
-
-const creativeParameters = Type.Object({
-  action: Type.Union([
-    Type.Literal('start_chapter_generation'),
-    Type.Literal('start_chapter_polish'),
-  ]),
-  chapter_outline_id: Type.Optional(Type.String()),
-  chapter_id: Type.Optional(Type.String()),
-  mode: Type.Optional(Type.Union([Type.Literal('chapter'), Type.Literal('paragraph')])),
-  block_id: Type.Optional(Type.String()),
-  instruction: Type.Optional(Type.String()),
-  source_revision_id: Type.Optional(Type.String()),
-  auto_confirm: Type.Optional(Type.Boolean()),
-  auto_apply: Type.Optional(Type.Boolean()),
-})
-
-type CreativeParameters = Static<typeof creativeParameters>
+type ToolSchemas = ReturnType<typeof createToolSchemas>
+type ContextParameters = Static<ToolSchemas['context']>
+type OutlineParameters = Static<ToolSchemas['outline']>
+type NarrativeParameters = Static<ToolSchemas['narrative']>
+type ChapterParameters = Static<ToolSchemas['chapter']>
+type CreativeParameters = Static<ToolSchemas['creative']>
 
 export interface NovelAgentToolOptions {
   sessionId: string
@@ -160,12 +158,13 @@ function requiredString(value: string | undefined, field: string): string {
 function createContextTool(
   service: WorkbenchService,
   projectId: string,
-): AgentTool<typeof contextParameters, ToolDetails> {
+  schemas: ToolSchemas,
+): AgentTool<ToolSchemas['context'], ToolDetails> {
   return {
     name: 'novel_context',
     label: 'Novel Context',
     description: '读取当前长篇项目的角色、世界观、提纲、章节和叙事状态。',
-    parameters: contextParameters,
+    parameters: schemas.context,
     execute: async (_toolCallId: string, params: ContextParameters) => {
       const project = service.getProject(projectId)
       const config = service.getProjectConfig(projectId)
@@ -215,12 +214,13 @@ function createContextTool(
 function createOutlineTool(
   service: WorkbenchService,
   projectId: string,
-): AgentTool<typeof outlineParameters, ToolDetails> {
+  schemas: ToolSchemas,
+): AgentTool<ToolSchemas['outline'], ToolDetails> {
   return {
     name: 'outline_manager',
     label: 'Outline Manager',
     description: '创建、修改、确认或锁定当前项目的卷纲和章节大纲。写入操作需要确认。',
-    parameters: outlineParameters,
+    parameters: schemas.outline,
     executionMode: 'sequential',
     execute: async (_toolCallId: string, params: OutlineParameters) => {
       switch (params.action) {
@@ -303,12 +303,13 @@ function createOutlineTool(
 function createNarrativeTool(
   service: WorkbenchService,
   projectId: string,
-): AgentTool<typeof narrativeParameters, ToolDetails> {
+  schemas: ToolSchemas,
+): AgentTool<ToolSchemas['narrative'], ToolDetails> {
   return {
     name: 'narrative_manager',
     label: 'Narrative Manager',
     description: '读取和管理叙事记忆、伏笔、写作技能、章节修订及差异。写入操作需要确认。',
-    parameters: narrativeParameters,
+    parameters: schemas.narrative,
     executionMode: 'sequential',
     execute: async (_toolCallId: string, params: NarrativeParameters) => {
       switch (params.action) {
@@ -358,12 +359,13 @@ function createNarrativeTool(
 function createChapterTool(
   service: WorkbenchService,
   projectId: string,
-): AgentTool<typeof chapterParameters, ToolDetails> {
+  schemas: ToolSchemas,
+): AgentTool<ToolSchemas['chapter'], ToolDetails> {
   return {
     name: 'chapter_context',
     label: 'Chapter Context',
     description: '读取当前长篇项目的章节列表或指定章节正文。',
-    parameters: chapterParameters,
+    parameters: schemas.chapter,
     execute: async (_toolCallId: string, params: ChapterParameters) => {
       if (params.action === 'list') return result(service.chapters.listByProject(projectId))
       return result(service.chapters.getById(requiredString(params.chapter_id, 'chapter_id')))
@@ -374,12 +376,13 @@ function createChapterTool(
 function createCreativeTool(
   projectId: string,
   options: NovelAgentToolOptions,
-): AgentTool<typeof creativeParameters, ToolDetails> {
+  schemas: ToolSchemas,
+): AgentTool<ToolSchemas['creative'], ToolDetails> {
   return {
     name: 'creative_task',
     label: 'Creative Task',
     description: '启动章节生成或章节润色任务，任务会在后台保存进度并支持恢复。',
-    parameters: creativeParameters,
+    parameters: schemas.creative,
     executionMode: 'sequential',
     execute: async (_toolCallId: string, params: CreativeParameters) => {
       if (params.action === 'start_chapter_generation') {
@@ -411,17 +414,19 @@ function createCreativeTool(
   }
 }
 
-export function createNovelAgentTools(
+export async function createNovelAgentTools(
   service: WorkbenchService,
   projectId: string,
   options?: NovelAgentToolOptions,
-): readonly AgentTool[] {
+): Promise<readonly AgentTool[]> {
+  const { Type } = await loadTypeBoxRuntime()
+  const schemas = createToolSchemas(Type)
   const tools: AgentTool[] = [
-    createContextTool(service, projectId),
-    createOutlineTool(service, projectId),
-    createNarrativeTool(service, projectId),
-    createChapterTool(service, projectId),
+    createContextTool(service, projectId, schemas),
+    createOutlineTool(service, projectId, schemas),
+    createNarrativeTool(service, projectId, schemas),
+    createChapterTool(service, projectId, schemas),
   ]
-  if (options) tools.push(createCreativeTool(projectId, options))
+  if (options) tools.push(createCreativeTool(projectId, options, schemas))
   return tools
 }

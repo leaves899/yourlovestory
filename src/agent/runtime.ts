@@ -10,6 +10,9 @@ export interface PiRuntime {
   createStream: () => AssistantMessageEventStream
 }
 
+export type TypeBoxRuntime = typeof import('typebox')
+export type TypeBoxBuilder = TypeBoxRuntime['Type']
+
 type DynamicImporter = (specifier: string) => Promise<unknown>
 
 const dynamicImport = new Function('specifier', 'return import(specifier)') as unknown as DynamicImporter
@@ -26,6 +29,15 @@ function getExport<T>(module: unknown, name: string): T {
 }
 
 let defaultRuntimePromise: Promise<PiRuntime> | undefined
+let typeBoxRuntimePromise: Promise<TypeBoxRuntime> | undefined
+
+export function loadTypeBoxRuntime(): Promise<TypeBoxRuntime> {
+  typeBoxRuntimePromise ??= dynamicImport('typebox').then((module) => {
+    getExport<TypeBoxRuntime['Type']>(module, 'Type')
+    return module as TypeBoxRuntime
+  })
+  return typeBoxRuntimePromise
+}
 
 export function loadDefaultPiRuntime(): Promise<PiRuntime> {
   defaultRuntimePromise ??= Promise.all([
@@ -43,9 +55,9 @@ export function loadDefaultPiRuntime(): Promise<PiRuntime> {
 }
 
 export interface DefaultToolModules {
-  dayTool: AgentTool
-  fragmentTool: AgentTool
-  crushTool: AgentTool
+  dayTool: (Type: TypeBoxBuilder) => AgentTool
+  fragmentTool: (Type: TypeBoxBuilder) => AgentTool
+  crushTool: (Type: TypeBoxBuilder) => AgentTool
 }
 
 function localModuleSpecifier(fileName: string): string {
@@ -53,15 +65,21 @@ function localModuleSpecifier(fileName: string): string {
 }
 
 export async function loadDefaultAgentTools(): Promise<readonly AgentTool[]> {
-  const modules = await Promise.all([
+  const [typeBox, dayModule, fragmentModule, crushModule] = await Promise.all([
+    loadTypeBoxRuntime(),
     dynamicImport(localModuleSpecifier('dayTool')),
     dynamicImport(localModuleSpecifier('fragmentTool')),
     dynamicImport(localModuleSpecifier('crushTool')),
   ])
+  const modules = [dayModule, fragmentModule, crushModule] as const
   const tools: DefaultToolModules = {
-    dayTool: getExport<AgentTool>(modules[0], 'dayTool'),
-    fragmentTool: getExport<AgentTool>(modules[1], 'fragmentTool'),
-    crushTool: getExport<AgentTool>(modules[2], 'crushTool'),
+    dayTool: getExport<DefaultToolModules['dayTool']>(modules[0], 'createDayTool'),
+    fragmentTool: getExport<DefaultToolModules['fragmentTool']>(modules[1], 'createFragmentTool'),
+    crushTool: getExport<DefaultToolModules['crushTool']>(modules[2], 'createCrushTool'),
   }
-  return [tools.dayTool, tools.fragmentTool, tools.crushTool]
+  return [
+    tools.dayTool(typeBox.Type),
+    tools.fragmentTool(typeBox.Type),
+    tools.crushTool(typeBox.Type),
+  ]
 }

@@ -1,4 +1,4 @@
-import { Type, type Static } from 'typebox'
+import type { Static } from 'typebox'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { app } from 'electron'
 import {
@@ -12,13 +12,15 @@ import {
 } from '../../shared/fragment/manager'
 import { getCurrentDate } from '../../shared/fragment/utils'
 import type { Mood, Origin } from '../../shared/fragment/models'
+import type { TypeBoxBuilder } from '../runtime'
 
 /**
  * 碎片日记工具 - 支持 CRUD + integrate + recommend 操作
  *
  * 直接调用 TS fragment 模块（不再 spawn Python）。
  */
-const fragmentParameters = Type.Object({
+function createFragmentParameters(Type: TypeBoxBuilder) {
+  return Type.Object({
   action: Type.Union([
     Type.Literal('record'),
     Type.Literal('list'),
@@ -47,9 +49,10 @@ const fragmentParameters = Type.Object({
   date: Type.Optional(Type.String()),
   expected_version: Type.Optional(Type.Number()),
   session_id: Type.Optional(Type.String()),
-})
+  })
+}
 
-type FragmentParameters = Static<typeof fragmentParameters>
+type FragmentParameters = Static<ReturnType<typeof createFragmentParameters>>
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -58,7 +61,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export const fragmentTool: AgentTool<typeof fragmentParameters, { success: boolean; error?: string }> = {
+export function createFragmentTool(
+  Type: TypeBoxBuilder,
+): AgentTool<ReturnType<typeof createFragmentParameters>, { success: boolean; error?: string }> {
+  const fragmentParameters = createFragmentParameters(Type)
+  return {
   name: 'fragment_manager',
   label: 'Fragment Manager',
   description: '管理碎片日记：记录、查看、更新、删除、整合碎片、推荐标签',
@@ -130,4 +137,5 @@ export const fragmentTool: AgentTool<typeof fragmentParameters, { success: boole
       }
     }
   },
+  }
 }

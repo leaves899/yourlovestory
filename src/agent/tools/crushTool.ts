@@ -1,4 +1,4 @@
-import { Type, type Static } from 'typebox'
+import type { Static } from 'typebox'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { app } from 'electron'
 import {
@@ -9,6 +9,7 @@ import {
   updateCrush,
   type CrushResult,
 } from '../../shared/crush/crushStore'
+import type { TypeBoxBuilder } from '../runtime'
 
 /**
  * 角色管理工具 - 支持创建、查看、列表、更新、删除操作。
@@ -20,7 +21,8 @@ import {
  */
 const PROJECT_ROOT = app.getPath('userData')
 
-const crushParameters = Type.Object({
+function createCrushParameters(Type: TypeBoxBuilder) {
+  return Type.Object({
   action: Type.Union([
     Type.Literal('create'),
     Type.Literal('get'),
@@ -37,9 +39,10 @@ const crushParameters = Type.Object({
     Type.Literal('female'),
     Type.Literal('unknown'),
   ])),
-})
+  })
+}
 
-type CrushParameters = Static<typeof crushParameters>
+type CrushParameters = Static<ReturnType<typeof createCrushParameters>>
 
 function requiredString(value: string | undefined, field: string): string {
   if (!value || value.trim() === '') throw new Error(`${field} is required`)
@@ -50,7 +53,11 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export const crushTool: AgentTool<typeof crushParameters, { success: boolean; error?: string }> = {
+export function createCrushTool(
+  Type: TypeBoxBuilder,
+): AgentTool<ReturnType<typeof createCrushParameters>, { success: boolean; error?: string }> {
+  const crushParameters = createCrushParameters(Type)
+  return {
   name: 'crush_manager',
   label: 'Crush Manager',
   description: '管理 crush 角色：创建、查看、列表、更新、删除',
@@ -100,4 +107,5 @@ export const crushTool: AgentTool<typeof crushParameters, { success: boolean; er
       }
     }
   },
+  }
 }
