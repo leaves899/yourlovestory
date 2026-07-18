@@ -1,5 +1,5 @@
 /**
- * Blind 模式匹配器（TS 等价实现，取代 src/scripts/fragment/blind_matcher.py）。
+ * Blind 模式匹配器。
  *
  * 降级路径：直接实现字符级 Jaccard（不引入 JS 语义模型）。
  * 关键词匹配 30% + 语义相似度（字符 Jaccard）70%。
@@ -155,7 +155,7 @@ export class BlindMatcher {
     }
 
     // \Z 在 JS 中不是合法断言（会被当字面量 Z），用 $ 匹配字符串结尾，
-    // 与 Python 的 \Z（字符串结尾）等价（此处未启用 m flag，$ 仅匹配结尾）。
+    // 未启用 m flag，$ 只匹配字符串结尾。
     const repliesMatch = content.match(/##\s*说话习惯[^#]*?\n(.*?)(?=\n##|$)/s)
     if (repliesMatch) result.crush_replies = this.extractListItems(repliesMatch[1])
 

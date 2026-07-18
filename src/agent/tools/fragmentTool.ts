@@ -17,7 +17,7 @@ import type { TypeBoxBuilder } from '../runtime'
 /**
  * 碎片日记工具 - 支持 CRUD + integrate + recommend 操作
  *
- * 直接调用 TS fragment 模块（不再 spawn Python）。
+ * 直接调用 shared fragment 模块。
  */
 function createFragmentParameters(Type: TypeBoxBuilder) {
   return Type.Object({

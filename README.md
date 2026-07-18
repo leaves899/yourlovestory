@@ -199,8 +199,6 @@ npm run dev
 
 - [碎片日记产品说明](docs/features/fragment-journal-prd.md)
 - [Pi Agent 使用参考](docs/PI_AGENT_REFERENCE.md)
-- [Electron 重构记录](docs/adr/0003-electron-refactoring.md)
-- [TypeScript 迁移记录](docs/adr/0004-python-ts-migration.md)
 - [内容政策](CONTENT_POLICY.md)
 - [安全说明](SECURITY.md)
 

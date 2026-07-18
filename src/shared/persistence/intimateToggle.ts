@@ -1,18 +1,17 @@
 /**
- * 亲密内容开关（TS 等价实现，取代 src/scripts/toggle_intimate.py 的核心逻辑）。
+ * 亲密内容开关。
  *
- * 行为与原 Python 实现保持一致：
+ * 行为约定：
  * - 配置文件路径：<crushesDir>/<slug>/.intimate_config
  * - 读取：文件不存在返回 false；内容含 "intimate=true" 或旧格式 "enabled: true" 返回 true。
  * - 写入：新格式 "intimate=true\n" 或 "intimate=false\n"。
  *
- * 注意：原 Python 是独立 CLI 工具（支持 --enable/--disable/--status），
- * 此处仅迁移核心读写逻辑供 TS 调用；CLI 入口不再需要（应用内通过 UI 触发）。
+ * 应用内通过 UI 触发，不提供独立命令行入口。
  */
 import * as fs from 'fs'
 import * as path from 'path'
 
-/** 亲密配置文件名（对齐 Python）。 */
+/** 亲密配置文件名。 */
 const CONFIG_FILENAME = '.intimate_config'
 
 /** 读取亲密配置：文件不存在返回 false，兼容新旧格式。 */

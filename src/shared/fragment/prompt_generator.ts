@@ -1,5 +1,5 @@
 /**
- * 碎片 Prompt 生成器（TS 等价实现，取代 src/scripts/fragment/prompt_generator.py）。
+ * 碎片 Prompt 生成器。
  *
  * 完整 Prompt 矩阵（3来源 × 4情绪 + 跳过 = 13种组合）
  */

@@ -1,5 +1,5 @@
 /**
- * 碎片整合模块（TS 等价实现，取代 src/scripts/fragment/integrator.py）。
+ * 碎片整合模块。
  */
 import { loadFragmentDay, saveFragmentDay } from './storage'
 import { canIntegrate, canRegenerate, getEditState, getStatus } from './state_machine'

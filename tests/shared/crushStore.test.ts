@@ -1,8 +1,8 @@
 /**
- * crushStore 单元测试（取代 tests/unit/test_crush.py + tests/cli/crush.contract.test.ts）。
+ * crushStore 单元测试。
  *
  * 用临时目录隔离，不污染真实 crushes/。
- * 断言对齐原 Python 行为：幂等创建、目录结构、meta 字段、CRUD、错误返回。
+ * 断言角色存储的行为约定：幂等创建、目录结构、meta 字段、CRUD、错误返回。
  */
 import * as fs from 'fs'
 import * as os from 'os'
@@ -74,14 +74,14 @@ describe('createCrush', () => {
     expect(meta.updated_at).toBeTruthy()
   })
 
-  test('meta.json 中文不转义（对齐 Python ensure_ascii=False）', () => {
+  test('meta.json 中文不转义', () => {
     createCrush(tmpRoot, { name: '示例角色', nickname: '示例昵称', slug: 'zh_test' })
     const raw = fs.readFileSync(path.join(tmpRoot, 'crushes', 'zh_test', 'meta.json'), 'utf-8')
     expect(raw).toContain('示例角色')
     expect(raw).not.toContain('\\u')
   })
 
-  test('幂等：重复创建不报错（对齐 Python）', () => {
+  test('幂等：重复创建不报错', () => {
     const r1 = createCrush(tmpRoot, { name: 'C', nickname: 'D', slug: 'test_idem' })
     const r2 = createCrush(tmpRoot, { name: 'C', nickname: 'D', slug: 'test_idem' })
     expect(r1.success).toBe(true)
@@ -97,7 +97,7 @@ describe('createCrush', () => {
     expect(fs.readFileSync(memoryFile, 'utf-8')).toBe('# 用户自定义记忆\n')
   })
 
-  test('缺 name/nickname/slug 返回错误（对齐 Python CLI 校验）', () => {
+  test('缺 name/nickname/slug 返回错误', () => {
     const result = createCrush(tmpRoot, { name: '', nickname: 'X', slug: 's' })
     expect(result.success).toBe(false)
     if (result.success) return
@@ -150,7 +150,7 @@ describe('listCrushes', () => {
     expect(slugs).toEqual(['aaa', 'zzz'])
   })
 
-  test('无 meta.json 的目录只列 {slug}（对齐 Python）', () => {
+  test('无 meta.json 的目录只列 {slug}', () => {
     fs.mkdirSync(path.join(tmpRoot, 'crushes', 'orphan_dir'), { recursive: true })
     const result = listCrushes(tmpRoot)
     if (!result.success) return
@@ -243,7 +243,7 @@ describe('deleteCrush', () => {
     expect(result.success).toBe(false)
   })
 
-  test('delete 成功无 data 字段（对齐 Python delete_crush）', () => {
+  test('delete 成功无 data 字段', () => {
     createCrush(tmpRoot, { name: 'D3', nickname: 'd3', slug: 'del_nodata' })
     const result: any = deleteCrush(tmpRoot, 'del_nodata')
     expect(result.success).toBe(true)

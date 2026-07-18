@@ -1,7 +1,7 @@
 /**
  * fragment state_machine 单元测试（TS 等价验证）。
  *
- * 移植自 tests/unit/test_fragment_state_machine.py 的断言。
+ * 覆盖碎片状态转换、编辑状态和生命周期规则。
  */
 import {
   getStatus,

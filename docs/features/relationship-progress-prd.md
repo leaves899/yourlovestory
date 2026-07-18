@@ -345,7 +345,9 @@ crushes/<slug>/
 
 ### 6.1 进度检测算法
 
-```python
+以下为当前 TypeScript 模块的职责示意：
+
+```text
 def detect_phase_signals(narrative_text, current_phase):
     """
     分析叙事文本，检测阶段推进信号

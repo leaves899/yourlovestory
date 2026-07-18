@@ -575,8 +575,8 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     deleteDay(userDataPath, params)
   )
 
-  // 碎片日记（已迁移到 TS fragment 模块，不再走 Python 子进程）
-  // date 作为 currentDate（状态判断/文件定位基准）传入，与 Python ipc 行为等价；
+  // 碎片日记直接调用 shared fragment 模块。
+  // date 作为 currentDate（状态判断和文件定位基准）传入；
   // 不传时 recordFragment 内部退化为今天。
   ipcMain.handle('fragment:record', async (_, params) => {
     const { date, slug, ...fragmentData } = params
@@ -619,7 +619,7 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     },
   }))
 
-  // 角色管理（已迁移到 TS crushStore，不再走 Python 子进程）
+  // 角色管理直接调用 shared crushStore。
   // 模板在 asar 内（只读），用 app.getAppPath() 访问；用户数据在 userData 目录（可读写）
   ipcMain.handle('crush:create', async (_, params) =>
     createCrush(userDataPath, params, app.getAppPath())
@@ -670,7 +670,7 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     }
   })
 
-  // 设置（已迁移到 TS settingsStore，不再走 Python 子进程）
+  // 设置直接调用 shared settingsStore。
   ipcMain.handle('settings:get', async () => {
     try {
       const data = getSettings(userDataPath)

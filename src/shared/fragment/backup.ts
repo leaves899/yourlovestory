@@ -1,5 +1,5 @@
 /**
- * 备份/回滚与撤销模块（TS 等价实现，取代 src/scripts/fragment/backup.py）。
+ * 备份、回滚与撤销模块。
  */
 import { recordFragment } from './crud'
 import { loadFragmentDay, saveFragmentDay } from './storage'

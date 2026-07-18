@@ -1,5 +1,5 @@
 /**
- * 碎片存储模块（TS 等价实现，取代 src/scripts/fragment/storage.py）。
+ * 碎片存储模块。
  *
  * 职责：文件系统操作（读写 JSON）、碎片查找、目录管理。
  * projectRoot 由调用方传入（不依赖 __file__ 或 cwd）。

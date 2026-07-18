@@ -1,5 +1,5 @@
 /**
- * 碎片日记工具函数（TS 等价实现，取代 src/scripts/fragment/utils.py）。
+ * 碎片日记工具函数。
  *
  * 包含：ID 生成、时间处理、内容验证、emoji 检测、文件路径、摘要格式化。
  */
@@ -165,14 +165,14 @@ export function validateContent(
 }
 
 // ============================================================
-// Emoji 检测（Unicode property escape，等价 Python unicodedata.category）
+// Emoji 检测（Unicode property escape）。
 // ============================================================
 
 /** 判断是否只有表情/符号（无字母、数字字符） */
 export function isEmojiOnly(content: string): boolean {
   if (!content) return false
 
-  // 等价 Python: unicodedata.category 检查 L（字母）或 N（数字）
+  // 使用 Unicode 属性判断内容是否包含字母或数字。
   const hasLetterOrNumber = /\p{L}|\p{N}/u.test(content)
   return !hasLetterOrNumber
 }

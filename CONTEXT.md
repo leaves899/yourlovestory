@@ -155,14 +155,14 @@ AI 根据关键词和语义相似度匹配内容，生成叙事。
 - 管理角色数据和状态
 - 处理用户输入和生成输出
 
-### TypeScript（重构后）
-核心业务逻辑，全部使用 TypeScript 实现：
-- `src/types/fragment.ts` — 碎片数据模型
-- `src/services/fragment-manager.ts` — 碎片管理器
-- `src/services/fragment-state-machine.ts` — 状态机
-- `src/services/tag-recommender.ts` — 标签推荐器
-- `src/services/writing-service.ts` — 叙事生成服务
-- `src/tools/day-writer.ts` — Pi Agent 日写工具
+### TypeScript
+核心业务逻辑全部使用 TypeScript 实现：
+- `src/shared/fragment/` — 碎片模型、状态机、存储、推荐和整合
+- `src/shared/day/` — 日常叙事生成与文件存储
+- `src/shared/crush/` — 角色数据与兼容数据迁移
+- `src/shared/persistence/` — 设置和亲密内容开关
+- `src/main/database/` — SQLite 数据库、迁移和仓储
+- `src/agent/` — Pi Agent、LLM 适配和动态工具加载
 
 ### Electron
 桌面应用框架，负责：

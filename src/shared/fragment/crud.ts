@@ -1,5 +1,5 @@
 /**
- * 碎片 CRUD 模块（TS 等价实现，取代 src/scripts/fragment/crud.py）。
+ * 碎片 CRUD 模块。
  *
  * 职责：碎片创建/读取/更新/删除、内容验证、乐观锁。
  * projectRoot 由调用方传入。

@@ -34,7 +34,7 @@ describe('settingsStore - readJson / writeJson', () => {
     const file = path.join(tmpRoot, 'a.json')
     expect(writeJson(file, { name: '示例记录', n: 1 })).toBe(true)
     expect(readJson(file)).toEqual({ name: '示例记录', n: 1 })
-    // 验证文件内容中文未转义（对齐 Python ensure_ascii=False）
+    // 验证文件内容中文未转义。
     const raw = fs.readFileSync(file, 'utf-8')
     expect(raw).toContain('示例记录')
     expect(raw).not.toContain('\\u')
@@ -51,7 +51,7 @@ describe('settingsStore - readJson / writeJson', () => {
     expect(readJson(path.join(tmpRoot, 'nope.json'))).toBeNull()
   })
 
-  it('损坏 JSON 时 readJson 返回 null（不抛错，对齐 Python try/except）', () => {
+  it('损坏 JSON 时 readJson 返回 null（不抛错）', () => {
     const file = path.join(tmpRoot, 'bad.json')
     fs.writeFileSync(file, '{ not valid json', 'utf-8')
     expect(readJson(file)).toBeNull()
@@ -65,7 +65,7 @@ describe('settingsStore - readJson / writeJson', () => {
 })
 
 describe('settingsStore - getSettings / updateSettings', () => {
-  it('settings.json 不存在时返回 {}（对齐 Python get_settings）', () => {
+  it('settings.json 不存在时返回 {}', () => {
     expect(getSettings(tmpRoot)).toEqual({})
   })
 
@@ -75,7 +75,7 @@ describe('settingsStore - getSettings / updateSettings', () => {
     expect(getSettings(tmpRoot)).toEqual(settings)
   })
 
-  it('updateSettings 整体覆盖（非合并，对齐 Python）', () => {
+  it('updateSettings 整体覆盖（非合并）', () => {
     updateSettings(tmpRoot, { a: 1, b: 2 })
     updateSettings(tmpRoot, { a: 99 }) // 不含 b
     const result = getSettings(tmpRoot)
@@ -100,7 +100,7 @@ describe('intimateToggle', () => {
   it('写入 true 后读取为 true', () => {
     writeIntimateConfig(configPath(), true)
     expect(readIntimateConfig(configPath())).toBe(true)
-    // 验证文件格式（对齐 Python：intimate=true\n）
+    // 验证文件格式。
     expect(fs.readFileSync(configPath(), 'utf-8')).toBe('intimate=true\n')
   })
 
@@ -110,7 +110,7 @@ describe('intimateToggle', () => {
     expect(fs.readFileSync(configPath(), 'utf-8')).toBe('intimate=false\n')
   })
 
-  it('兼容旧格式 "enabled: true"（对齐 Python read_intimate_config）', () => {
+  it('兼容旧格式 "enabled: true"', () => {
     fs.writeFileSync(configPath(), 'enabled: true\n', 'utf-8')
     expect(readIntimateConfig(configPath())).toBe(true)
   })

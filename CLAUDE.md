@@ -6,7 +6,7 @@
 
 yourcrush —— 恋爱日记桌面应用。业务功能通过应用内 Pi Agent + 注册工具提供，不再以独立 Skill 形式调用。
 
-**技术栈**：TypeScript 全量（**无 Python 运行时**）+ Electron 28 + React 18 + Zustand + Pi Agent 0.78。重构历史见 [ADR-0003](docs/adr/0003-electron-refactoring.md) / [ADR-0004](docs/adr/0004-python-ts-migration.md)。
+**技术栈**：TypeScript 全量（**无 Python 运行时**）+ Electron 28 + React 18 + Zustand + SQLite + Pi Agent 0.78。当前架构以 `src/main`、`src/renderer`、`src/agent` 和 `src/shared` 为准。
 
 ## 项目结构
 

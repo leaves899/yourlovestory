@@ -14,8 +14,8 @@ import type { TypeBoxBuilder } from '../runtime'
 /**
  * 角色管理工具 - 支持创建、查看、列表、更新、删除操作。
  *
- * 已迁移到 TS crushStore，不再 spawn Python 子进程。
- * 返回结构与原 Python 一致（raw JSON 字符串进 content[0].text）。
+ * 直接调用 TS crushStore。
+ * 返回结构保持工具契约（raw JSON 字符串进 content[0].text）。
  *
  * projectRoot 用 app.getPath('userData')，打包后指向 userData 目录（可读写）。
  */

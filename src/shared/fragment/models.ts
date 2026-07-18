@@ -1,10 +1,10 @@
 /**
- * 碎片日记数据模型（TS 等价实现，取代 src/scripts/fragment/models.py）。
+ * 碎片日记数据模型。
  *
  * 包含：枚举类型（字符串联合）、Fragment/FragmentDay 接口、常量映射。
  */
 // ============================================================
-// 枚举（字符串联合类型，等价 Python Enum）
+// 枚举（字符串联合类型）。
 // ============================================================
 
 /** 碎片日期状态 */
@@ -30,7 +30,7 @@ export type EditState =
   | 'readonly_final'
 
 // ============================================================
-// 数据接口（等价 Python @dataclass）
+// 数据接口。
 // ============================================================
 
 /** 碎片卡片数据结构 */
@@ -142,7 +142,7 @@ export function fragmentDayFromDict(data: Record<string, any>): FragmentDay {
 }
 
 // ============================================================
-// FragmentDay 方法（等价 Python 类方法）
+// FragmentDay 方法。
 // ============================================================
 
 export function getFragmentCount(day: FragmentDay): number {
@@ -158,7 +158,7 @@ export function hasContent(day: FragmentDay): boolean {
 }
 
 // ============================================================
-// 常量（等价 Python 模块级常量）
+// 常量。
 // ============================================================
 
 export const ORIGIN_DISPLAY: Record<string, string> = {

@@ -1,308 +1,80 @@
-# 配置指南 / Configuration Guide
+# 配置指南
 
-> 了解如何配置和管理 yourcrush
+yourcrush 将应用设置保存到 Electron 的 `userData` 目录。API Key、模型地址和模型名称通过应用内设置页面管理，不从仓库中的环境文件读取。
 
----
+## 亲密内容开关
 
-## 亲密内容开关 / Intimate Content Toggle
+亲密内容默认关闭。每个角色使用以下文件控制开关：
 
-### 什么是亲密内容模块
-
-亲密内容模块用于存储和生成更私密的叙事内容。这是一项可选功能，默认关闭。
-
-### 工作原理
-
-亲密内容通过独立的配置文件 `.intimate_config` 控制：
-
-```
+```text
 crushes/<slug>/.intimate_config
 ```
 
-配置文件内容：
-```bash
-intimate=true   # 开启
-# 或
-intimate=false  # 关闭
+启用：
+
+```text
+intimate=true
 ```
 
----
+关闭：
 
-## 启用/禁用亲密模块 / Enable/Disable Intimate Module
-
-### 手动方式 / Manual Method
-
-原 Python CLI 工具 `toggle_intimate.py` 已迁移为 TypeScript 实现
-（`src/shared/persistence/intimateToggle.ts`），命令行入口不再保留。
-直接编辑 `.intimate_config` 文件即可：
-
-The original Python CLI tool `toggle_intimate.py` has been migrated to TypeScript
-(`src/shared/persistence/intimateToggle.ts`); the CLI entry is no longer provided.
-Edit `.intimate_config` directly instead:
-
-```bash
-# 开启 / Enable
-echo "intimate=true" > crushes/<slug>/.intimate_config
-
-# 关闭 / Disable
-echo "intimate=false" > crushes/<slug>/.intimate_config
+```text
+intimate=false
 ```
 
-### 配置文件格式 / Config File Format
+应用通过 `src/shared/persistence/intimateToggle.ts` 读取和写入该文件。只有显式启用且角色存在 `INTIMATE_KNOWLEDGE.md` 时，Agent 才会加载亲密知识。
 
-`.intimate_config` 文件内容（兼容旧格式）：
+## 角色文件
 
-```bash
-intimate=true   # 开启 / enabled
-intimate=false  # 关闭 / disabled
-```
+角色数据位于 `userData/crushes/<slug>/`。新角色由 `crushes/TEMPLATE/` 创建，模板文件是应用兼容数据的一部分，不是独立的 Claude Code Skill。
 
----
-
-## 配置文件说明 / Configuration Files
-
-### meta.json - 角色元数据
+`meta.json` 使用以下字段：
 
 ```json
 {
-  "name": "角色真实姓名",
+  "name": "角色名称",
   "nickname": "角色昵称",
   "slug": "url-slug",
   "gender": "male|female|unknown",
   "description": "角色描述",
-  "intimate": false,
-  "created_at": "ISO8601 时间戳",
-  "last_updated": "ISO8601 时间戳"
-}
-```
-
-### .intimate_config - 亲密内容开关
-
-```
-intimate=true|false
-```
-
-### SKILL.md - Skill 配置
-
-```yaml
----
-name: crush-slug
-description: 角色描述
-version: 1.0.0
----
-```
-
----
-
-## 数据存储位置 / Data Storage Locations
-
-### 角色数据根目录
-
-```
-crushes/<slug>/
-```
-
-### 核心文件
-
-| 文件 | 用途 | 敏感度 |
-|------|------|--------|
-| `memory.md` | 关系记忆 | 高 |
-| `persona.md` | 性格特征 | 高 |
-| `meta.json` | 元数据 | 中 |
-| `.intimate_config` | 亲密开关 | 低 |
-| `SKILL.md` | Skill配置 | 低 |
-
-### 聊天记录
-
-```
-crushes/<slug>/memories/chats/
-```
-
-### 日程规划
-
-```
-crushes/<slug>/plans/
-```
-
----
-
-## 环境变量 / Environment Variables
-
-yourcrush 暂不需要环境变量配置。
-
----
-
-## 数据备份建议 / Data Backup Recommendations
-
-### 需要备份的文件
-
-- `crushes/` 整个目录
-- 特别是 `memory.md` 和 `persona.md`
-
-### 备份方式
-
-```bash
-# 压缩备份
-tar -czvf backup.tar.gz crushes/
-
-# 或复制到其他位置
-cp -r crushes/ ~/backups/crushes/
-```
-
----
-
-## 安全建议 / Security Recommendations
-
-1. **本地存储** - 所有数据存储在本地，不上传到云端
-2. **权限控制** - 确保 `crushes/` 目录权限正确
-3. **定期备份** - 防止数据丢失
-4. **不分享数据** - 不与他人分享角色文件
-
----
-
-# English Version
-
-# Configuration Guide
-
-> Understanding how to configure and manage yourcrush
-
----
-
-## Intimate Content Toggle
-
-### What is the Intimate Content Module
-
-The intimate content module stores and generates more private narrative content. This is an optional feature, disabled by default.
-
-### How It Works
-
-Intimate content is controlled by a separate configuration file `.intimate_config`:
-
-```
-crushes/<slug>/.intimate_config
-```
-
-Configuration file content:
-```bash
-intimate=true   # enabled
-# or
-intimate=false  # disabled
-```
-
----
-
-## Enable/Disable Intimate Module
-
-### Manual Method
-
-The original Python CLI tool `toggle_intimate.py` has been migrated to TypeScript
-(`src/shared/persistence/intimateToggle.ts`); the CLI entry is no longer provided.
-Edit `.intimate_config` directly:
-
-```bash
-# Enable
-echo "intimate=true" > crushes/<slug>/.intimate_config
-
-# Disable
-echo "intimate=false" > crushes/<slug>/.intimate_config
-```
-
----
-
-## Configuration Files
-
-### meta.json - Character Metadata
-
-```json
-{
-  "name": "Character real name",
-  "nickname": "Character nickname",
-  "slug": "url-slug",
-  "gender": "male|female|unknown",
-  "description": "Character description",
-  "intimate": false,
+  "intimate_enabled": false,
+  "version": "v1",
   "created_at": "ISO8601 timestamp",
-  "last_updated": "ISO8601 timestamp"
+  "updated_at": "ISO8601 timestamp"
 }
 ```
 
-### .intimate_config - Intimate Content Toggle
+常用文件：
 
-```
-intimate=true|false
-```
+| 文件 | 用途 |
+| --- | --- |
+| `meta.json` | 角色元数据 |
+| `persona.md` | 性格与说话方式 |
+| `memory.md` | 关系记忆 |
+| `CONTEXT.md` | 压缩后的角色上下文 |
+| `WEEKDAY.md` | 星期速查信息 |
+| `INTIMATE_KNOWLEDGE.md` | 可选的亲密知识 |
+| `.intimate_config` | 亲密内容开关 |
+| `fragments/<date>.json` | 碎片日记 |
+| `memories/chats/` | 日常叙事文件 |
 
-### SKILL.md - Skill Configuration
+## 应用设置
 
-```yaml
----
-name: crush-slug
-description: Character description
-version: 1.0.0
----
-```
+应用设置由 `src/shared/persistence/settingsStore.ts` 管理，并迁移到 Electron `userData` 目录。仓库根目录的 `settings.json` 仅用于兼容旧版本迁移，不能提交到 Git。
 
----
+## 数据备份
 
-## Data Storage Locations
+退出应用后备份 Electron `userData` 目录，至少包含 SQLite 数据库和 `crushes/` 目录。角色数据可能包含私人内容，不要将数据库、日志或角色目录上传到公开仓库。
 
-### Character Data Root Directory
+## Configuration Summary
 
-```
-crushes/<slug>/
-```
+yourcrush stores application settings in Electron's `userData` directory. Configure the provider, model, base URL and API key through the in-app settings page.
 
-### Core Files
+Intimate content is disabled by default and is enabled only with:
 
-| File | Purpose | Sensitivity |
-|------|---------|-------------|
-| `memory.md` | Relationship memory | High |
-| `persona.md` | Personality traits | High |
-| `meta.json` | Metadata | Medium |
-| `.intimate_config` | Intimate toggle | Low |
-| `SKILL.md` | Skill config | Low |
-
-### Chat Records
-
-```
-crushes/<slug>/memories/chats/
+```text
+crushes/<slug>/.intimate_config
+intimate=true
 ```
 
-### Schedule Planning
-
-```
-crushes/<slug>/plans/
-```
-
----
-
-## Environment Variables
-
-yourcrush does not require environment variables configuration.
-
----
-
-## Data Backup Recommendations
-
-### Files to Backup
-
-- Entire `crushes/` directory
-- Especially `memory.md` and `persona.md`
-
-### Backup Methods
-
-```bash
-# Compressed backup
-tar -czvf backup.tar.gz crushes/
-
-# Or copy to another location
-cp -r crushes/ ~/backups/crushes/
-```
-
----
-
-## Security Recommendations
-
-1. **Local Storage** - All data stored locally, not uploaded to cloud
-2. **Permission Control** - Ensure `crushes/` directory permissions are correct
-3. **Regular Backup** - Prevent data loss
-4. **Don't Share Data** - Don't share character files with others
+The application reads and writes this file through `src/shared/persistence/intimateToggle.ts`. Do not commit `settings.json`, SQLite databases, logs or personal character data.

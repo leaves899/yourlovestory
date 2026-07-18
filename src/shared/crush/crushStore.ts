@@ -1,7 +1,7 @@
 /**
- * 角色 CRUD（TS 等价实现，取代 src/scripts/init_template.py）。
+ * 角色 CRUD。
  *
- * 行为与原 Python 实现保持一致：
+ * 行为约定：
  * - 数据存储在 <projectRoot>/crushes/<slug>/。
  * - create 幂等：目录已存在仅补齐缺失子目录/文件，不报错；meta.json 总是覆盖写入。
  *   memory.md / persona.md / .intimate_config 已存在则保留。
@@ -32,8 +32,8 @@ export interface CrushMeta {
   updated_at: string
 }
 
-/** 统一返回契约（对齐 Python {success, data?/errors?}）。
- *  delete 成功时无 data 字段（对齐 Python delete_crush 只返回 {success:true}）。 */
+/** 统一返回契约（{success, data?/errors?}）。
+ * delete 成功时不包含 data 字段。 */
 export type CrushResult =
   | { success: true; data: CrushMeta | CrushMeta[] }
   | { success: true }
@@ -44,13 +44,13 @@ function crushDir(projectRoot: string, slug: string): string {
 }
 
 function nowISO(): string {
-  // 对齐 Python datetime.now().isoformat()（本地时间，含微秒）
+  // 使用 ISO 时间戳，保持数据格式稳定。
   return new Date().toISOString()
 }
 
 /**
  * 从 TEMPLATE 目录复制文件到新角色目录，替换占位符。
- * 对齐 Python init_template.py 的 copy_template 行为。
+ * 保持模板复制的幂等行为。
  */
 function copyTemplateFile(
   templateDir: string,
@@ -72,7 +72,7 @@ function copyTemplateFile(
 
 /**
  * 创建新的 crush 角色（幂等）。
- * 缺 name/nickname/slug 时返回 {success:false, errors}（对齐 Python CLI 校验）。
+ * 缺 name/nickname/slug 时返回 {success:false, errors}。
  * 从 TEMPLATE/ 复制完整文件集（9 文件），替换占位符。
  *
  * @param projectRoot - 用户数据目录（可读写）
@@ -190,7 +190,7 @@ export function listCrushes(projectRoot: string): CrushResult {
       return { success: true, data: [] }
     }
     const results: CrushMeta[] = []
-    // 对齐 Python sorted(crushes_dir.iterdir())
+    // 按目录名排序，保证列表顺序稳定。
     const entries = fs.readdirSync(crushesDir, { withFileTypes: true }).sort((a, b) =>
       a.name < b.name ? -1 : a.name > b.name ? 1 : 0
     )
@@ -202,7 +202,7 @@ export function listCrushes(projectRoot: string): CrushResult {
       if (meta) {
         results.push(meta)
       } else {
-        // 无 meta.json 的目录仍列出 slug（对齐 Python）
+        // 无 meta.json 的目录仍列出 slug，便于发现残留数据。
         results.push({ slug: entry.name } as CrushMeta)
       }
     }
@@ -258,7 +258,7 @@ export function updateCrush(
     if (!meta) {
       return { success: false, errors: [`Crush '${slug}' not found`] }
     }
-    // 仅更新传入的字段（对齐 Python: if x is not None）
+    // 仅更新调用方传入的字段。
     if (params.name !== undefined) meta.name = params.name
     if (params.nickname !== undefined) meta.nickname = params.nickname
     if (params.description !== undefined) meta.description = params.description

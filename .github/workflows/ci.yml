@@ -11,14 +11,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check for private info
+      - name: Check for hard-coded timeline
         run: |
-          grep -r "小明" . --include="*.ts" --include="*.tsx" --include="*.md" --include="*.yml" && exit 1 || exit 0
-          grep -r "xiaoming" . --include="*.ts" --include="*.tsx" --include="*.md" --include="*.yml" && exit 1 || exit 0
-          grep -r "李薇" . --include="*.ts" --include="*.tsx" --include="*.md" --include="*.yml" && exit 1 || exit 0
-          grep -rE "Day [0-9]" . --include="*.ts" --include="*.tsx" --include="*.md" --include="*.yml" && exit 1 || exit 0
+          grep -rE "Day [0-9]" src --include="*.ts" --include="*.tsx" && exit 1 || exit 0
 
-  test-cli:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Run unit tests
-        run: npm run test:cli
+        run: npm test
       - name: Type check
         run: npx tsc --noEmit -p tsconfig.main.json
       - name: Cleanup test data

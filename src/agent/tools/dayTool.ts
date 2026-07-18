@@ -7,7 +7,7 @@ import type { TypeBoxBuilder } from '../runtime'
 /**
  * 日常写作工具 - 运行日常写作流水线
  *
- * 直接调用 TS dayService.generateDay（不再 spawn Python）。
+ * 直接调用 TS dayService.generateDay。
  */
 function createDayParameters(Type: TypeBoxBuilder) {
   return Type.Object({

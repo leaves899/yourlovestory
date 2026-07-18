@@ -1,7 +1,7 @@
 /**
  * fragment utils 单元测试（TS 等价验证）。
  *
- * 移植自 tests/unit/test_fragment_utils.py 的断言。
+ * 覆盖碎片工具函数的内容校验、日期处理和格式化规则。
  */
 import {
   generateFragmentId,

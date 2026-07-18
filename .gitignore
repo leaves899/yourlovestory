@@ -1,21 +1,3 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-.venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.pytest_cache/
-.coverage
-htmlcov/
-*.egg-info/
-dist/
-build/
-
 # Claude Code
 .claude/settings.json
 .claude/settings.local.json
@@ -33,18 +15,12 @@ Thumbs.db
 # Project specific
 crushes/*/
 !crushes/TEMPLATE/
-memories/
-plans/
-!docs/superpowers/plans/
 *.log
 
 # 设置文件含 API Key，禁止提交
 settings.json
 
-# Docker
-.docker/
-
-# Node (for future web components)
+# Node
 node_modules/
 
 # Electron logs
@@ -52,8 +28,7 @@ electron_err.txt
 electron_out.txt
 
 # Build outputs
+dist/
 release/
-yourcrush-client/out/
-yourcrush-client/release/
-yourcrush-client/electron-*.tgz
-yourcrush-client/node_modules/
+coverage/
+test-results/

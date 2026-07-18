@@ -1,5 +1,5 @@
 /**
- * 碎片管理器（外观模式，TS 等价实现，取代 src/scripts/fragment/manager.py）。
+ * 碎片管理器（外观模式）。
  *
  * 作为 Fragment 模块的统一入口，委托给子模块处理具体逻辑。
  * projectRoot 由调用方传入。

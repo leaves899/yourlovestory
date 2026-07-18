@@ -810,7 +810,7 @@ prompt = base_prompt(origin) + mood_modifier(mood) + context(content)
 当多个碎片整合后，Prompt 生成采用以下算法：
 
 **来源处理：**
-```python
+```text
 # 多来源合并
 origins = [f.origin for f in fragments]
 # 使用所有来源，按输入顺序排列
@@ -818,7 +818,7 @@ origin_prompt = " + ".join([base_prompt(o) for o in origins])
 ```
 
 **情绪处理：**
-```python
+```text
 # 多情绪合并（自动过滤跳过的碎片）
 moods = [f.mood for f in fragments if f.mood is not None]
 if len(moods) == 0:
@@ -831,7 +831,7 @@ else:
 **说明**：当只有一个碎片有情绪（其他都跳过）时，`moods` 列表只有一个元素，`len(set(moods)) == 1` 条件成立，直接使用该情绪。这与 6.2 中"单个有效情绪"规则一致。
 
 **内容拼接：**
-```python
+```text
 # 按时间顺序拼接，使用连接符
 contents = [f.content for f in fragments if f.content]
 connectors = ["，然后", "，接着", "，同时", "，另外"]
@@ -839,7 +839,7 @@ connectors = ["，然后", "，接着", "，同时", "，另外"]
 ```
 
 **长度控制：**
-```python
+```text
 # 总长度限制
 MAX_TOTAL_LENGTH = 1000
 if total_length > MAX_TOTAL_LENGTH:
@@ -1036,20 +1036,28 @@ if total_length > MAX_TOTAL_LENGTH:
 
 ### 8.1 文件结构
 
+当前实现由 shared 领域模块、Agent 工具和 Electron IPC 共同组成：
+
 ```
-.claude/skills/day/
-├── SKILL.md                    # day 主文件（需扩展）
-├── fragments/                  # 碎片相关
-│   ├── fragment_input.md      # 碎片输入引导
-│   ├── fragment_integrate.md  # 碎片整合逻辑
-│   ├── fragment_prompts.md    # 碎片写作 Prompt
-│   └── fragment_settings.md   # 碎片日记设置（含 Blind 模式配置）
-└── ...
+src/shared/fragment/
+├── models.ts                  # 数据模型和序列化
+├── state_machine.ts           # 碎片生命周期
+├── crud.ts                    # 碎片 CRUD
+├── locker.ts                  # 日期状态和乐观锁
+├── integrator.ts              # 碎片整合
+├── prompt_generator.ts        # Prompt 生成
+├── tag_recommender.ts         # 标签推荐
+└── manager.ts                 # 统一外观接口
+
+src/agent/tools/fragmentTool.ts # Pi Agent 工具
+src/main/ipc.ts                 # Electron IPC handler
 ```
 
 ### 8.2 核心函数
 
-```python
+以下为当前 TypeScript 模块的职责示意：
+
+```text
 # 碎片记录
 def record_fragment(crush_slug, date, fragment_data):
     """记录用户输入的碎片"""

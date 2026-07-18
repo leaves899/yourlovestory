@@ -1,5 +1,5 @@
 /**
- * 碎片状态机（TS 等价实现，取代 src/scripts/fragment/state_machine.py）。
+ * 碎片状态机。
  *
  * 状态转换规则：
  * - 进行中 → 已完成（用户触发写作）
