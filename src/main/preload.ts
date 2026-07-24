@@ -77,6 +77,8 @@ import type {
   Volume,
   VolumeOutline,
   WorldviewEntry,
+  LegacyCrushSnapshot,
+  LegacyFragmentSnapshot,
 } from '../shared/novelProject'
 import type { Foreshadow } from '../shared/narrativeWorkbench'
 
@@ -354,6 +356,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('novelProject:list'),
   getCurrentNovelProject: (): Promise<WorkbenchResponse<Project | null>> =>
     ipcRenderer.invoke('novelProject:current'),
+  listLegacyCrushes: (): Promise<WorkbenchResponse<LegacyCrushSnapshot[]>> =>
+    ipcRenderer.invoke('novelProject:legacyCrushes:list'),
+  listLegacyFragments: (
+    projectId?: string,
+  ): Promise<WorkbenchResponse<LegacyFragmentSnapshot[]>> =>
+    ipcRenderer.invoke('novelProject:legacyFragments:list', { project_id: projectId }),
   getNovelProject: (params: ProjectIdParams): Promise<WorkbenchResponse<Project>> =>
     ipcRenderer.invoke('novelProject:get', params),
   createNovelProject: (params: CreateProjectCommand): Promise<WorkbenchResponse<Project>> =>

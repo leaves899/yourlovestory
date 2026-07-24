@@ -13,10 +13,10 @@
  * projectRoot 由调用方传入（ipc.ts 传 app.getAppPath()）。
  */
 import * as fs from 'fs'
-import * as path from 'path'
 import { readJson, writeJson } from '../persistence/settingsStore'
 import type { RelationshipPhase } from '../relationship/models'
 import { initializeProgress } from '../relationship/progress_store'
+import { safeCrushPath, safeJoinUnder, isSafeSlug } from '../security/pathSafety'
 import { buildDefaultCrushSlug, sanitizeCrushSlug } from './slug'
 
 /** 角色元数据结构。 */
@@ -40,7 +40,7 @@ export type CrushResult =
   | { success: false; errors: string[] }
 
 function crushDir(projectRoot: string, slug: string): string {
-  return path.join(projectRoot, 'crushes', slug)
+  return safeCrushPath(projectRoot, slug)
 }
 
 function nowISO(): string {
@@ -59,8 +59,8 @@ function copyTemplateFile(
   replacements: Record<string, string>,
   overwrite: boolean = false
 ): void {
-  const src = path.join(templateDir, filename)
-  const dst = path.join(targetDir, filename)
+  const src = safeJoinUnder(templateDir, filename)
+  const dst = safeJoinUnder(targetDir, filename)
   if (!fs.existsSync(src)) return
   if (!overwrite && fs.existsSync(dst)) return
   let content = fs.readFileSync(src, 'utf-8')
@@ -99,19 +99,19 @@ export function createCrush(
     const resolvedSlug =
       sanitizeCrushSlug(params.slug) || buildDefaultCrushSlug(name, nickname)
     const dir = crushDir(projectRoot, resolvedSlug)
-    const metaFile = path.join(dir, 'meta.json')
+    const metaFile = safeJoinUnder(dir, 'meta.json')
     const existingMeta = readJson<CrushMeta>(metaFile)
     const now = nowISO()
 
     // 创建角色目录与子目录（幂等）
-    fs.mkdirSync(path.join(dir, 'memories', 'chats'), { recursive: true })
-    fs.mkdirSync(path.join(dir, 'fragments'), { recursive: true })
-    fs.mkdirSync(path.join(dir, 'plans'), { recursive: true })
+    fs.mkdirSync(safeJoinUnder(dir, 'memories', 'chats'), { recursive: true })
+    fs.mkdirSync(safeJoinUnder(dir, 'fragments'), { recursive: true })
+    fs.mkdirSync(safeJoinUnder(dir, 'plans'), { recursive: true })
 
     // 模板目录：优先使用 templateRoot，否则使用 projectRoot
     const templateDir = templateRoot
-      ? path.join(templateRoot, 'crushes', 'TEMPLATE')
-      : path.join(projectRoot, 'crushes', 'TEMPLATE')
+      ? safeJoinUnder(templateRoot, 'crushes', 'TEMPLATE')
+      : safeJoinUnder(projectRoot, 'crushes', 'TEMPLATE')
     const templateExists = fs.existsSync(templateDir)
     const replacements: Record<string, string> = {
       CHARACTER_NAME: name,
@@ -129,7 +129,6 @@ export function createCrush(
         { filename: 'INTIMATE_KNOWLEDGE.md', overwrite: false },
         { filename: 'WEEKDAY.md', overwrite: false },
         { filename: 'CONTEXT.md', overwrite: false },
-        { filename: 'SKILL.md', overwrite: false },
         { filename: 'PROMPT.md', overwrite: false },
       ]
       for (const { filename, overwrite } of templateFiles) {
@@ -137,14 +136,18 @@ export function createCrush(
       }
     }
 
-    if (!templateExists) {
-      const memoryFile = path.join(dir, 'memory.md')
-      if (!fs.existsSync(memoryFile)) {
-        fs.writeFileSync(memoryFile, `# ${nickname} 的记忆\n\n`, 'utf-8')
-      }
-      const personaFile = path.join(dir, 'persona.md')
-      if (!fs.existsSync(personaFile)) {
-        fs.writeFileSync(personaFile, `# ${nickname} 的性格\n\n`, 'utf-8')
+    const fallbackContextFiles: Record<string, string> = {
+      'persona.md': `# ${nickname} 的性格\n\n待补充角色性格、语言习惯与行为边界。\n`,
+      'memory.md': `# ${nickname} 的记忆\n\n暂无已确认的长期记忆。\n`,
+      'WEEKDAY.md': '# 星期与日程\n\n根据当前日期动态计算星期，不在角色资料中硬编码日期。\n',
+      'CONTEXT.md': `# ${nickname} 的上下文\n\n角色名称：${name}\n角色昵称：${nickname}\n`,
+      'INTIMATE_KNOWLEDGE.md': '# 亲密内容知识\n\n亲密内容默认关闭，仅在显式启用后使用。\n',
+      'PROMPT.md': `# ${nickname} 的叙事提示\n\n保持角色设定一致，并优先使用已确认的上下文与记忆。\n`,
+    }
+    for (const [filename, content] of Object.entries(fallbackContextFiles)) {
+      const targetFile = safeJoinUnder(dir, filename)
+      if (!fs.existsSync(targetFile)) {
+        fs.writeFileSync(targetFile, content, 'utf-8')
       }
     }
 
@@ -162,7 +165,7 @@ export function createCrush(
     writeJson(metaFile, meta)
 
     // .intimate_config：明确设为 false（用户安装后自行决定是否开启）
-    const intimateFile = path.join(dir, '.intimate_config')
+    const intimateFile = safeJoinUnder(dir, '.intimate_config')
     if (!fs.existsSync(intimateFile)) {
       fs.writeFileSync(intimateFile, 'intimate=false\n', 'utf-8')
     }
@@ -185,7 +188,7 @@ export function createCrush(
 /** 列出所有 crush 角色（排序，无 meta.json 的目录只列 {slug}）。 */
 export function listCrushes(projectRoot: string): CrushResult {
   try {
-    const crushesDir = path.join(projectRoot, 'crushes')
+    const crushesDir = safeJoinUnder(projectRoot, 'crushes')
     if (!fs.existsSync(crushesDir)) {
       return { success: true, data: [] }
     }
@@ -198,7 +201,8 @@ export function listCrushes(projectRoot: string): CrushResult {
       if (!entry.isDirectory()) continue
       // 跳过模板目录（模板文件含 {{VAR}} 占位符，不应作为角色列出）
       if (entry.name === 'TEMPLATE') continue
-      const meta = readJson<CrushMeta>(path.join(crushesDir, entry.name, 'meta.json'))
+      if (!isSafeSlug(entry.name)) continue
+      const meta = readJson<CrushMeta>(safeJoinUnder(crushesDir, entry.name, 'meta.json'))
       if (meta) {
         results.push(meta)
       } else {
@@ -219,7 +223,7 @@ export function getCrush(projectRoot: string, slug: string): CrushResult {
   }
   try {
     const dir = crushDir(projectRoot, slug)
-    const metaFile = path.join(dir, 'meta.json')
+    const metaFile = safeJoinUnder(dir, 'meta.json')
     if (!fs.existsSync(dir) || !fs.existsSync(metaFile)) {
       return { success: false, errors: [`Crush '${slug}' not found`] }
     }
@@ -250,7 +254,7 @@ export function updateCrush(
   }
   try {
     const dir = crushDir(projectRoot, slug)
-    const metaFile = path.join(dir, 'meta.json')
+    const metaFile = safeJoinUnder(dir, 'meta.json')
     if (!fs.existsSync(dir) || !fs.existsSync(metaFile)) {
       return { success: false, errors: [`Crush '${slug}' not found`] }
     }

@@ -63,6 +63,7 @@ function mockElectronAPIScript() {
   const fragmentStore: FragmentRecord[] = []
   const crushStore: CrushRecord[] = []
   const progressStore: Record<string, ProgressRecord> = {}
+  const projectStore: Array<Record<string, unknown>> = []
   const PHASE_NAMES = ['陌生人', '认识', '暧昧', '表白', '热恋']
   const PHASE_THRESHOLDS = [60, 70, -1, -1, -1]
 
@@ -116,6 +117,19 @@ function mockElectronAPIScript() {
   }
 
   ;(window as any).electronAPI = {
+    listNovelProjects: async () => ({ success: true, data: [...projectStore] }),
+    getCurrentNovelProject: async () => ({ success: true, data: null }),
+    onTaskStart: () => () => undefined,
+    onTaskStage: () => () => undefined,
+    onTaskChunk: () => () => undefined,
+    onTaskCheckpoint: () => () => undefined,
+    onTaskReview: () => () => undefined,
+    onTaskEnd: () => () => undefined,
+    onTaskError: () => () => undefined,
+    onAssistantEvent: () => () => undefined,
+    listTasks: async () => ({ success: true, data: [] }),
+    listRecoverableTasks: async () => ({ success: true, data: [] }),
+    listAssistantSessions: async () => ({ success: true, data: [] }),
     // 碎片日记
     recordFragment: async (params: any) => {
       track('fragment:record', params)

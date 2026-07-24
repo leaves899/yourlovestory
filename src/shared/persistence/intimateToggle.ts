@@ -9,10 +9,10 @@
  * 应用内通过 UI 触发，不提供独立命令行入口。
  */
 import * as fs from 'fs'
-import * as path from 'path'
+import { safeJoinUnder, assertSafeSlug } from '../security/pathSafety'
 
 /** 亲密配置文件名。 */
-const CONFIG_FILENAME = '.intimate_config'
+export const CONFIG_FILENAME = '.intimate_config'
 
 /** 读取亲密配置：文件不存在返回 false，兼容新旧格式。 */
 export function readIntimateConfig(configPath: string): boolean {
@@ -40,10 +40,14 @@ export function getIntimateStatus(
   crushesDir: string,
   slug: string
 ): IntimateStatus | null {
-  const targetDir = path.join(crushesDir, slug)
-  if (!fs.existsSync(targetDir)) return null
-  const configPath = path.join(targetDir, CONFIG_FILENAME)
-  return { enabled: readIntimateConfig(configPath) }
+  try {
+    const targetDir = safeJoinUnder(crushesDir, assertSafeSlug(slug))
+    if (!fs.existsSync(targetDir)) return null
+    const configPath = safeJoinUnder(targetDir, CONFIG_FILENAME)
+    return { enabled: readIntimateConfig(configPath) }
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -55,12 +59,16 @@ export function setIntimate(
   slug: string,
   enabled: boolean
 ): IntimateStatus | null {
-  const targetDir = path.join(crushesDir, slug)
-  if (!fs.existsSync(targetDir)) return null
-  const configPath = path.join(targetDir, CONFIG_FILENAME)
-  const current = readIntimateConfig(configPath)
-  if (current !== enabled) {
-    writeIntimateConfig(configPath, enabled)
+  try {
+    const targetDir = safeJoinUnder(crushesDir, assertSafeSlug(slug))
+    if (!fs.existsSync(targetDir)) return null
+    const configPath = safeJoinUnder(targetDir, CONFIG_FILENAME)
+    const current = readIntimateConfig(configPath)
+    if (current !== enabled) {
+      writeIntimateConfig(configPath, enabled)
+    }
+    return { enabled }
+  } catch {
+    return null
   }
-  return { enabled }
 }

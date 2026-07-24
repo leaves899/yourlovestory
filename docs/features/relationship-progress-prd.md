@@ -1,9 +1,17 @@
 # 角色关系进度条 PRD
 
 > Feature: Relationship Progress（关系进度系统）
-> 状态：待开发
+> 状态：历史设计文档。核心能力已迁移到 TypeScript 关系模块，本文中的四阶段命名、独立 Skill 和旧文件路径不再是实现契约。
 > 创建日期：2026-05-30
 > 依赖：需先完成 fragment-journal（微日记）功能
+
+## 当前实现摘要
+
+当前实现使用五阶段模型：陌生人（`stranger`）、认识（`acquaintance`）、暧昧（`flirting`）、表白（`confession`）和热恋（`passion`），定义位于 `src/shared/relationship/models.ts`，阶段 Prompt 位于 `src/shared/relationship/phase_prompts.ts`。关系规则通过兼容 Day 叙事使用，并由角色 `.intimate_config` 约束亲密内容。
+
+关系进度页面是兼容入口，长篇工作台是当前产品主线。独立 `SKILL.md` 不再作为运行时入口，旧 Crush 和 Fragment 数据只通过一次性导入进入工作台，分别映射为 Character 和 SourceMaterial，导入后不持续同步。
+
+下文保留早期四阶段方案，供理解历史决策和迁移背景使用；实现或新增功能请以 [ADR-0005](../adr/0005-workbench-priority-and-legacy-import.md) 与 [CONTEXT.md](../../CONTEXT.md) 为准。
 
 ---
 
@@ -38,12 +46,12 @@ yourcrush 当前的角色档案是静态的——创建后关系状态不会自�
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                                                             │
-│   Phase 0        Phase 1        Phase 2        Phase 3      │
-│   ────────       ────────       ────────       ────────     │
-│   陌生人    →    认识     →     暧昧     →     表白         │
-│   Stranger       Acquaintance   Flirting       Confession   │
-│                                                             │
-│   [当前默认]     [解锁互动]     [解锁亲密]     [解锁结局]   │
+│   Phase 0      Phase 1      Phase 2      Phase 3      Phase 4 │
+│   ────────     ────────     ────────     ────────     ─────── │
+│   陌生人   →   认识    →    暧昧    →    表白    →    热恋    │
+│   Stranger      Acquaintance  Flirting     Confession   Passion │
+│                                                               │
+│   [当前默认]   [解锁互动]   [解锁亲密]   [用户确认]   [热恋]   │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -56,6 +64,7 @@ yourcrush 当前的角色档案是静态的——创建后关系状态不会自�
 | **Phase 1 认识** | 有基本互动，知道彼此存在 | 互动叙事、对话生成 | 日常聊天、第一次对话 | ≥3 次互动叙事 + 用户确认 |
 | **Phase 2 暧昧** | 频繁互动，有情感张力 | 情感分析、内心独白 | 约会叙事、情感波动 | ≥5 次暧昧叙事 + 用户确认 |
 | **Phase 3 表白** | 明确关系，正式在一起 | 结局生成、关系回顾 | 表白场景、纪念日 | 用户主动触发 |
+| **Phase 4 热恋** | 关系稳定且持续亲密 | 长期关系回顾、亲密叙事 | 纪念日、共同生活 | 用户主动确认 |
 
 ### 2.3 阶段过渡机制
 
@@ -95,7 +104,7 @@ yourcrush 当前的角色档案是静态的——创建后关系状态不会自�
 
 ```
 用户输入 /progress
-→ 显示当前阶段：暧昧（Phase 2/4）
+→ 显示当前阶段：暧昧（Phase 2/5）
 → 显示进度条：████████░░ 65%
 → 显示阶段统计：8 次互动，5 次暧昧
 → 显示下一阶段：表白（需更多情感积累）
@@ -122,7 +131,7 @@ yourcrush 当前的角色档案是静态的——创建后关系状态不会自�
 ```markdown
 ## 关系进度
 
-当前阶段：暧昧 Phase 2/4
+当前阶段：暧昧 Phase 2/5
 进度：████████░░ 65%
 
 ### 阶段统计
@@ -136,7 +145,7 @@ yourcrush 当前的角色档案是静态的——创建后关系状态不会自�
 - 5月25日：进入暧昧阶段
 
 ### 下一阶段
-表白 Phase 3/4
+表白 Phase 3/5
 需要：更多情感积累，或主动触发
 输入 /confess 开始表白叙事
 ```
@@ -326,15 +335,17 @@ crushes/<slug>/
 ├── progress.md           # 关系进度档案（新增）
 ├── fragments/            # 碎片目录
 ├── prompts/
-│   ├── phase0_stranger.md    # 陌生人阶段 prompt（新增）
-│   ├── phase1_acquaintance.md # 认识阶段 prompt（新增）
-│   ├── phase2_flirting.md    # 暧昧阶段 prompt（新增）
-│   └── phase3_confession.md  # 表白阶段 prompt（新增）
+│   ├── phase0_stranger.md    # 陌生人阶段 prompt（历史方案）
+│   ├── phase1_acquaintance.md # 认识阶段 prompt（历史方案）
+│   ├── phase2_flirting.md    # 暧昧阶段 prompt（历史方案）
+│   ├── phase3_confession.md  # 表白阶段 prompt（历史方案）
+│   └── phase4_passion.md     # 热恋阶段 prompt（当前模型）
 ├── narrative/
-│   ├── phase0/           # 按阶段归档（新增）
+│   ├── phase0/           # 历史方案中的按阶段归档
 │   ├── phase1/
 │   ├── phase2/
-│   └── phase3/
+│   ├── phase3/
+│   └── phase4/
 ├── MEMORY.md
 └── WRITING_GUIDE.md
 ```
@@ -393,16 +404,17 @@ def detect_phase_signals(narrative_text, current_phase):
 | 0 | 1 | 60分 | 自动检测 + 用户确认 |
 | 1 | 2 | 70分 | 自动检测 + 用户确认 |
 | 2 | 3 | - | 用户手动触发 |
+| 3 | 4 | - | 用户手动触发 |
 
-### 6.3 SKILL.md 修改
+### 6.3 当前实现入口
 
-在现有 SKILL.md 中添加：
+本节是历史方案，独立 `SKILL.md` 不再修改或加载。当前实现入口为：
 
-- `/progress` 命令定义
-- `/confess` 命令定义
-- `/review` 命令定义
-- 阶段检测逻辑说明
-- 阶段专属 prompt 加载逻辑
+- `src/shared/relationship/models.ts`：五阶段、信号与阈值
+- `src/shared/relationship/phase_detector.ts`：阶段信号检测
+- `src/shared/relationship/phase_prompts.ts`：阶段写作规则
+- `src/shared/relationship/manager.ts`：兼容 Day 叙事的阶段更新
+- `src/main/ipc.ts`：关系进度 IPC 兼容入口
 
 ### 6.4 与微日记的集成
 
@@ -421,13 +433,13 @@ def detect_phase_signals(narrative_text, current_phase):
 - [ ] 叙事完成后自动检测阶段信号
 - [ ] 达到阈值时提示用户确认推进
 - [ ] 用户确认后阶段更新，新叙事使用对应 prompt
-- [ ] 4 个阶段的 prompt 模板风格明显不同
+- [x] 五阶段关系规则与阶段 Prompt 已进入 TypeScript 模块
 
 ### P1（重要但可延后）
 
 - [ ] `/confess` 表白叙事功能
 - [ ] `/review` 关系回顾功能
-- [ ] 叙事按阶段归档到 phase0/1/2/3 目录
+- [ ] 叙事按阶段归档到 phase0/1/2/3/4 目录（历史方案）
 - [ ] 阶段过渡动画或视觉反馈
 
 ### P2（锦上添花）
@@ -445,7 +457,7 @@ def detect_phase_signals(narrative_text, current_phase):
 |------|------|---------|------|
 | Phase 1 | progress.md 数据结构 + `/progress` 命令 | 1 session | 无 |
 | Phase 2 | 阶段检测算法 + 推进确认流程 | 1 session | Phase 1 |
-| Phase 3 | 4 个阶段 prompt 模板 + 叙事归档 | 1 session | Phase 2 |
+| Phase 3 | 历史四阶段 prompt 模板 + 叙事归档 | 1 session | Phase 2 |
 | Phase 4 | `/confess` + `/review` 命令 | 1 session | Phase 3 |
 
 ---
@@ -461,7 +473,7 @@ def detect_phase_signals(narrative_text, current_phase):
 
 ## 10. 术语
 
-- **关系阶段（Phase）：** 暗恋关系的演进阶段，共 4 个
+- **关系阶段（Phase）：** 当前实现为五个阶段，本文原始方案曾定义四个阶段
 - **阶段信号（Signal）：** 叙事中暗示关系推进的关键词或情节
 - **阶段阈值（Threshold）：** 进入下一阶段所需的最低信号分数
 - **表白叙事（Confession Narrative）：** 专门描写表白场景的叙事类型

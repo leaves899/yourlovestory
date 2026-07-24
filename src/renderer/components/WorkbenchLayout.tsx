@@ -177,7 +177,7 @@ function WorkbenchLayout() {
           <Text as={NavLink} to="/fragment" display="block" mt={2} fontSize="sm" color="ink.300" _hover={{ color: 'paper.50' }}>
             碎片日记
           </Text>
-          <Text as={NavLink} to="/" display="block" mt={1} fontSize="sm" color="ink.300" _hover={{ color: 'paper.50' }}>
+          <Text as={NavLink} to="/journal" display="block" mt={1} fontSize="sm" color="ink.300" _hover={{ color: 'paper.50' }}>
             Day 日常写作
           </Text>
         </Box>

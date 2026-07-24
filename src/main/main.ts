@@ -24,6 +24,11 @@ let taskManager: TaskManager | null = null
 let workbenchService: WorkbenchService | null = null
 let assistantService: AssistantService | null = null
 
+const e2eUserDataPath = process.env.YOURCRUSH_E2E_USER_DATA
+if (process.env.NODE_ENV === 'test' && e2eUserDataPath) {
+  app.setPath('userData', path.resolve(e2eUserDataPath))
+}
+
 /**
  * 数据迁移逻辑：将旧数据从项目根目录迁移到 userData 目录。
  * 打包后 app.getAppPath() 指向 asar 内部（只读），需要迁移到 userData 目录。
@@ -99,7 +104,9 @@ function createWindow() {
       // 如果开发服务器不可用，加载构建后的文件
       mainWindow?.loadFile(path.join(__dirname, '../../renderer/index.html'))
     })
-    mainWindow.webContents.openDevTools()
+    if (process.env.NODE_ENV !== 'test') {
+      mainWindow.webContents.openDevTools()
+    }
   } else {
     mainWindow.loadFile(path.join(__dirname, '../../renderer/index.html'))
   }

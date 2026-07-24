@@ -22,6 +22,7 @@ settings.json
 
 # Node
 node_modules/
+.runtime/
 
 # Electron logs
 electron_err.txt

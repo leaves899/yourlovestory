@@ -5,6 +5,18 @@ directories:
 files:
   - dist/**/*
   - package.json
+  # 新角色创建与 contextLoader 读取的最小模板资源。模板位于 asar 内，
+  # 用户角色和设置始终写入 userData，不随安装包发布。
+  - crushes/TEMPLATE/.intimate_config
+  - crushes/TEMPLATE/CONTEXT.md
+  - crushes/TEMPLATE/INTIMATE_KNOWLEDGE.md
+  - crushes/TEMPLATE/WEEKDAY.md
+  - crushes/TEMPLATE/memory.md
+  - crushes/TEMPLATE/persona.md
+  - crushes/TEMPLATE/meta.json
+  - crushes/TEMPLATE/PROMPT.md
+  - '!crushes/TEMPLATE/SKILL.md'
+  - '!settings.json'
 npmRebuild: true
 asarUnpack:
   - node_modules/better-sqlite3/**/*

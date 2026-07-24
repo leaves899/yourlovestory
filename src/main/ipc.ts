@@ -41,9 +41,6 @@ import {
   detectNarrativeSignals,
 } from '../shared/relationship/manager'
 
-// 用户数据目录（可读写），打包后指向 userData 而非 asar 内部
-const userDataPath = app.getPath('userData')
-
 export interface IpcSetupOptions {
   taskManager?: TaskManager
   workbenchService?: WorkbenchService
@@ -285,6 +282,8 @@ function parseVersionDiffParams(value: unknown): {
 }
 
 export function setupIPC(options: IpcSetupOptions = {}) {
+  // 必须在应用完成测试覆盖或平台初始化后读取，避免模块加载时缓存错误目录。
+  const userDataPath = app.getPath('userData')
   const taskManager = options.taskManager
   const narrativeWorkbenchService = options.narrativeWorkbenchService ?? options.workbenchService?.narrative
   registerWorkbenchIPC(options.workbenchService)

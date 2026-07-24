@@ -4,6 +4,7 @@ import * as path from 'node:path'
 import {
   CharacterRepository,
   CurrentProjectRepository,
+  FragmentRepository,
   OrganizationRepository,
   ProjectConfigRepository,
   ProjectRepository,
@@ -31,6 +32,7 @@ import {
   parseRelationCreateParams,
   parseSourceMaterialListParams,
   parseSourceMaterialSelectionParams,
+  WorkbenchService,
 } from '@/main/workbench'
 
 function createStores(database: SqliteDatabase): NovelProjectStores {
@@ -221,6 +223,16 @@ describe('NovelProjectService', () => {
 
   test('maps a Crush without importing intimate content when disabled and imports a legacy fragment', () => {
     const crushSource: CrushSource = {
+      list: () => [{
+        slug: 'mapped-crush',
+        name: '角色原名',
+        nickname: '角色昵称',
+        gender: 'unknown',
+        description: '角色描述',
+        intimate_enabled: false,
+        created_at: '',
+        updated_at: '',
+      }],
       getBySlug: (slug) => ({
         meta: {
           name: '角色原名',
@@ -241,8 +253,24 @@ describe('NovelProjectService', () => {
       }),
     }
     const fragmentSource: LegacyFragmentSource = {
+      list: () => [{
+        id: 'legacy-fragment-1',
+        source: 'journal-json',
+        date: '2026-07-18',
+        time: '10:00',
+        origin: 'user',
+        mood: 'neutral',
+        content: '旧碎片内容',
+        env_tags: ['室内'],
+        behavior_tags: ['对话'],
+        custom_tags: [],
+        writing_mode: 'raw',
+        theme: null,
+        crush_slug: 'mapped-crush',
+      }],
       getById: (fragmentId) => ({
         id: fragmentId,
+        source: 'journal-json',
         date: '2026-07-18',
         time: '10:00',
         origin: 'user',
@@ -258,12 +286,18 @@ describe('NovelProjectService', () => {
     }
     const service = new NovelProjectService(createStores(database), crushSource, fragmentSource)
     const project = service.createProject({ slug: 'mapped', name: 'Mapped' })
+    expect(service.listImportableCrushes()).toHaveLength(1)
+    expect(service.listImportableFragments()).toHaveLength(1)
     const character = service.mapCrushToCharacter({
       project_id: project.id,
       crush_slug: 'mapped-crush',
     })
     expect(character.crush_slug).toBe('mapped-crush')
     expect(character.profile.intimate_knowledge).toBeUndefined()
+    expect(service.mapCrushToCharacter({
+      project_id: project.id,
+      crush_slug: 'mapped-crush',
+    }).id).toBe(character.id)
 
     const material = service.createSourceMaterialFromFragment({
       project_id: project.id,
@@ -275,6 +309,41 @@ describe('NovelProjectService', () => {
       project_id: project.id,
       fragment_id: 'legacy-fragment-1',
     })).toEqual(material)
+  })
+
+  test('imports the historical SQLite fragment table once without deleting or dual-writing it', () => {
+    const workbench = new WorkbenchService(database, { projectRoot: tempRoot })
+    const project = workbench.createProject({
+      slug: 'sqlite-fragment-migration',
+      name: 'SQLite Fragment Migration',
+    })
+    const legacyRepository = new FragmentRepository(database)
+    const legacyFragment = legacyRepository.create({
+      project_id: project.id,
+      date: '2026-07-18',
+      content: '历史 SQLite 碎片',
+      env_tags: ['室内'],
+    })
+
+    expect(workbench.listImportableFragments(project.id)).toEqual([
+      expect.objectContaining({
+        id: legacyFragment.id,
+        source: 'sqlite-library',
+        source_project_id: project.id,
+      }),
+    ])
+
+    const material = workbench.createSourceMaterialFromFragment({
+      project_id: project.id,
+      fragment_id: legacyFragment.id,
+    })
+    expect(material.fragment_id).toBe(legacyFragment.id)
+    expect(workbench.createSourceMaterialFromFragment({
+      project_id: project.id,
+      fragment_id: legacyFragment.id,
+    })).toEqual(material)
+    expect(legacyRepository.getById(legacyFragment.id)).not.toBeNull()
+    expect(legacyRepository.listByProject(project.id)).toHaveLength(1)
   })
 
   test('preserves character relations while upgrading a Goal 1/2 database to the workbench schema', () => {

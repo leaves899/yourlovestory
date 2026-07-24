@@ -14,6 +14,10 @@ import {
 import type { PhaseSignal } from '@/shared/relationship/models'
 
 describe('Progress Store', () => {
+  test('拒绝路径穿越 crush slug', () => {
+    expect(() => loadProgress(testRoot, '..')).toThrow()
+  })
+
   let testRoot: string
   const testSlug = 'test-crush'
 

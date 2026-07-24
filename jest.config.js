@@ -12,5 +12,13 @@ module.exports = {
   transform: {
     '^.+\\.tsx?$': 'ts-jest',
   },
+  coverageThreshold: {
+    global: {
+      lines: 70,
+      statements: 65,
+      branches: 50,
+      functions: 60,
+    },
+  },
   testTimeout: 15000,
 }

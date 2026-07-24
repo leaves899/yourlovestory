@@ -169,7 +169,7 @@ function ProgressPage() {
                 mt={3}
                 size="sm"
                 colorScheme="cinnabar"
-                onClick={() => navigate(needsOnboarding() ? '/onboarding' : '/')}
+                onClick={() => navigate(needsOnboarding() ? '/onboarding' : '/journal')}
               >
                 {needsOnboarding() ? '去完成首次设置' : '回到日常写作'}
               </Button>
@@ -288,7 +288,7 @@ function ProgressPage() {
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => navigate('/')}
+                    onClick={() => navigate('/journal')}
                     data-testid="progress-cta-day"
                   >
                     去写第一篇 Day

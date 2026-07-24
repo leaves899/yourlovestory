@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import type {
   ChapterOutline,
   Character,
+  LegacyCrushSnapshot,
+  LegacyFragmentSnapshot,
   CreateChapterOutlineInput,
   CreateCharacterInput,
   CreateOrganizationInput,
@@ -44,6 +46,8 @@ interface WorkbenchState {
   organizations: Organization[]
   relations: Relation[]
   sourceMaterials: SourceMaterial[]
+  legacyCrushes: LegacyCrushSnapshot[]
+  legacyFragments: LegacyFragmentSnapshot[]
   loading: boolean
   saving: boolean
   error: string | null
@@ -90,6 +94,13 @@ interface WorkbenchState {
   createSourceMaterial: (input: Omit<CreateSourceMaterialInput, 'project_id'>) => Promise<SourceMaterial>
   updateSourceMaterial: (materialId: string, input: UpdateSourceMaterialInput) => Promise<SourceMaterial>
   deleteSourceMaterial: (materialId: string) => Promise<void>
+  loadLegacyImportPreview: () => Promise<void>
+  importLegacyCrush: (crushSlug: string, role?: string) => Promise<Character>
+  importLegacyFragment: (
+    fragmentId: string,
+    characterId?: string | null,
+    title?: string,
+  ) => Promise<SourceMaterial>
 }
 
 function readError(error: unknown): string {
@@ -175,6 +186,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
     organizations: [],
     relations: [],
     sourceMaterials: [],
+    legacyCrushes: [],
+    legacyFragments: [],
     loading: false,
     saving: false,
     error: null,
@@ -378,6 +391,42 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
     deleteSourceMaterial: async (materialId) => {
       const item = get().sourceMaterials.find((material) => material.id === materialId)
       return mutate(() => workbenchService.deleteSourceMaterial(currentId(get()), materialId, item?.version))
+    },
+
+    loadLegacyImportPreview: async () => {
+      set({ loading: true, error: null })
+      try {
+        const [legacyCrushes, legacyFragments] = await Promise.all([
+          workbenchService.listLegacyCrushes(),
+          workbenchService.listLegacyFragments(get().currentProject?.id),
+        ])
+        set({ legacyCrushes, legacyFragments, loading: false })
+      } catch (error) {
+        set({ loading: false, error: readError(error) })
+      }
+    },
+
+    importLegacyCrush: async (crushSlug, role = 'crush') => {
+      const projectId = currentId(get())
+      return mutate(() =>
+        workbenchService.mapCrushToCharacter({
+          project_id: projectId,
+          crush_slug: crushSlug,
+          role,
+        }),
+      )
+    },
+
+    importLegacyFragment: async (fragmentId, characterId, title) => {
+      const projectId = currentId(get())
+      return mutate(() =>
+        workbenchService.createSourceMaterialFromFragment({
+          project_id: projectId,
+          fragment_id: fragmentId,
+          character_id: characterId,
+          title,
+        }),
+      )
     },
   }
 })

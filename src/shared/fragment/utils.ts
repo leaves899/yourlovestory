@@ -4,13 +4,13 @@
  * 包含：ID 生成、时间处理、内容验证、emoji 检测、文件路径、摘要格式化。
  */
 import * as crypto from 'crypto'
-import * as path from 'path'
 import {
   ORIGIN_DISPLAY,
   MOOD_EMOJI,
   MOOD_DISPLAY,
   WRITING_MODE_DISPLAY,
 } from './models'
+import { assertSafeDate, safeCrushPath } from '../security/pathSafety'
 
 // ============================================================
 // 常量
@@ -34,6 +34,7 @@ export const RETROACTIVE_DAYS = 30
 
 /** 生成碎片唯一标识：frag_{YYYYMMDD}_{HHMMSS}_{4位随机十六进制} */
 export function generateFragmentId(date: string, time?: string | null): string {
+  assertSafeDate(date)
   const dateObj = new Date(date + 'T00:00:00')
   const dateStr =
     dateObj.getFullYear().toString() +
@@ -186,7 +187,8 @@ export function getFragmentDatePath(
   crushSlug: string,
   date: string
 ): string {
-  return path.join(projectRoot, 'crushes', crushSlug, 'fragments', `${date}.json`)
+  assertSafeDate(date)
+  return safeCrushPath(projectRoot, crushSlug, 'fragments', `${date}.json`)
 }
 
 // ============================================================

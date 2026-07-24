@@ -15,6 +15,7 @@ import type {
   CreateWorldviewEntryInput,
   JsonObject,
   LegacyFragmentSnapshot,
+  LegacyCrushSnapshot,
   Organization,
   OutlineContext,
   OutlineStatus,
@@ -76,6 +77,17 @@ export class NovelProjectService {
 
   public listProjects(): Project[] {
     return this.stores.projects.list()
+  }
+
+  /** 返回可供一次性导入的旧角色预览，不会写入任何新数据。 */
+  public listImportableCrushes(): LegacyCrushSnapshot[] {
+    return this.crushSource?.list?.() ?? []
+  }
+
+  /** 返回可供一次性导入的旧碎片预览，不会写入任何新数据。 */
+  public listImportableFragments(projectId?: string): LegacyFragmentSnapshot[] {
+    if (projectId !== undefined) this.requireProject(projectId)
+    return this.legacyFragmentSource?.list?.(projectId) ?? []
   }
 
   public getProject(projectId: string): Project {
@@ -384,6 +396,12 @@ export class NovelProjectService {
     if (!this.legacyFragmentSource) throw new Error('Legacy fragment source is not configured')
     const fragment = this.legacyFragmentSource.getById(input.fragment_id)
     if (!fragment) throw new EntityNotFoundError('Fragment', input.fragment_id)
+    if (
+      fragment.source_project_id !== undefined
+      && fragment.source_project_id !== input.project_id
+    ) {
+      throw new Error('SQLite fragment must be imported into its original project')
+    }
     const existing = this.stores.sourceMaterials.getByFragmentId(
       input.project_id,
       input.fragment_id,
@@ -392,7 +410,9 @@ export class NovelProjectService {
 
     const mappedCharacterId =
       input.character_id === undefined
-        ? this.stores.characters.getByCrushSlug(input.project_id, fragment.crush_slug)?.id ?? null
+        ? fragment.crush_slug
+          ? this.stores.characters.getByCrushSlug(input.project_id, fragment.crush_slug)?.id ?? null
+          : null
         : input.character_id
     this.assertOptionalCharacterOwnership(input.project_id, mappedCharacterId)
     return this.createSourceMaterial({
@@ -781,7 +801,8 @@ export class NovelProjectService {
 
   private buildFragmentMetadata(fragment: LegacyFragmentSnapshot): JsonObject {
     return {
-      source: 'legacy-fragment',
+      source: fragment.source,
+      source_project_id: fragment.source_project_id ?? null,
       date: fragment.date,
       time: fragment.time,
       origin: fragment.origin,

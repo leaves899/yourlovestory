@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron'
+import { IPC_CHANNELS } from '../../shared/ipc/channels'
 import type {
   ChapterOutline,
   Character,
@@ -885,6 +886,16 @@ export function registerWorkbenchIPC(service: NovelProjectService | undefined): 
 
   ipcMain.handle('novelProject:list', async () => success<Project[]>(service.listProjects()))
   ipcMain.handle('novelProject:current', async () => success(service.getCurrentProject()))
+  ipcMain.handle(IPC_CHANNELS.novelProject.legacyCrushesList, async () =>
+    success(service.listImportableCrushes()),
+  )
+  ipcMain.handle(IPC_CHANNELS.novelProject.legacyFragmentsList, async (_, value: unknown) =>
+    success(service.listImportableFragments(
+      isRecord(value) && typeof value.project_id === 'string'
+        ? value.project_id
+        : undefined,
+    )),
+  )
   ipcMain.handle('novelProject:get', async (_, value: unknown) =>
     success(service.getProject(parseProjectIdParams(value).project_id)),
   )

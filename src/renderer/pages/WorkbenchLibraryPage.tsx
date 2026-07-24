@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Alert,
   AlertIcon,
@@ -43,6 +43,12 @@ function WorkbenchLibraryPage({ mode }: { mode: LibraryMode }) {
   const [form, setForm] = useState<LibraryForm>(emptyForm)
   const [formError, setFormError] = useState<string | null>(null)
 
+  useEffect(() => {
+    if (mode === 'characters' || mode === 'materials') {
+      void store.loadLegacyImportPreview()
+    }
+  }, [mode, store.loadLegacyImportPreview])
+
   const submit = async (): Promise<void> => {
     if (!form.first.trim() || !form.second.trim()) {
       setFormError(`${info.first}和${info.second}不能为空。`)
@@ -75,6 +81,9 @@ function WorkbenchLibraryPage({ mode }: { mode: LibraryMode }) {
   return (
     <WorkbenchPage eyebrow={info.eyebrow} title={info.title} description={info.description}>
       <WorkbenchError message={store.error ?? formError} />
+      {(mode === 'characters' || mode === 'materials') && (
+        <LegacyImportPanel mode={mode} store={store} />
+      )}
       <SimpleGrid columns={{ base: 1, xl: 2 }} spacing={5}>
         <Card>
           <CardBody>
@@ -94,6 +103,99 @@ function WorkbenchLibraryPage({ mode }: { mode: LibraryMode }) {
         </Card>
       </SimpleGrid>
     </WorkbenchPage>
+  )
+}
+
+function LegacyImportPanel({
+  mode,
+  store,
+}: {
+  mode: 'characters' | 'materials'
+  store: ReturnType<typeof useWorkbenchStore.getState>
+}) {
+  const items = mode === 'characters' ? store.legacyCrushes : store.legacyFragments
+  const isCharacterImport = mode === 'characters'
+
+  return (
+    <Card mb={5} variant="outline" borderColor="cinnabar.200" bg="rgba(255, 248, 240, 0.72)">
+      <CardBody>
+        <HStack justify="space-between" mb={2}>
+          <Stack spacing={0}>
+            <Text fontWeight="bold">一次性导入旧数据</Text>
+            <Text fontSize="sm" color="ink.600">
+              {isCharacterImport
+                ? '先预览旧 Crush 的角色上下文，再确认导入到当前项目。已导入的 slug 会复用现有角色。'
+                : '先预览旧 Fragment，再确认沉淀为当前项目的 SourceMaterial。已导入的 fragment_id 不会重复创建。'}
+            </Text>
+          </Stack>
+          <Badge colorScheme="cinnabar">{items.length} 条可导入</Badge>
+        </HStack>
+        {items.length === 0 ? (
+          <Text fontSize="sm" color="ink.500">没有发现可导入的旧数据。</Text>
+        ) : (
+          <VStack align="stretch" spacing={2} mt={3}>
+            {items.map((item) => (
+              <LegacyImportItem
+                key={'slug' in item ? item.slug : item.id}
+                mode={mode}
+                item={item}
+                store={store}
+              />
+            ))}
+          </VStack>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
+
+function LegacyImportItem({
+  mode,
+  item,
+  store,
+}: {
+  mode: 'characters' | 'materials'
+  item: (ReturnType<typeof useWorkbenchStore.getState>['legacyCrushes'][number])
+    | (ReturnType<typeof useWorkbenchStore.getState>['legacyFragments'][number])
+  store: ReturnType<typeof useWorkbenchStore.getState>
+}) {
+  const isCharacterImport = mode === 'characters'
+  const crush = isCharacterImport ? item as typeof store.legacyCrushes[number] : null
+  const fragment = !isCharacterImport ? item as typeof store.legacyFragments[number] : null
+  const title = crush ? (crush.nickname || crush.name || crush.slug) : (fragment?.content.slice(0, 60) || fragment?.id || '')
+  const detail = crush
+    ? `${crush.slug}${crush.description ? ` · ${crush.description}` : ''}`
+    : `${fragment?.date ?? ''} · ${fragment?.crush_slug ?? ''} · ${fragment?.origin ?? ''}`
+
+  const handleImport = async (): Promise<void> => {
+    if (isCharacterImport && crush) {
+      const confirmed = window.confirm(`预览角色“${title}”并导入当前项目？`)
+      if (!confirmed) return
+      await store.importLegacyCrush(crush.slug)
+      return
+    }
+    if (fragment) {
+      const confirmed = window.confirm(`预览 Fragment“${title}”并导入当前项目？`)
+      if (!confirmed) return
+      await store.importLegacyFragment(fragment.id)
+    }
+  }
+
+  return (
+    <Card variant="outline">
+      <CardBody py={3}>
+        <HStack justify="space-between" align="flex-start" gap={4}>
+          <Stack spacing={1} minW={0}>
+            <Text fontWeight="bold" noOfLines={1}>{title}</Text>
+            <Text fontSize="sm" color="ink.600" noOfLines={2}>{detail}</Text>
+            {fragment?.content && <Text fontSize="sm" color="ink.700" noOfLines={3}>{fragment.content}</Text>}
+          </Stack>
+          <Button size="sm" colorScheme="cinnabar" flexShrink={0} isLoading={store.saving} onClick={() => void handleImport()}>
+            导入
+          </Button>
+        </HStack>
+      </CardBody>
+    </Card>
   )
 }
 

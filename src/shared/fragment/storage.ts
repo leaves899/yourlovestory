@@ -5,7 +5,6 @@
  * projectRoot 由调用方传入（不依赖 __file__ 或 cwd）。
  */
 import * as fs from 'fs'
-import * as path from 'path'
 import {
   fragmentDayFromDict,
   fragmentDayToDict,
@@ -13,6 +12,7 @@ import {
   type FragmentDay,
 } from './models'
 import { getCurrentDatetime } from './utils'
+import { assertSafeDate, safeCrushPath, safeJoinUnder, isSafeSlug } from '../security/pathSafety'
 
 /** 获取碎片日期文件路径 */
 function fragmentDatePath(
@@ -20,12 +20,13 @@ function fragmentDatePath(
   crushSlug: string,
   date: string
 ): string {
-  return path.join(projectRoot, 'crushes', crushSlug, 'fragments', `${date}.json`)
+  assertSafeDate(date)
+  return safeCrushPath(projectRoot, crushSlug, 'fragments', `${date}.json`)
 }
 
 /** 确保碎片目录存在 */
 function ensureFragmentDir(projectRoot: string, crushSlug: string): void {
-  const dir = path.join(projectRoot, 'crushes', crushSlug, 'fragments')
+  const dir = safeCrushPath(projectRoot, crushSlug, 'fragments')
   fs.mkdirSync(dir, { recursive: true })
 }
 
@@ -67,9 +68,8 @@ export function saveFragmentDay(
   projectRoot: string,
   day: FragmentDay
 ): { success: boolean; error: string } {
-  const filePath = fragmentDatePath(projectRoot, day.crush_slug, day.date)
-
   try {
+    const filePath = fragmentDatePath(projectRoot, day.crush_slug, day.date)
     ensureFragmentDir(projectRoot, day.crush_slug)
     const json = JSON.stringify(fragmentDayToDict(day), null, 2)
     fs.writeFileSync(filePath, json, 'utf-8')
@@ -80,6 +80,33 @@ export function saveFragmentDay(
 }
 
 /** 根据 ID 查找碎片（遍历所有 crush），返回 [Fragment, FragmentDay] 或 [null, null] */
+/** List all valid date-scoped fragment files for one crush. */
+export function listFragmentDays(
+  projectRoot: string,
+  crushSlug: string
+): FragmentDay[] {
+  const fragmentsDir = safeCrushPath(projectRoot, crushSlug, 'fragments')
+  if (!fs.existsSync(fragmentsDir)) return []
+
+  return fs
+    .readdirSync(fragmentsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /^\d{4}-\d{2}-\d{2}\.json$/.test(entry.name))
+    .map((entry) => entry.name.slice(0, -'.json'.length))
+    .filter((date) => {
+      try {
+        assertSafeDate(date)
+        return true
+      } catch {
+        return false
+      }
+    })
+    .sort()
+    .map((date) => loadFragmentDay(projectRoot, crushSlug, date))
+}
+
+/** Alias used by one-time legacy import callers. */
+export const listLegacyFragments = listFragmentDays
+
 export function findFragment(
   projectRoot: string,
   fragmentId: string
@@ -91,12 +118,17 @@ export function findFragment(
   }
 
   const dateStr = parts[1]
-  if (dateStr.length !== 8) {
+  if (!/^\d{8}$/.test(dateStr)) {
     return { fragment: null, day: null }
   }
   const date = `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`
+  try {
+    assertSafeDate(date)
+  } catch {
+    return { fragment: null, day: null }
+  }
 
-  const crushesDir = path.join(projectRoot, 'crushes')
+  const crushesDir = safeJoinUnder(projectRoot, 'crushes')
   if (!fs.existsSync(crushesDir)) {
     return { fragment: null, day: null }
   }
@@ -105,6 +137,7 @@ export function findFragment(
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
     const crushSlug = entry.name
+    if (!isSafeSlug(crushSlug)) continue
     const day = loadFragmentDay(projectRoot, crushSlug, date)
     for (const fragment of day.fragments) {
       if (fragment.id === fragmentId) {

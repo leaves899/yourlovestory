@@ -30,6 +30,7 @@ import type {
   Volume,
   VolumeOutline,
   WorldviewEntry,
+  LegacyCrushSnapshot,
 } from './models'
 
 export interface ProjectStore {
@@ -162,10 +163,12 @@ export interface CrushSnapshot {
 
 export interface CrushSource {
   getBySlug(slug: string): CrushSnapshot | null
+  list?(): LegacyCrushSnapshot[]
 }
 
 export interface LegacyFragmentSource {
   getById(fragmentId: string): LegacyFragmentSnapshot | null
+  list?(projectId?: string): LegacyFragmentSnapshot[]
 }
 
 export interface NovelProjectStores {

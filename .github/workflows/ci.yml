@@ -2,54 +2,127 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
+
+permissions:
+  contents: read
+
+env:
+  NODE_OPTIONS: --max-old-space-size=4096
 
 jobs:
-  lint:
+  static-checks:
+    name: Static checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check for hard-coded timeline
-        run: |
-          grep -rE "Day [0-9]" src --include="*.ts" --include="*.tsx" && exit 1 || exit 0
 
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version-file: '.nvmrc'
+          cache: npm
+
       - name: Install dependencies
         run: npm ci
-      - name: Run unit tests
-        run: npm test
-      - name: Type check
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Type check renderer
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Type check main, shared and agent
         run: npx tsc --noEmit -p tsconfig.main.json
+
+      - name: Check for hard-coded timeline values
+        shell: bash
+        run: |
+          if rg -n -i --glob '*.ts' --glob '*.tsx' '\bday[[:space:]]+[0-9]+' src; then
+            echo 'Hard-coded Day numbers are not allowed.'
+            exit 1
+          fi
+
+      - name: Check tracked settings files
+        shell: bash
+        run: |
+          if git ls-files | rg '(^|/)settings\.json$'; then
+            echo 'Any settings.json must not be tracked because it can contain API keys.'
+            exit 1
+          fi
+
+      - name: Check for private information
+        shell: bash
+        run: |
+          if rg -n -i --glob '*.ts' --glob '*.tsx' --glob '*.md' --glob '*.yml' --glob '*.yaml' \
+            '小明|xiaoming|李薇|<private-name-[a-c]>' .; then
+            echo 'Potential private information found.'
+            exit 1
+          fi
+
+  security-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test-and-build:
+    name: Unit tests and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test:coverage -- --runInBand
+
+      - name: Build production assets
+        run: npm run build
+
       - name: Cleanup test data
         if: always()
+        shell: bash
         run: |
           find crushes -maxdepth 1 -name 'smoke_*' -type d -exec rm -rf {} + 2>/dev/null || true
 
   test-e2e:
+    name: End-to-end tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version-file: '.nvmrc'
+          cache: npm
+
       - name: Install dependencies
         run: npm ci
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+
       - name: Run E2E tests
-        run: npm run test:e2e
+        run: xvfb-run --auto-servernum npm run test:e2e
+
       - name: Upload trace on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -58,22 +131,28 @@ jobs:
           path: test-results/
 
   markdown-lint:
+    name: Markdown checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Check docs markdown format
+        shell: bash
         run: |
-          for f in docs/*.md; do
-            if [ -f "$f" ]; then
-              # Check for empty title lines
-              grep -qE "^#\s*$" "$f" && echo "Empty title in $f" && exit 1 || true
-              # Check for trailing whitespace
-              grep -qE "\s+$" "$f" && echo "Trailing whitespace in $f" && exit 1 || true
+          while IFS= read -r -d '' file; do
+            if rg -n '^#\s*$' "$file"; then
+              echo "Empty title in $file"
+              exit 1
             fi
-          done
+            if rg -n '[[:blank:]]+$' "$file"; then
+              echo "Trailing whitespace in $file"
+              exit 1
+            fi
+          done < <(find docs -name '*.md' -print0)
+
       - name: Check README.md structure
+        shell: bash
         run: |
-          if [ -f README.md ]; then
-            grep -qE "^#\s+" README.md || (echo "README missing title" && exit 1)
-            grep -qE "^##\s+" README.md || (echo "README missing sections" && exit 1)
-          fi
+          test -f README.md
+          rg -q '^#\s+' README.md
+          rg -q '^##\s+' README.md

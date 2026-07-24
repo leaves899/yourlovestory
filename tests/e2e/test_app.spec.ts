@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { injectMockElectronAPI } from './mock-electron-api'
 
 async function completeOnboarding(page: Page) {
+  await page.goto('/#/journal')
   await expect(page.getByTestId('onboarding-page')).toBeVisible()
 
   await page.getByTestId('onboarding-next').click()
@@ -23,13 +24,14 @@ test.describe('首次上手体验', () => {
     await page.goto('/')
   })
 
-  test('新用户打开应用时默认进入 onboarding', async ({ page }) => {
-    await expect(page.getByTestId('app-title')).toBeVisible()
-    await expect(page.getByTestId('nav-day')).toBeVisible()
-    await expect(page.getByTestId('nav-fragment')).toBeVisible()
-    await expect(page.getByTestId('nav-progress')).toBeVisible()
-    await expect(page.getByTestId('nav-update')).toHaveCount(0)
+  test('新用户打开应用时默认进入长篇工作台', async ({ page }) => {
+    await expect(page).toHaveURL(/#\/workbench\/projects$/)
+    await expect(page.getByTestId('workbench-shell')).toBeVisible()
+    await expect(page.getByTestId('project-name-input')).toBeVisible()
+  })
 
+  test('旧恋爱日记入口仍会进入 onboarding', async ({ page }) => {
+    await page.goto('/#/journal')
     await expect(page).toHaveURL(/#\/onboarding$/)
     await expect(page.getByTestId('onboarding-page')).toBeVisible()
     await expect(page.getByText('你的数据只保存在本地')).toBeVisible()

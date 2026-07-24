@@ -14,7 +14,7 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react'
-import { Link as RouterLink } from 'react-router-dom'
+import { Link as RouterLink, Navigate } from 'react-router-dom'
 import { FaArrowRight, FaBookOpen, FaFeatherAlt, FaLayerGroup, FaRobot } from 'react-icons/fa'
 import { WorkbenchEmpty, WorkbenchPage } from '../components/WorkbenchPrimitives'
 import { useTaskStore } from '../stores/taskStore'
@@ -23,12 +23,17 @@ import { useWorkbenchStore } from '../stores/workbenchStore'
 function WorkbenchHomePage() {
   const {
     currentProject,
+    initialized,
     volumes,
     chapterOutlines,
     characters,
     sourceMaterials,
   } = useWorkbenchStore()
   const tasks = useTaskStore((state) => state.tasks)
+
+  if (initialized && !currentProject) {
+    return <Navigate to="/workbench/projects" replace />
+  }
 
   if (!currentProject) {
     return (

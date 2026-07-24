@@ -5,7 +5,7 @@
  * 关键词匹配 30% + 语义相似度（字符 Jaccard）70%。
  */
 import * as fs from 'fs'
-import * as path from 'path'
+import { safeCrushPath } from '../security/pathSafety'
 
 const KEYWORD_WEIGHT = 0.3
 const SEMANTIC_WEIGHT = 0.7
@@ -184,9 +184,7 @@ export class BlindMatcher {
   private loadPersona(): Persona {
     if (!this.projectRoot) return { crush_replies: [], personality: [], behavior_patterns: [] }
 
-    const personaPath = path.join(
-      this.projectRoot, 'crushes', this.crushSlug, 'persona.md'
-    )
+    const personaPath = safeCrushPath(this.projectRoot, this.crushSlug, 'persona.md')
     if (!fs.existsSync(personaPath)) return { crush_replies: [], personality: [], behavior_patterns: [] }
 
     try {

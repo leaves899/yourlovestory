@@ -17,6 +17,11 @@ import {
   handleNarrativeComplete,
   type NarrativeCompleteResult,
 } from '../relationship/manager'
+import { loadProgress } from '../relationship/progress_store'
+import { PHASE_PROMPT_CONFIG } from '../relationship/phase_prompts'
+import { assertIntimateContentAllowed, getIntimatePolicy } from '../intimate/policy'
+import { assertPhaseRulesAllowed } from '../intimate/policy'
+import { assertSafeDayNumber, safeCrushPath } from '../security/pathSafety'
 
 export type DayResult =
   | { success: true; data: any; total?: number }
@@ -47,15 +52,31 @@ export type GenerateDayResponse =
   | { success: false; errors: string[] }
 
 function chatsDir(projectRoot: string, slug: string): string {
-  return path.join(projectRoot, 'crushes', slug, 'memories', 'chats')
+  return safeCrushPath(projectRoot, slug, 'memories', 'chats')
 }
 
 function dayPath(projectRoot: string, slug: string, dayNumber: number): string {
-  return path.join(chatsDir(projectRoot, slug), `day${dayNumber}.md`)
+  assertSafeDayNumber(dayNumber)
+  return safeCrushPath(projectRoot, slug, 'memories', 'chats', `day${dayNumber}.md`)
 }
 
 function formatNotFound(filePath: string): DayResult {
   return { success: false, errors: [`Day file not found: ${filePath}`] }
+}
+
+function buildPhaseAwareSystemPrompt(
+  projectRoot: string,
+  slug: string,
+  context: Parameters<typeof buildSystemPrompt>[0],
+  params: Parameters<typeof buildSystemPrompt>[1],
+  customPrompts?: CustomPrompts,
+): string {
+  const progress = loadProgress(projectRoot, slug)
+  const policy = getIntimatePolicy(projectRoot, slug)
+  assertPhaseRulesAllowed(policy, progress.current_phase)
+  const phasePrompt = PHASE_PROMPT_CONFIG[progress.current_phase]
+  const basePrompt = buildSystemPrompt(context, params, customPrompts)
+  return `${basePrompt}\n\n---\n\n${phasePrompt.rules}`
 }
 
 /**
@@ -81,9 +102,14 @@ export async function runPipeline(
   }
 ): Promise<GenerateDayResponse> {
   try {
-    const settings = getSettings(projectRoot)
-    console.log('[DayService] 加载的设置:', JSON.stringify(settings, null, 2))
+    dayPath(projectRoot, params.slug, params.day_number)
+    const intimatePolicy = getIntimatePolicy(projectRoot, params.slug)
+    assertIntimateContentAllowed(intimatePolicy, {
+      sexCount: params.sex_count,
+      sexDetails: params.sex_details,
+    })
 
+    const settings = getSettings(projectRoot)
     const apiKey = settings.apiKey as string | undefined
     if (!apiKey) {
       return {
@@ -97,7 +123,13 @@ export async function runPipeline(
     const temperature = (settings.temperature as number) ?? 0.8
     const maxTokens = (settings.maxTokens as number) ?? 4096
 
-    console.log('[DayService] AI 配置:', { provider, modelId, temperature, maxTokens })
+    console.log('[DayService] AI settings:', {
+      provider,
+      modelId,
+      temperature,
+      maxTokens,
+      apiKeyConfigured: Boolean(apiKey),
+    })
 
     const customPrompts: CustomPrompts = {
       customSystemPrompt: settings.customSystemPrompt as string | undefined,
@@ -106,7 +138,9 @@ export async function runPipeline(
 
     const ctx = loadCrushContext(projectRoot, params.slug)
 
-    const systemPrompt = buildSystemPrompt(
+    const systemPrompt = buildPhaseAwareSystemPrompt(
+      projectRoot,
+      params.slug,
       ctx,
       {
         dayNumber: params.day_number,
@@ -115,7 +149,7 @@ export async function runPipeline(
         sexDetails: params.sex_details,
         ycmPill: params.ycm_pill,
       },
-      customPrompts
+      customPrompts,
     )
     const userPrompt = buildUserPrompt(
       params.slug,
@@ -188,9 +222,16 @@ export async function generateDay(
   }
 ): Promise<GenerateDayResponse> {
   try {
+    dayPath(projectRoot, params.slug, params.day_number)
+    const intimatePolicy = getIntimatePolicy(projectRoot, params.slug)
+    assertIntimateContentAllowed(intimatePolicy, {
+      sexCount: params.sex_count,
+      sexDetails: params.sex_details,
+    })
+
     if (params.dry_run) {
       const ctx = loadCrushContext(projectRoot, params.slug)
-      const systemPrompt = buildSystemPrompt(ctx, {
+      const systemPrompt = buildPhaseAwareSystemPrompt(projectRoot, params.slug, ctx, {
         dayNumber: params.day_number,
         summary: params.summary,
         sexCount: params.sex_count,
@@ -240,7 +281,11 @@ export function listDays(
 
     const files = fs
       .readdirSync(dir)
-      .filter((f) => /^day\d+\.md$/.test(f))
+      .filter((f) => {
+        if (!/^day\d+\.md$/.test(f)) return false
+        const dayNumber = Number(f.replace(/^day(\d+)\.md$/, '$1'))
+        return Number.isSafeInteger(dayNumber) && dayNumber >= 1
+      })
       .sort((a, b) => {
         const na = parseInt(a.replace(/^day(\d+)\.md$/, '$1'), 10)
         const nb = parseInt(b.replace(/^day(\d+)\.md$/, '$1'), 10)
@@ -249,7 +294,7 @@ export function listDays(
 
     const days = files.map((f) => {
       const dayNumber = parseInt(f.replace(/^day(\d+)\.md$/, '$1'), 10)
-      const fullPath = path.join(dir, f)
+      const fullPath = safeCrushPath(projectRoot, params.slug, 'memories', 'chats', f)
       const content = fs.readFileSync(fullPath, 'utf-8')
       return {
         slug: params.slug,

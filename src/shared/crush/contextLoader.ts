@@ -5,8 +5,8 @@
  * 并根据 .intimate_config 决定是否加载亲密知识库。
  */
 import * as fs from 'fs'
-import * as path from 'path'
 import { readIntimateConfig } from '../persistence/intimateToggle'
+import { safeCrushPath, safeJoinUnder } from '../security/pathSafety'
 
 /** 角色上下文数据结构 */
 export interface CrushContext {
@@ -46,19 +46,19 @@ function readTextFile(filePath: string): string {
  * @returns CrushContext 包含所有可用文本
  */
 export function loadCrushContext(projectRoot: string, slug: string): CrushContext {
-  const crushDir = path.join(projectRoot, 'crushes', slug)
+  const crushDir = safeCrushPath(projectRoot, slug)
 
-  const intimateConfigPath = path.join(crushDir, '.intimate_config')
+  const intimateConfigPath = safeJoinUnder(crushDir, '.intimate_config')
   const intimateEnabled = readIntimateConfig(intimateConfigPath)
 
-  const persona = readTextFile(path.join(crushDir, 'persona.md'))
-  const memory = readTextFile(path.join(crushDir, 'memory.md'))
-  const weekday = readTextFile(path.join(crushDir, 'WEEKDAY.md'))
-  const contextSummary = readTextFile(path.join(crushDir, 'CONTEXT.md'))
+  const persona = readTextFile(safeJoinUnder(crushDir, 'persona.md'))
+  const memory = readTextFile(safeJoinUnder(crushDir, 'memory.md'))
+  const weekday = readTextFile(safeJoinUnder(crushDir, 'WEEKDAY.md'))
+  const contextSummary = readTextFile(safeJoinUnder(crushDir, 'CONTEXT.md'))
 
   let intimateKnowledge: string | null = null
   if (intimateEnabled) {
-    const ik = readTextFile(path.join(crushDir, 'INTIMATE_KNOWLEDGE.md'))
+    const ik = readTextFile(safeJoinUnder(crushDir, 'INTIMATE_KNOWLEDGE.md'))
     if (ik) {
       intimateKnowledge = ik
     }

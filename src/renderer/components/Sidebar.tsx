@@ -16,7 +16,7 @@ import { useAppStore } from '../stores/appStore'
 const navItems = [
   { path: '/workbench', label: '长篇工作台', icon: FaFeatherAlt },
   { path: '/assistant', label: 'Agent 助手', icon: FaRobot },
-  { path: '/', label: '日常写作', icon: FaBook },
+  { path: '/journal', label: '日常写作', icon: FaBook },
   { path: '/fragment', label: '碎片日记', icon: FaStickyNote },
   { path: '/crush', label: '角色管理', icon: FaUser },
   { path: '/progress', label: '关系进度', icon: FaHeart },
@@ -117,7 +117,7 @@ function Sidebar() {
                 borderRadius="4px"
                 px={4}
                 py={3}
-                data-testid={`nav-${item.path === '/' ? 'day' : item.path.slice(1)}`}
+                data-testid={`nav-${item.path === '/journal' ? 'day' : item.path.slice(1)}`}
               >
                 <Text fontSize="xs" color="cinnabar.600" minW="24px">
                   {String(index + 1).padStart(2, '0')}

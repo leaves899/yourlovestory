@@ -80,6 +80,8 @@ import type {
   Volume,
   VolumeOutline,
   WorldviewEntry,
+  LegacyCrushSnapshot,
+  LegacyFragmentSnapshot,
 } from '../shared/novelProject'
 import type { ChapterVersion } from '../shared/chapterGeneration'
 import type {
@@ -275,6 +277,10 @@ interface ElectronAPI {
   // 长篇创作工作台
   listNovelProjects: () => Promise<WorkbenchResponse<Project[]>>
   getCurrentNovelProject: () => Promise<WorkbenchResponse<Project | null>>
+  listLegacyCrushes: () => Promise<WorkbenchResponse<LegacyCrushSnapshot[]>>
+  listLegacyFragments: (
+    projectId?: string,
+  ) => Promise<WorkbenchResponse<LegacyFragmentSnapshot[]>>
   getNovelProject: (params: ProjectIdParams) => Promise<WorkbenchResponse<Project>>
   createNovelProject: (params: CreateProjectCommand) => Promise<WorkbenchResponse<Project>>
   selectNovelProject: (params: ProjectIdParams) => Promise<WorkbenchResponse<Project>>

@@ -181,7 +181,7 @@ function createContextTool(
             volumes: service.listVolumeOutlines(projectId),
             chapters: service.listChapterOutlines(projectId),
           }
-          case 'chapters': return service.chapters.listByProject(projectId)
+          case 'chapters': return service.listChapters(projectId)
           case 'memories': return {
             memories: service.narrative.listMemories(projectId),
             proposals: service.narrative.listMemoryProposals(projectId),
@@ -199,7 +199,7 @@ function createContextTool(
             volumes: service.listVolumes(projectId),
             volume_outlines: service.listVolumeOutlines(projectId),
             chapter_outlines: service.listChapterOutlines(projectId),
-            chapters: service.chapters.listByProject(projectId),
+            chapters: service.listChapters(projectId),
             memories: service.narrative.listMemories(projectId),
             foreshadows: service.narrative.listForeshadows(projectId),
             skills: service.narrative.listSkills(projectId),
@@ -367,8 +367,8 @@ function createChapterTool(
     description: '读取当前长篇项目的章节列表或指定章节正文。',
     parameters: schemas.chapter,
     execute: async (_toolCallId: string, params: ChapterParameters) => {
-      if (params.action === 'list') return result(service.chapters.listByProject(projectId))
-      return result(service.chapters.getById(requiredString(params.chapter_id, 'chapter_id')))
+      if (params.action === 'list') return result(service.listChapters(projectId))
+      return result(service.getChapter(projectId, requiredString(params.chapter_id, 'chapter_id')))
     },
   }
 }

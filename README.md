@@ -87,7 +87,7 @@ flowchart LR
 
 ### 前置条件
 
-- Node.js 和 npm
+- Node.js 22.19+ 和 npm
 - 如果需要调用 Agent，需要一个可访问的模型接口、模型名称和 API Key
 - 如果需要在 Windows 上重新编译 better-sqlite3，需要 Visual Studio Build Tools 的 C++ 工具链和 Windows SDK
 
@@ -96,11 +96,17 @@ flowchart LR
 ~~~bash
 git clone https://github.com/leaves899/yourlovestory.git
 cd yourlovestory
-npm install
+npm run env:setup
+. .\scripts\activate.ps1
+npm ci
 npm run dev
 ~~~
 
 npm run dev 会同时启动 Vite 渲染进程和 Electron 主进程。应用启动后可以从工作台项目页创建第一个项目。
+
+项目使用 Node.js 22.19+ 运行 Jest 和依赖安装。`better-sqlite3` 的测试二进制与 Electron 二进制使用不同的 ABI，开发命令会在对应入口自动重建目标原生依赖。
+
+Windows 下，`.runtime/` 是本项目独立的 Node.js 环境目录，不会提交到仓库。PowerShell 需要在每个新终端执行 `. .\scripts\activate.ps1`；CMD 需要执行 `call scripts\activate.bat`。它们只改变当前终端，不会修改系统 Node.js。
 
 ### 配置模型
 
@@ -120,7 +126,9 @@ npm run dev 会同时启动 Vite 渲染进程和 Electron 主进程。应用启�
 | npm run dev:renderer | 只启动 Vite |
 | npm run dev:main | 编译并启动 Electron 主进程 |
 | npm run build | 构建 renderer 和 main |
+| npm run env:setup | 安装项目本地 Node.js 环境 |
 | npm run rebuild:native | 为 Electron 重新编译原生依赖 |
+| npm run rebuild:node | 为当前 Node.js 重建测试原生依赖 |
 | npm test | 运行 Jest 测试 |
 | npm run test:watch | 监听模式运行 Jest |
 | npm run test:coverage | 生成测试覆盖率 |
@@ -179,13 +187,16 @@ Playwright 当前主要覆盖 renderer 和 mock IPC 场景，不能替代打包�
 
 ### better-sqlite3 编译失败
 
-先执行：
+Jest 使用 Node.js 22.19+ 的 ABI，测试命令会自动执行 `npm run rebuild:node`。如果依赖目录来自其他 Node.js 版本，先切换到 Node.js 22.19+，再恢复依赖：
 
 ~~~bash
-npm run rebuild:native
+npm ci
+npm test
 ~~~
 
-如果 Windows 环境仍然失败，请安装 Visual Studio Build Tools 的 Desktop development with C++ 工作负载和 Windows SDK，然后重新安装依赖并再次执行重编译。electron-builder 会在打包时执行原生依赖重建，因此打包环境也必须具备对应工具链。
+`npm run rebuild:native` 只为 Electron 28 重建 ABI 119 的原生依赖，由 `npm run dev:main` 自动调用。不要把 Electron 目标二进制直接用于 Jest。
+
+当前锁定的 `better-sqlite3@11.10.0` 没有 Node.js 24 的 Windows 预构建包。如果必须使用 Node.js 24，需要 Visual Studio Build Tools 的 Desktop development with C++ 工作负载和 Windows SDK，并承担从源码重建的维护成本。
 
 ### 开发窗口白屏
 

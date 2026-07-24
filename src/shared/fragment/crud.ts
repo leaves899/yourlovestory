@@ -19,6 +19,7 @@ import {
   MAX_FRAGMENTS_PER_DAY,
 } from './utils'
 import type { Fragment, FragmentDay } from './models'
+import { assertSafeDate, assertSafeSlug } from '../security/pathSafety'
 
 // ============================================================
 // 创建碎片
@@ -31,7 +32,18 @@ export function recordFragment(
   currentDate?: string | null,
   existingDay?: FragmentDay | null
 ): { fragment: Fragment | null; error: string } {
+  try {
+    assertSafeSlug(crushSlug)
+  } catch {
+    return { fragment: null, error: `Invalid crush slug: ${crushSlug}` }
+  }
+
   const curDate = currentDate ?? getCurrentDate()
+  try {
+    assertSafeDate(curDate)
+  } catch {
+    return { fragment: null, error: `Invalid fragment date: ${curDate}` }
+  }
 
   const day = existingDay ?? loadFragmentDay(projectRoot, crushSlug, curDate)
 
@@ -55,6 +67,11 @@ export function recordFragment(
   }
 
   const date = fragmentData['date'] ?? curDate
+  try {
+    assertSafeDate(date)
+  } catch {
+    return { fragment: null, error: `Invalid fragment date: ${date}` }
+  }
   const time = fragmentData['time'] ?? null
   const fragmentId = generateFragmentId(date, time)
 

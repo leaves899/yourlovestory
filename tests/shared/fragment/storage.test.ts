@@ -22,6 +22,11 @@ afterEach(() => {
 })
 
 describe('loadFragmentDay', () => {
+  test('拒绝路径穿越 slug 和非法日期', () => {
+    expect(() => loadFragmentDay(tmpRoot, '..', '2026-05-30')).toThrow()
+    expect(() => loadFragmentDay(tmpRoot, 'test_slug', '2026-02-30')).toThrow()
+  })
+
   test('文件不存在时返回空 FragmentDay', () => {
     const day = loadFragmentDay(tmpRoot, 'test_slug', '2026-05-30')
     expect(day.date).toBe('2026-05-30')
@@ -69,6 +74,18 @@ describe('loadFragmentDay', () => {
 })
 
 describe('saveFragmentDay', () => {
+  test('保存非法日期时返回失败且不写出目录', () => {
+    const day: FragmentDay = {
+      date: '2026-02-30', crush_slug: 'test_slug',
+      fragments: [], completed: false, direction: null,
+      writing_context: null, version: 1, integration_date: null,
+      created_at: '2026-05-30T00:00:00', updated_at: '2026-05-30T00:00:00',
+    }
+    const result = saveFragmentDay(tmpRoot, day)
+    expect(result.success).toBe(false)
+    expect(fs.existsSync(path.join(tmpRoot, 'crushes'))).toBe(false)
+  })
+
   test('保存并重新加载', () => {
     const day: FragmentDay = {
       date: '2026-05-30', crush_slug: 'test_slug',

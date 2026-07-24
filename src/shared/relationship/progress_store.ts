@@ -12,10 +12,11 @@ import {
   type PhaseSignal,
   PHASE_NAMES,
 } from './models'
+import { assertSafeSlug, safeCrushPath } from '../security/pathSafety'
 
 /** 获取进度文件路径 */
 function getProgressFilePath(projectRoot: string, crushSlug: string): string {
-  return path.join(projectRoot, 'crushes', crushSlug, 'progress.json')
+  return safeCrushPath(projectRoot, crushSlug, 'progress.json')
 }
 
 /**
@@ -28,6 +29,7 @@ export function createInitialProgress(
   crushSlug: string,
   initialPhase: RelationshipPhase = 0
 ): ProgressData {
+  assertSafeSlug(crushSlug)
   const now = new Date().toISOString()
 
   return {

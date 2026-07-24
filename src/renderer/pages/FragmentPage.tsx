@@ -138,7 +138,7 @@ function FragmentPage() {
               mt={3}
               size="sm"
               colorScheme="cinnabar"
-              onClick={() => navigate(needsOnboarding() ? '/onboarding' : '/')}
+              onClick={() => navigate(needsOnboarding() ? '/onboarding' : '/journal')}
             >
               {needsOnboarding() ? '去完成首次设置' : '回到日常写作'}
             </Button>

@@ -389,6 +389,8 @@ export interface SourceMaterialListOptions {
 
 export interface LegacyFragmentSnapshot {
   id: string
+  source: 'journal-json' | 'sqlite-library'
+  source_project_id?: string
   date: string
   time: string | null
   origin: string
@@ -399,5 +401,17 @@ export interface LegacyFragmentSnapshot {
   custom_tags: string[]
   writing_mode: string
   theme: string | null
-  crush_slug: string
+  crush_slug: string | null
+}
+
+/** 旧恋爱日记角色的导入预览信息。 */
+export interface LegacyCrushSnapshot {
+  slug: string
+  name: string
+  nickname: string
+  gender: string
+  description: string
+  intimate_enabled: boolean
+  created_at: string
+  updated_at: string
 }

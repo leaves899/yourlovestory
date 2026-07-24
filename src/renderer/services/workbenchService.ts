@@ -1,6 +1,8 @@
 import type {
   ChapterOutline,
   Character,
+  LegacyCrushSnapshot,
+  LegacyFragmentSnapshot,
   CreateChapterOutlineInput,
   CreateCharacterInput,
   CreateOrganizationInput,
@@ -28,6 +30,8 @@ import type {
   Volume,
   VolumeOutline,
   WorldviewEntry,
+  MapCrushToCharacterCommand,
+  CreateSourceMaterialFromFragmentCommand,
 } from '../../shared/novelProject'
 
 interface ApiResponse<T> {
@@ -77,6 +81,14 @@ const workbenchService = {
   listProjects: (): Promise<Project[]> => unwrap(() => window.electronAPI.listNovelProjects()),
   getCurrentProject: (): Promise<Project | null> =>
     unwrap(() => window.electronAPI.getCurrentNovelProject()),
+  listLegacyCrushes: (): Promise<LegacyCrushSnapshot[]> =>
+    typeof window.electronAPI.listLegacyCrushes === 'function'
+      ? unwrap(() => window.electronAPI.listLegacyCrushes())
+      : Promise.resolve([]),
+  listLegacyFragments: (projectId?: string): Promise<LegacyFragmentSnapshot[]> =>
+    typeof window.electronAPI.listLegacyFragments === 'function'
+      ? unwrap(() => window.electronAPI.listLegacyFragments(projectId))
+      : Promise.resolve([]),
   createProject: (input: CreateProjectCommand): Promise<Project> =>
     unwrap(() => window.electronAPI.createNovelProject(input)),
   selectProject: (projectId: string): Promise<Project> =>
@@ -278,6 +290,8 @@ const workbenchService = {
         expected_version: expectedVersion,
       }),
     ),
+  mapCrushToCharacter: (input: MapCrushToCharacterCommand): Promise<Character> =>
+    unwrap(() => window.electronAPI.mapCrushToNovelCharacter(input)),
 
   listWorldviewEntries: (projectId: string): Promise<WorldviewEntry[]> =>
     unwrap(() => window.electronAPI.listNovelWorldviewEntries({ project_id: projectId })),
@@ -368,6 +382,10 @@ const workbenchService = {
     unwrap(() => window.electronAPI.listSourceMaterials({ project_id: projectId })),
   createSourceMaterial: (input: CreateSourceMaterialInput): Promise<SourceMaterial> =>
     unwrap(() => window.electronAPI.createSourceMaterial(input)),
+  createSourceMaterialFromFragment: (
+    input: CreateSourceMaterialFromFragmentCommand,
+  ): Promise<SourceMaterial> =>
+    unwrap(() => window.electronAPI.createSourceMaterialFromFragment(input)),
   updateSourceMaterial: (
     projectId: string,
     materialId: string,

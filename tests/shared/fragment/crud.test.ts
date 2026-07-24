@@ -25,6 +25,21 @@ afterEach(() => {
 })
 
 describe('recordFragment', () => {
+  test('拒绝非法日期和路径穿越 slug', () => {
+    const invalidDate = recordFragment(tmpRoot, 'test_slug', {
+      content: 'valid content',
+      date: '2026-02-30',
+    })
+    expect(invalidDate.fragment).toBeNull()
+    expect(invalidDate.error).toContain('Invalid fragment date')
+
+    const invalidSlug = recordFragment(tmpRoot, '..', {
+      content: 'valid content',
+    })
+    expect(invalidSlug.fragment).toBeNull()
+    expect(invalidSlug.error).toContain('Invalid')
+  })
+
   test('创建碎片成功', () => {
     const { fragment, error } = recordFragment(tmpRoot, 'test_slug', {
       origin: 'user',

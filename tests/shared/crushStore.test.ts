@@ -43,7 +43,7 @@ describe('createCrush', () => {
     })
   })
 
-  test('创建完整目录结构（memories/chats, fragments, plans, meta.json, memory.md, persona.md）', () => {
+  test('无模板时也创建完整角色上下文且不创建废弃 Skill', () => {
     createCrush(tmpRoot, { name: 'X', nickname: 'Y', slug: 'test_structure' })
     const dir = path.join(tmpRoot, 'crushes', 'test_structure')
     expect(fs.existsSync(dir)).toBe(true)
@@ -53,7 +53,38 @@ describe('createCrush', () => {
     expect(fs.existsSync(path.join(dir, 'meta.json'))).toBe(true)
     expect(fs.existsSync(path.join(dir, 'memory.md'))).toBe(true)
     expect(fs.existsSync(path.join(dir, 'persona.md'))).toBe(true)
+    expect(fs.existsSync(path.join(dir, 'WEEKDAY.md'))).toBe(true)
+    expect(fs.existsSync(path.join(dir, 'CONTEXT.md'))).toBe(true)
+    expect(fs.existsSync(path.join(dir, 'INTIMATE_KNOWLEDGE.md'))).toBe(true)
+    expect(fs.existsSync(path.join(dir, 'PROMPT.md'))).toBe(true)
     expect(fs.existsSync(path.join(dir, '.intimate_config'))).toBe(true)
+    expect(fs.existsSync(path.join(dir, 'SKILL.md'))).toBe(false)
+  })
+
+  test('从模板创建时不复制废弃的 SKILL.md', () => {
+    const templateDir = path.join(tmpRoot, 'template-root', 'crushes', 'TEMPLATE')
+    fs.mkdirSync(templateDir, { recursive: true })
+    for (const filename of [
+      'persona.md',
+      'memory.md',
+      'WEEKDAY.md',
+      'CONTEXT.md',
+      'INTIMATE_KNOWLEDGE.md',
+      'PROMPT.md',
+      'SKILL.md',
+    ]) {
+      fs.writeFileSync(path.join(templateDir, filename), `# ${filename}\n`, 'utf-8')
+    }
+
+    createCrush(
+      tmpRoot,
+      { name: 'Template', nickname: 'Role', slug: 'template_role' },
+      path.join(tmpRoot, 'template-root')
+    )
+
+    const dir = path.join(tmpRoot, 'crushes', 'template_role')
+    expect(fs.existsSync(path.join(dir, 'CONTEXT.md'))).toBe(true)
+    expect(fs.existsSync(path.join(dir, 'SKILL.md'))).toBe(false)
   })
 
   test('meta.json 内容正确（含 created_at/updated_at/intimate_enabled/version）', () => {
@@ -221,6 +252,12 @@ describe('updateCrush', () => {
 })
 
 describe('deleteCrush', () => {
+  test('拒绝路径穿越 slug，不能删除 crushes 父目录', () => {
+    const result = deleteCrush(tmpRoot, '..')
+    expect(result.success).toBe(false)
+    expect(fs.existsSync(path.join(tmpRoot, 'crushes'))).toBe(true)
+  })
+
   test('删除已存在角色', () => {
     createCrush(tmpRoot, { name: 'D', nickname: 'd', slug: 'del_test' })
     const result = deleteCrush(tmpRoot, 'del_test')

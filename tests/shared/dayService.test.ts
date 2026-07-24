@@ -78,6 +78,24 @@ describe('runPipeline', () => {
       throw new Error('expected dry_run preview data')
     }
   })
+
+  test('intimate fields are rejected while the crush switch is disabled', async () => {
+    const crushDir = path.join(tmpRoot, 'crushes', 'test')
+    fs.mkdirSync(crushDir, { recursive: true })
+    fs.writeFileSync(path.join(crushDir, 'persona.md'), '# Test Persona\n', 'utf-8')
+    fs.writeFileSync(path.join(crushDir, '.intimate_config'), 'intimate=false\n', 'utf-8')
+
+    const result = await generateDay(tmpRoot, {
+      slug: 'test',
+      day_number: 1,
+      sex_count: 1,
+      dry_run: true,
+    })
+
+    expect(result.success).toBe(false)
+    if (result.success) return
+    expect(result.errors[0]).toContain('disabled')
+  })
 })
 
 describe('listDays', () => {
@@ -398,6 +416,12 @@ describe('generateDay', () => {
 })
 
 describe('day workflow', () => {
+  test('rejects traversal slugs and forged day numbers', () => {
+    expect(getDay(tmpRoot, { slug: '..', day_number: 1 }).success).toBe(false)
+    expect(getDay(tmpRoot, { slug: 'test', day_number: 0 }).success).toBe(false)
+    expect(getDay(tmpRoot, { slug: 'test', day_number: 1.5 }).success).toBe(false)
+  })
+
   test('list -> get -> update -> verify -> delete -> verify', () => {
     setupCrushWithDay('test', 1, '# Day 1\n\nToday we met for the first time.')
 

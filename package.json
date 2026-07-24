@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:renderer\" \"npm run dev:main\"",
     "dev:renderer": "vite",
-    "dev:main": "tsc -p tsconfig.main.json && electron .",
+    "dev:main": "npm run rebuild:native && tsc -p tsconfig.main.json && electron .",
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
     "build:main": "tsc -p tsconfig.main.json",
@@ -14,11 +14,14 @@
     "package:win": "npm run build && electron-builder --win",
     "package:mac": "npm run build && electron-builder --mac",
     "package:linux": "npm run build && electron-builder --linux",
+    "env:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-node-env.ps1",
     "rebuild:native": "electron-builder install-app-deps",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
-    "test:e2e": "playwright test",
+    "check:node": "node -e \"const [major, minor] = process.versions.node.split('.').map(Number); if (major !== 22 || minor < 19) { console.error('Node.js 22.19+ is required for Node native dependencies.'); process.exit(1); }\"",
+    "rebuild:node": "npm run check:node && npm rebuild better-sqlite3",
+    "test": "npm run rebuild:node && jest",
+    "test:watch": "npm run rebuild:node && jest --watch",
+    "test:coverage": "npm run rebuild:node && jest --coverage",
+    "test:e2e": "npm run rebuild:native && npm run build:main && playwright test",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix"
   },
@@ -53,6 +56,9 @@
     "ts-jest": "^29.0.0",
     "typescript": "^5.0.0",
     "vite": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=22.19.0 <23"
   },
   "author": "yourcrush",
   "license": "MIT"

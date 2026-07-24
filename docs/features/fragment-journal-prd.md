@@ -2,10 +2,12 @@
 
 > **功能名：** 碎片日记 / Fragment Journal
 > **所属模块：** day（日常写作）
-> **状态：** 草案
+> **状态：** 历史设计文档。碎片日记仍作为兼容入口维护，长篇工作台使用独立的 SourceMaterial 模型。
 > **版本：** v3.1
 > **日期：** 2026-05-30
 > **作者：** yourcrush team
+
+> 当前实现说明：应用运行时通过 `src/shared/fragment/`、`src/shared/day/` 和 `src/agent/tools/` 提供能力，不再加载独立 `day/SKILL.md`。旧 Fragment 导入工作台后成为独立 SourceMaterial，不与 JSON 文件持续同步。新增工作台行为以 [ADR-0005](../adr/0005-workbench-priority-and-legacy-import.md) 和 [CONTEXT.md](../../CONTEXT.md) 为准。
 
 ---
 
@@ -47,7 +49,7 @@ day 模块现有三种写作触发方式：
 
 | 依赖项 | 状态 | 说明 |
 |--------|------|------|
-| day/SKILL.md | 必需 | day 写作模块的核心文件，碎片日记基于此生成叙事 |
+| `src/shared/day/` 与注册工具 | 必需 | day 写作模块的核心实现，碎片日记基于此生成叙事 |
 | crushes/{slug}/ 角色档案 | 必需 | crush 角色的静态信息，用于标签推荐和 Blind 模式匹配 |
 | ../tags/ 标签库 | 可选 | 用于标签联想推荐，当前为"待创建"状态 |
 
@@ -63,7 +65,7 @@ day 模块现有三种写作触发方式：
 
 ### 2.2 day 写作原则
 
-碎片日记生成的叙事需遵循 day 模块的核心写作原则（详见 [day/SKILL.md](../day/SKILL.md)）：
+碎片日记生成的叙事需遵循 day 模块的核心写作原则（详见 `src/shared/day/` 与 `src/agent/tools/`）：
 
 1. **第三人称叙事** — 使用"ta"而非"你"，保持叙事距离感
 2. **感官细节优先** — 用具体动作、表情、环境描写代替抽象情绪
@@ -1266,7 +1268,7 @@ def integrate_cross_day_fragments(crush_slug, dates):
 
 ### B. 相关文档
 
-- [day 写作模块](../day/SKILL.md)
+- [day 写作实现](../../src/shared/day/)
 - [crush 角色档案](../../crushes/TEMPLATE/)
 - [标签库](../tags/)（待创建）
 

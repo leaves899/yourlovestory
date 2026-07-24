@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-yourcrush —— 恋爱日记桌面应用。业务功能通过应用内 Pi Agent + 注册工具提供，不再以独立 Skill 形式调用。
+yourcrush —— 长篇创作工作台优先的恋爱日记桌面应用。工作台是默认产品主线，旧 Crush、Day、Fragment 和关系进度页面保留为兼容入口。业务功能通过应用内 Pi Agent + 注册工具提供，不再以独立 Skill 形式调用。
 
 **技术栈**：TypeScript 全量（**无 Python 运行时**）+ Electron 28 + React 18 + Zustand + SQLite + Pi Agent 0.78。当前架构以 `src/main`、`src/renderer`、`src/agent` 和 `src/shared` 为准。
 
@@ -12,18 +12,19 @@ yourcrush —— 恋爱日记桌面应用。业务功能通过应用内 Pi Agent
 
 ```
 src/
-├── main/          # 主进程：ipc.ts 直接调 src/shared，无子进程
+├── main/          # 主进程：IPC、SQLite、工作台服务与任务，无子进程
 ├── renderer/      # React 渲染：pages/ stores/(Zustand) services/(IPC 薄封装)
-├── agent/         # Pi Agent 实例 + tools/（crushTool / dayTool / fragmentTool）
-└── shared/        # 纯 TS 业务逻辑（crush / day / fragment / persistence）
-crushes/<slug>/    # 角色数据（fragments/<date>.json、memory.md、persona.md）
+├── agent/         # Pi Agent 实例与注册工具（含工作台创作工具）
+└── shared/        # 纯 TS 领域逻辑（novelProject / chapterGeneration / narrativeWorkbench / crush / day / fragment）
+crushes/TEMPLATE/  # 随安装包发布的角色模板，不包含用户数据
+userData/crushes/  # 运行时角色数据（fragments/<date>.json、memory.md、persona.md）
 tests/             # jest 单测（shared）+ Playwright e2e
 docs/              # adr/ + features/ + agents/
 ```
 
 **关键架构**：Agent 工具与 IPC handler 共用同一套 `src/shared/` 业务逻辑，无子进程、无 Python 桥接。
 
-碎片日记业务规则（状态机 / 降频策略 / 四种写作模式等）见 [docs/features/fragment-journal-prd.md](docs/features/fragment-journal-prd.md)。Pi Agent 用法见 [docs/PI_AGENT_REFERENCE.md](docs/PI_AGENT_REFERENCE.md)。
+工作台领域术语、一次性旧数据导入和兼容边界见 [CONTEXT.md](CONTEXT.md) 与 [ADR-0005](docs/adr/0005-workbench-priority-and-legacy-import.md)。碎片日记业务规则（状态机 / 降频策略 / 四种写作模式等）见 [docs/features/fragment-journal-prd.md](docs/features/fragment-journal-prd.md)，关系阶段历史方案见 [docs/features/relationship-progress-prd.md](docs/features/relationship-progress-prd.md)。Pi Agent 用法见 [docs/PI_AGENT_REFERENCE.md](docs/PI_AGENT_REFERENCE.md)。
 
 ## 常用命令
 
@@ -34,7 +35,9 @@ npm run package:win    # 打包 Windows 桌面应用
 npm test               # jest 单测
 npm run test:e2e       # Playwright 端到端
 npm run lint           # ESLint
+npx tsc --noEmit -p tsconfig.json        # renderer 类型检查
 npx tsc --noEmit -p tsconfig.main.json   # 类型检查（CI 跑此命令）
+npm run build          # 生产构建
 
 # 提交前私密信息检查（应返回空）
 grep -r "<private-name-[a-c]>" . --include="*.ts" --include="*.tsx" --include="*.md" --include="*.yml"
@@ -44,6 +47,9 @@ grep -r "<private-name-[a-c]>" . --include="*.ts" --include="*.tsx" --include="*
 
 - **私密信息**：绝不包含真实人物信息，提交前跑上面 grep
 - **亲密内容默认关闭**：显式启用 `crushes/<slug>/.intimate_config` 写 `intimate=true`
+- **关系阶段**：使用五阶段模型（陌生人、认识、暧昧、表白、热恋）；阶段规则必须动态读取，不能硬编码 Day 或日期
+- **数据迁移**：旧恋爱日记 Fragment 只允许一次性导入工作台 `SourceMaterial`，导入后不做 JSON 与 SQLite 持续双写
+- **独立 Skill 已废弃**：`crushes/TEMPLATE/SKILL.md` 不是运行时入口；Agent 能力必须通过 `src/agent` 注册工具提供
 - **写作标准**：禁止破折号「——」、禁止过度省略号「...」
 - **时间线**：禁止硬编码 Day 数字或具体日期，必须动态计算
 
@@ -51,7 +57,7 @@ grep -r "<private-name-[a-c]>" . --include="*.ts" --include="*.tsx" --include="*
 
 - 严格类型（`strict: true`），避免 `any`；数据用 `interface`，枚举用字符串联合类型
 - 单一职责，模块按 `src/shared/<域>/` 划分；函数不过长，嵌套不超 3 层
-- 提交前跑：类型检查 + `npm test` + 私密 grep
+- 提交前跑：两套类型检查 + `npm run lint` + `npm test` + `npm run build` + 私密扫描
 - 提交格式：`<type>(<scope>): <subject>`（feat/fix/docs/style/refactor/test/chore）
 - 分支命名：`feature/*`、`fix/*`、`refactor/*`
 

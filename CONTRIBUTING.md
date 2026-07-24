@@ -4,14 +4,18 @@
 
 ## 开发环境
 
-- Node.js 20 或更高版本
+- Node.js 22.19+
 - npm
 - Windows 重新编译 `better-sqlite3` 时需要 Electron 原生构建工具
 
 ```bash
-npm install
+npm run env:setup
+. .\scripts\activate.ps1
+npm ci
 npm run dev
 ```
+
+Windows 下也可以在 CMD 中执行 `call scripts\activate.bat`。激活后，当前终端中的 `node`、`npm`、Jest 和 Electron 原生依赖命令都会使用项目本地 Node.js；关闭终端后不会影响系统环境。
 
 ## 验证命令
 
@@ -24,11 +28,14 @@ npm run test:e2e
 npm run build
 ```
 
-如果本地 Node ABI 与 `better-sqlite3` 不匹配，先运行：
+Jest 命令会先自动按 Node.js 22.19+ 重建 `better-sqlite3`。如果本地依赖来自其他 Node.js 版本，切换 Node.js 22.19+ 后运行：
 
 ```bash
-npm rebuild better-sqlite3
+npm ci
+npm test
 ```
+
+`npm run rebuild:native` 面向 Electron 28 的 ABI，不用于准备 Jest 测试依赖。`npm run dev:main` 会在启动 Electron 前自动调用它。
 
 ## 代码规范
 

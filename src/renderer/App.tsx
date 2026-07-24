@@ -1,28 +1,40 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Box, Center, Spinner, Text, VStack } from '@chakra-ui/react'
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import Layout from './components/Layout'
-import WorkbenchLayout from './components/WorkbenchLayout'
-import DayPage from './pages/DayPage'
-import FragmentPage from './pages/FragmentPage'
-import CrushPage from './pages/CrushPage'
-import SettingsPage from './pages/SettingsPage'
-import HelpPage from './pages/HelpPage'
-import UpdatePage from './pages/UpdatePage'
-import ProgressPage from './pages/ProgressPage'
-import OnboardingPage from './pages/OnboardingPage'
-import AssistantPage from './pages/AssistantPage'
-import WorkbenchHomePage from './pages/WorkbenchHomePage'
-import WorkbenchProjectsPage from './pages/WorkbenchProjectsPage'
-import WorkbenchConfigPage from './pages/WorkbenchConfigPage'
-import WorkbenchLibraryPage from './pages/WorkbenchLibraryPage'
-import WorkbenchRelationsPage from './pages/WorkbenchRelationsPage'
-import WorkbenchOutlinePage from './pages/WorkbenchOutlinePage'
-import WorkbenchWritePage from './pages/WorkbenchWritePage'
-import WorkbenchNarrativePage from './pages/WorkbenchNarrativePage'
-import WorkbenchAssistantPage from './pages/WorkbenchAssistantPage'
-import WorkbenchSessionsPage from './pages/WorkbenchSessionsPage'
 import { useAppStore } from './stores/appStore'
+
+const Layout = lazy(() => import('./components/Layout'))
+const WorkbenchLayout = lazy(() => import('./components/WorkbenchLayout'))
+const DayPage = lazy(() => import('./pages/DayPage'))
+const FragmentPage = lazy(() => import('./pages/FragmentPage'))
+const CrushPage = lazy(() => import('./pages/CrushPage'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
+const HelpPage = lazy(() => import('./pages/HelpPage'))
+const UpdatePage = lazy(() => import('./pages/UpdatePage'))
+const ProgressPage = lazy(() => import('./pages/ProgressPage'))
+const OnboardingPage = lazy(() => import('./pages/OnboardingPage'))
+const AssistantPage = lazy(() => import('./pages/AssistantPage'))
+const WorkbenchHomePage = lazy(() => import('./pages/WorkbenchHomePage'))
+const WorkbenchProjectsPage = lazy(() => import('./pages/WorkbenchProjectsPage'))
+const WorkbenchConfigPage = lazy(() => import('./pages/WorkbenchConfigPage'))
+const WorkbenchLibraryPage = lazy(() => import('./pages/WorkbenchLibraryPage'))
+const WorkbenchRelationsPage = lazy(() => import('./pages/WorkbenchRelationsPage'))
+const WorkbenchOutlinePage = lazy(() => import('./pages/WorkbenchOutlinePage'))
+const WorkbenchWritePage = lazy(() => import('./pages/WorkbenchWritePage'))
+const WorkbenchNarrativePage = lazy(() => import('./pages/WorkbenchNarrativePage'))
+const WorkbenchAssistantPage = lazy(() => import('./pages/WorkbenchAssistantPage'))
+const WorkbenchSessionsPage = lazy(() => import('./pages/WorkbenchSessionsPage'))
+
+function RouteFallback() {
+  return (
+    <Center h="100vh" bg="paper.100">
+      <VStack spacing={3}>
+        <Spinner size="xl" color="cinnabar.500" />
+        <Text color="ink.600">正在加载工作区。</Text>
+      </VStack>
+    </Center>
+  )
+}
 
 function AppRoutes() {
   const { hasFetchedCrushes, loading, fetchCrushes, needsOnboarding } = useAppStore()
@@ -47,8 +59,9 @@ function AppRoutes() {
   }
 
   return (
-    <Routes>
-      <Route path="/workbench/*" element={<WorkbenchLayout />}>
+    <Suspense fallback={<RouteFallback />}>
+      <Routes>
+        <Route path="/workbench/*" element={<WorkbenchLayout />}>
         <Route index element={<WorkbenchHomePage />} />
         <Route path="projects" element={<WorkbenchProjectsPage />} />
         <Route path="config" element={<WorkbenchConfigPage />} />
@@ -67,14 +80,18 @@ function AppRoutes() {
         <Route path="assistant" element={<WorkbenchAssistantPage />} />
         <Route path="sessions" element={<WorkbenchSessionsPage />} />
         <Route path="*" element={<Navigate to="/workbench" replace />} />
-      </Route>
-      <Route
-        path="*"
-        element={
-          <Layout>
-            <Routes>
+        </Route>
+        <Route
+          path="*"
+          element={
+            <Layout>
+              <Routes>
               <Route
                 path="/"
+                element={<Navigate to="/workbench" replace />}
+              />
+              <Route
+                path="/journal"
                 element={needsOnboarding() ? <Navigate to="/onboarding" replace /> : <DayPage />}
               />
               <Route path="/onboarding" element={<OnboardingPage />} />
@@ -86,11 +103,12 @@ function AppRoutes() {
               <Route path="/help" element={<HelpPage />} />
               <Route path="/update" element={<UpdatePage />} />
               <Route path="*" element={<Navigate to={needsOnboarding() ? '/onboarding' : '/'} replace />} />
-            </Routes>
-          </Layout>
-        }
-      />
-    </Routes>
+              </Routes>
+            </Layout>
+          }
+        />
+      </Routes>
+    </Suspense>
   )
 }
 
