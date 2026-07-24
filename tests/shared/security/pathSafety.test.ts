@@ -15,7 +15,9 @@ describe('path safety', () => {
   })
 
   test('keeps resolved crush paths below the project root', () => {
-    const projectRoot = path.join('C:', 'tmp', 'yourcrush')
+    // Build an absolute path with the host platform's path implementation so
+    // this security regression test behaves the same on Windows and POSIX.
+    const projectRoot = path.resolve('tmp', 'yourcrush')
     expect(safeCrushPath(projectRoot, 'demo', 'meta.json')).toBe(
       path.join(projectRoot, 'crushes', 'demo', 'meta.json')
     )
