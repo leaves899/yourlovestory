@@ -5,6 +5,8 @@
  * 不依赖 ESM-only 的 pi-ai 包，兼容主进程 CJS 编译。
  */
 
+import { createSecureFetch } from '../security/urlSecurity'
+
 /** AI 调用参数 */
 export interface AICallParams {
   systemPrompt: string
@@ -38,9 +40,13 @@ interface OpenAIResponse {
   }>
 }
 
+function fetchModelEndpoint(input: string, init: RequestInit): Promise<Response> {
+  return createSecureFetch(globalThis.fetch)(input, init)
+}
+
 /** 构建 Anthropic API 请求 */
 async function callAnthropic(params: AICallParams): Promise<string> {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetchModelEndpoint('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -105,7 +111,7 @@ async function callOpenAICompatible(params: AICallParams): Promise<string> {
     console.warn(`[${params.provider}] 请求大小: ${(requestSize / 1024).toFixed(2)} KB`)
   }
 
-  const response = await fetch(baseUrl, {
+  const response = await fetchModelEndpoint(baseUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
