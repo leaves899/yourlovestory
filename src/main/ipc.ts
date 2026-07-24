@@ -1,5 +1,6 @@
 import { ipcMain, app } from 'electron'
 import type { LlmConfigInput } from '../agent/llm'
+import { normalizeLlmBaseUrl } from '../agent/llm/config'
 import type { ChapterGenerationService } from '../shared/chapterGeneration'
 import type { ForeshadowStatus, NarrativeWorkbenchService } from '../shared/narrativeWorkbench'
 import type { JsonObject } from './database'
@@ -82,7 +83,7 @@ function parseLlmConfig(value: unknown): LlmConfigInput {
   if (!isRecord(value)) throw new Error('llm config is required')
   return {
     provider: readOptionalString(value.provider),
-    baseUrl: readString(value.baseUrl, 'llm.baseUrl'),
+    baseUrl: normalizeLlmBaseUrl(readString(value.baseUrl, 'llm.baseUrl')),
     model: readString(value.model, 'llm.model'),
     apiKey: readOptionalString(value.apiKey),
     contextBudget: readOptionalPositiveInteger(value.contextBudget),

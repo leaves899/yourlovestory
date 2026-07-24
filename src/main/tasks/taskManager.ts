@@ -1,6 +1,7 @@
 import type { AgentEvent } from '@earendil-works/pi-agent-core'
 import type { AgentFactory, AgentRunResult } from '../../agent/agent'
 import type { LlmConfigInput } from '../../agent/llm'
+import { normalizeLlmBaseUrl } from '../../agent/llm/config'
 import type { ChapterGenerationStage } from '../../shared/chapterGeneration'
 import type {
   CreateTaskInput,
@@ -153,7 +154,7 @@ function inputFromTask(task: Task): StartTaskInput {
     prompt: typeof task.input.prompt === 'string' ? task.input.prompt : '',
     llm: {
       provider: typeof llmValue.provider === 'string' ? llmValue.provider : undefined,
-      baseUrl: requiredString(llmValue.baseUrl, 'llm.baseUrl'),
+      baseUrl: normalizeLlmBaseUrl(requiredString(llmValue.baseUrl, 'llm.baseUrl')),
       model: requiredString(llmValue.model, 'llm.model'),
       contextBudget: optionalNumber(llmValue.contextBudget),
       maxOutputTokens: optionalNumber(llmValue.maxOutputTokens),
@@ -199,15 +200,22 @@ export class TaskManager {
   }
 
   public start(input: StartTaskInput): TaskHandle {
+    const validatedInput: StartTaskInput = {
+      ...input,
+      llm: {
+        ...input.llm,
+        baseUrl: normalizeLlmBaseUrl(input.llm.baseUrl),
+      },
+    }
     const createInput: CreateTaskInput = {
-      project_id: input.projectId,
-      chapter_id: input.chapterId,
-      parent_task_id: input.parentTaskId,
-      task_type: input.taskType,
-      input: toPersistedInput(input),
+      project_id: validatedInput.projectId,
+      chapter_id: validatedInput.chapterId,
+      parent_task_id: validatedInput.parentTaskId,
+      task_type: validatedInput.taskType,
+      input: toPersistedInput(validatedInput),
     }
     const task = this.options.store.create(createInput)
-    return this.startExisting(task, input)
+    return this.startExisting(task, validatedInput)
   }
 
   public startChapterGeneration(input: StartChapterGenerationInput): TaskHandle {

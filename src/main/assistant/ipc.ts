@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import type { LlmConfigInput } from '../../agent/llm'
+import { normalizeLlmBaseUrl } from '../../agent/llm/config'
 import { isJsonValue, type JsonObject } from '../database'
 import type { ChatSessionType } from '../database'
 import type { AssistantService } from './service'
@@ -29,7 +30,7 @@ function parseLlmConfig(value: unknown): LlmConfigInput {
   if (!isRecord(value)) throw new Error('llm config is required')
   return {
     provider: optionalString(value.provider),
-    baseUrl: requiredString(value.baseUrl, 'llm.baseUrl'),
+    baseUrl: normalizeLlmBaseUrl(requiredString(value.baseUrl, 'llm.baseUrl')),
     model: requiredString(value.model, 'llm.model'),
     apiKey: optionalString(value.apiKey),
     contextBudget: optionalPositiveInteger(value.contextBudget),

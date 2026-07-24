@@ -1,4 +1,16 @@
 import type { LlmConfig, LlmConfigInput } from './types'
+import { normalizeModelEndpoint } from './urlSecurity'
+export {
+  CROSS_ORIGIN_LLM_REDIRECT,
+  INSECURE_LLM_BASE_URL,
+  INVALID_LLM_BASE_URL,
+  LOCAL_HTTP_ONLY,
+  LlmBaseUrlValidationError,
+  LlmEndpointSecurityError,
+  normalizeModelEndpoint,
+  type LlmBaseUrlErrorCode,
+  type ModelEndpoint,
+} from './urlSecurity'
 
 export const DEFAULT_CONTEXT_BUDGET = 64_000
 export const DEFAULT_MAX_OUTPUT_TOKENS = 4_096
@@ -20,13 +32,8 @@ function requireNonNegativeInteger(value: number, field: string): number {
   return value
 }
 
-function normalizeBaseUrl(baseUrl: string): string {
-  const normalized = baseUrl.trim().replace(/\/+$/, '')
-  if (!normalized) throw new Error('baseUrl is required')
-  if (!/^https?:\/\//i.test(normalized)) {
-    throw new Error('baseUrl must use http or https')
-  }
-  return normalized
+export function normalizeLlmBaseUrl(baseUrl: string): string {
+  return normalizeModelEndpoint(baseUrl).normalized
 }
 
 export function normalizeLlmConfig(input: LlmConfigInput): LlmConfig {
@@ -57,7 +64,7 @@ export function normalizeLlmConfig(input: LlmConfigInput): LlmConfig {
 
   return {
     provider: input.provider?.trim() || 'openai-compatible',
-    baseUrl: normalizeBaseUrl(input.baseUrl),
+    baseUrl: normalizeLlmBaseUrl(input.baseUrl),
     model: input.model.trim() || (() => { throw new Error('model is required') })(),
     apiKey: input.apiKey ?? '',
     contextBudget,
