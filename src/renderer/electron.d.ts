@@ -133,6 +133,20 @@ interface ElectronAPI {
   // 设置
   getSettings: () => Promise<any>
   updateSettings: (params: any) => Promise<any>
+  getLlmCredentialStatus: (
+    target: { scope: 'app' } | { scope: 'project'; projectId: string },
+  ) => Promise<{ success: boolean; data?: { configured: boolean; storageAvailable: boolean; backend: string; error: { code: string; message: string } | null }; error?: { code: string; message: string; retryable: boolean } }>
+  saveLlmCredential: (
+    target: { scope: 'app' } | { scope: 'project'; projectId: string },
+    secret: string,
+  ) => Promise<{ success: boolean; data?: { configured: boolean }; error?: { code: string; message: string; retryable: boolean } }>
+  deleteLlmCredential: (
+    target: { scope: 'app' } | { scope: 'project'; projectId: string },
+  ) => Promise<{ success: boolean; data?: { deleted: boolean }; error?: { code: string; message: string; retryable: boolean } }>
+  testLlmCredential: (
+    target: { scope: 'app' } | { scope: 'project'; projectId: string },
+  ) => Promise<{ success: boolean; data?: { message: string }; error?: { code: string; message: string; retryable: boolean } }>
+  deleteAllLlmCredentials: () => Promise<{ success: boolean; data?: { deleted: number }; error?: { code: string; message: string; retryable: boolean } }>
 
   // 应用
   getAppInfo: () => Promise<any>

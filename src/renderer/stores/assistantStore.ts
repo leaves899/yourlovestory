@@ -9,7 +9,8 @@ import assistantService, {
 export interface AssistantLlmForm {
   baseUrl: string
   model: string
-  apiKey: string
+  /** Non-secret reference only. The renderer never holds a resolved API Key. */
+  credentialId?: string
   contextBudget: string
   maxOutputTokens: string
 }

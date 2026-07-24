@@ -30,13 +30,12 @@ import { useWorkbenchStore } from '../stores/workbenchStore'
 const defaultLlm: AssistantLlmForm = {
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
-  apiKey: '',
   contextBudget: '64000',
   maxOutputTokens: '4096',
 }
 
 function WorkbenchWritePage() {
-  const { currentProject, chapterOutlines } = useWorkbenchStore()
+  const { currentProject, chapterOutlines, config } = useWorkbenchStore()
   const { activeSessionId, projectId: assistantProjectId, initialize: initializeAssistant, createSession } = useAssistantStore()
   const {
     tasks,
@@ -92,7 +91,12 @@ function WorkbenchWritePage() {
       sessionId,
       chapterOutlineId: selectedChapter.id,
       autoConfirm,
-      llm: createLlmConfig(llm),
+      llm: createLlmConfig({
+        ...llm,
+        credentialId: typeof config?.settings.llmCredentialId === 'string'
+          ? config.settings.llmCredentialId
+          : 'llm:app-default',
+      }),
     })
   }
 
@@ -113,7 +117,7 @@ function WorkbenchWritePage() {
                 <HStack><Checkbox isChecked={autoConfirm} onChange={(event) => setAutoConfirm(event.target.checked)} isDisabled={busy}>审核通过后自动确认</Checkbox><Text fontSize="sm" color="ink.500">建议首次生成关闭自动确认</Text></HStack>
                 <HStack><Button colorScheme="cinnabar" leftIcon={<FaPlay />} onClick={() => void start()} isDisabled={busy || !selectedChapter || selectedChapter.status === 'draft'} data-testid="start-chapter-generation">{busy ? '生成中' : '开始生成'}</Button><Button variant="outline" leftIcon={<FaStop />} onClick={() => void cancel()} isDisabled={!busy}>取消任务</Button></HStack>
               </Stack>
-              <Stack spacing={3}><Text fontWeight="bold">模型参数</Text><FormControl><FormLabel fontSize="sm">兼容接口</FormLabel><Input size="sm" value={llm.baseUrl} onChange={(event) => setLlm({ ...llm, baseUrl: event.target.value })} /></FormControl><FormControl><FormLabel fontSize="sm">模型</FormLabel><Input size="sm" value={llm.model} onChange={(event) => setLlm({ ...llm, model: event.target.value })} /></FormControl><FormControl><FormLabel fontSize="sm">API Key</FormLabel><Input size="sm" type="password" value={llm.apiKey} onChange={(event) => setLlm({ ...llm, apiKey: event.target.value })} /></FormControl></Stack>
+              <Stack spacing={3}><Text fontWeight="bold">模型参数</Text><FormControl><FormLabel fontSize="sm">兼容接口</FormLabel><Input size="sm" value={llm.baseUrl} onChange={(event) => setLlm({ ...llm, baseUrl: event.target.value })} /></FormControl><FormControl><FormLabel fontSize="sm">模型</FormLabel><Input size="sm" value={llm.model} onChange={(event) => setLlm({ ...llm, model: event.target.value })} /></FormControl><Text fontSize="sm" color="ink.600">API Key 由设置页的系统安全存储管理，不会进入任务、会话或 renderer 状态。</Text></Stack>
             </SimpleGrid>
           </CardBody>
         </Card>

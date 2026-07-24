@@ -11,6 +11,9 @@ import { registerWorkbenchIPC } from './workbench'
 import type { AssistantService } from './assistant'
 import { registerAssistantIPC } from './assistant'
 import { getSettings, updateSettings } from '../shared/persistence/settingsStore'
+import { sanitizeErrorMessage } from '../shared/security/sanitizeSensitiveData'
+import type { CredentialService } from './security/credentialService'
+import { credentialBindingForProvider, getAppCredentialId, safeSettingsView } from './security/llmCredentials'
 import {
   createCrush,
   listCrushes,
@@ -47,10 +50,24 @@ export interface IpcSetupOptions {
   assistantService?: AssistantService
   chapterGenerationService?: ChapterGenerationService
   narrativeWorkbenchService?: NarrativeWorkbenchService
+  credentialService?: CredentialService
 }
+
+type CredentialScope = { scope: 'app' } | { scope: 'project'; projectId: string }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function stripLegacyCredentialValues(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripLegacyCredentialValues)
+  if (!isRecord(value)) return value
+  const result: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (key.replace(/[\s_-]/g, '').toLowerCase() === 'apikey') continue
+    result[key] = stripLegacyCredentialValues(item)
+  }
+  return result
 }
 
 function isJsonValue(value: unknown): value is JsonObject[string] {
@@ -78,13 +95,36 @@ function readOptionalNonNegativeInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
 }
 
+function parseCredentialScope(value: unknown): CredentialScope {
+  if (!isRecord(value) || (value.scope !== 'app' && value.scope !== 'project')) {
+    throw new Error('credential scope is invalid')
+  }
+  if (value.scope === 'app') return { scope: 'app' }
+  return { scope: 'project', projectId: readString(value.projectId, 'projectId') }
+}
+
+function credentialIdForScope(scope: CredentialScope, settings: Record<string, unknown>): string {
+  return scope.scope === 'app' ? getAppCredentialId(settings) : `llm:project:${scope.projectId}`
+}
+
+function safeError(error: unknown, fallback?: string): string {
+  return sanitizeErrorMessage(error, fallback)
+}
+
+function credentialTestEndpoint(provider: string): string {
+  if (provider === 'anthropic') return 'https://api.anthropic.com/v1/models'
+  if (provider === 'google') return 'https://generativelanguage.googleapis.com/v1beta/models'
+  if (provider === 'deepseek') return 'https://api.deepseek.com/v1/models'
+  return 'https://api.openai.com/v1/models'
+}
+
 function parseLlmConfig(value: unknown): LlmConfigInput {
   if (!isRecord(value)) throw new Error('llm config is required')
   return {
     provider: readOptionalString(value.provider),
     baseUrl: readString(value.baseUrl, 'llm.baseUrl'),
     model: readString(value.model, 'llm.model'),
-    apiKey: readOptionalString(value.apiKey),
+    credentialId: readOptionalString(value.credentialId),
     contextBudget: readOptionalPositiveInteger(value.contextBudget),
     maxOutputTokens: readOptionalPositiveInteger(value.maxOutputTokens),
     temperature: typeof value.temperature === 'number' ? value.temperature : undefined,
@@ -286,6 +326,23 @@ export function setupIPC(options: IpcSetupOptions = {}) {
   const userDataPath = app.getPath('userData')
   const taskManager = options.taskManager
   const narrativeWorkbenchService = options.narrativeWorkbenchService ?? options.workbenchService?.narrative
+  const credentialService = options.credentialService
+
+  const invalidateCredentialRuntimes = (): void => {
+    // Existing agents may hold a resolved key. Abort them before another call.
+    options.assistantService?.dispose()
+    taskManager?.dispose()
+  }
+
+  const clearProjectCredentialReferences = (): void => {
+    for (const project of options.workbenchService?.listProjects() ?? []) {
+      const current = options.workbenchService!.getProjectConfig(project.id)
+      if (!('llmCredentialId' in current.settings)) continue
+      const next = { ...current.settings }
+      delete next.llmCredentialId
+      options.workbenchService!.updateProjectConfig(project.id, { settings: next }, current.version)
+    }
+  }
   registerWorkbenchIPC(options.workbenchService)
   registerAssistantIPC(options.assistantService)
 
@@ -555,7 +612,21 @@ export function setupIPC(options: IpcSetupOptions = {}) {
 
   // 日常写作（已迁移到 TS dayService）
   ipcMain.handle('day:generate', async (_, params) =>
-    generateDay(userDataPath, params)
+    generateDay(userDataPath, params, {
+      getCredential: async (credentialId) => {
+        if (!credentialService) throw new Error('系统安全存储未初始化。')
+        const settings = getSettings(userDataPath) as Record<string, unknown>
+        const binding = credentialService.getCredentialBinding(credentialId)
+        const expected = credentialBindingForProvider(settings.provider, settings.baseUrl)
+        if (!binding.success) throw new Error(binding.error.message)
+        if (!binding.data || binding.data.baseUrl !== expected.baseUrl) {
+          throw new Error('Credential is restricted to its saved Provider endpoint.')
+        }
+        const result = credentialService.getCredential(credentialId)
+        if (!result.success) throw new Error(result.error.message)
+        return result.data
+      },
+    })
   )
 
   ipcMain.handle('day:list', async (_, params) =>
@@ -637,8 +708,8 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     try {
       const progress = loadProgress(userDataPath, params.slug)
       return { success: true, data: progress }
-    } catch (error: any) {
-      return { success: false, errors: [error.message] }
+    } catch (error: unknown) {
+      return { success: false, errors: [safeError(error)] }
     }
   })
 
@@ -646,8 +717,8 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     try {
       const result = detectNarrativeSignals(userDataPath, params.slug, params.narrativeText)
       return { success: true, data: result }
-    } catch (error: any) {
-      return { success: false, errors: [error.message] }
+    } catch (error: unknown) {
+      return { success: false, errors: [safeError(error)] }
     }
   })
 
@@ -655,8 +726,8 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     try {
       const progress = confirmPhaseAdvance(userDataPath, params.slug, params.reason)
       return { success: true, data: progress }
-    } catch (error: any) {
-      return { success: false, errors: [error.message] }
+    } catch (error: unknown) {
+      return { success: false, errors: [safeError(error)] }
     }
   })
 
@@ -664,28 +735,178 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     try {
       const progress = setPhase(userDataPath, params.slug, params.phase)
       return { success: true, data: progress }
-    } catch (error: any) {
-      return { success: false, errors: [error.message] }
+    } catch (error: unknown) {
+      return { success: false, errors: [safeError(error)] }
     }
   })
 
   // 设置直接调用 shared settingsStore。
   ipcMain.handle('settings:get', async () => {
     try {
-      const data = getSettings(userDataPath)
-      return { success: true, data }
-    } catch (error: any) {
-      return { success: false, errors: [error.message] }
+      const data = getSettings(userDataPath) as Record<string, unknown>
+      const status = credentialService?.availability()
+      const configured = credentialService
+        ? credentialService.hasCredential(getAppCredentialId(data))
+        : { success: true as const, data: false }
+      return {
+        success: true,
+        data: status && configured.success
+          ? safeSettingsView(data, status, configured.data)
+          : stripLegacyCredentialValues(data),
+      }
+    } catch (error: unknown) {
+      return { success: false, errors: [safeError(error)] }
     }
   })
 
-  ipcMain.handle('settings:update', async (_, params) => {
+  ipcMain.handle('settings:update', async (_, params: unknown) => {
     try {
-      // 前端直接传递设置对象，而不是 params.settings
-      const success = updateSettings(userDataPath, params)
+      if (!isRecord(params)) throw new Error('settings must be an object')
+      // API Key must travel through llmCredential:save only.
+      const next = stripLegacyCredentialValues(params) as Record<string, unknown>
+      const existing = getSettings(userDataPath) as Record<string, unknown>
+      // Settings UI overwrites ordinary fields. Preserve the main-process-only
+      // credential reference so a normal settings save cannot orphan it.
+      if (typeof existing.credentialId === 'string') next.credentialId = existing.credentialId
+      const success = updateSettings(userDataPath, next)
       return { success }
-    } catch (error: any) {
-      return { success: false, errors: [error.message] }
+    } catch (error: unknown) {
+      return { success: false, errors: [safeError(error)] }
+    }
+  })
+
+  ipcMain.handle('llmCredential:status', async (_, value: unknown) => {
+    if (!credentialService) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+    try {
+      const scope = parseCredentialScope(value)
+      if (scope.scope === 'project' && !options.workbenchService?.getProject(scope.projectId)) {
+        throw new Error('project not found')
+      }
+      const settings = getSettings(userDataPath) as Record<string, unknown>
+      const availability = credentialService.availability()
+      const configured = credentialService.hasCredential(credentialIdForScope(scope, settings))
+      return {
+        success: true,
+        data: {
+          configured: configured.success && configured.data,
+          storageAvailable: availability.available,
+          backend: availability.backend,
+          error: availability.error ? { code: availability.error.code, message: availability.error.message } : null,
+        },
+      }
+    } catch (error: unknown) {
+      return { success: false, error: { code: 'INVALID_INPUT', message: safeError(error), retryable: false } }
+    }
+  })
+
+  ipcMain.handle('llmCredential:save', async (_, value: unknown) => {
+    if (!credentialService || !isRecord(value)) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+    try {
+      const scope = parseCredentialScope(value.target)
+      const secret = readString(value.secret, 'secret')
+      if (secret.length > 4096) throw new Error('API Key is too long')
+      if (scope.scope === 'project' && !options.workbenchService?.getProject(scope.projectId)) throw new Error('project not found')
+      const settings = getSettings(userDataPath) as Record<string, unknown>
+      const credentialId = credentialIdForScope(scope, settings)
+      const projectConfig = scope.scope === 'project'
+        ? options.workbenchService!.getProjectConfig(scope.projectId)
+        : undefined
+      const binding = scope.scope === 'app'
+        ? credentialBindingForProvider(settings.provider, settings.baseUrl)
+        : credentialBindingForProvider(projectConfig!.settings.llmProvider, projectConfig!.settings.llmBaseUrl)
+      const saved = credentialService.saveCredential(credentialId, secret, binding)
+      if (!saved.success) return saved
+      if (scope.scope === 'app') {
+        const next: Record<string, unknown> = { ...settings, credentialId }
+        delete next.apiKey
+        delete next.api_key
+        if (!updateSettings(userDataPath, next)) {
+          return { success: false, error: { code: 'STORAGE_WRITE_FAILED', message: '凭据已加密，但配置引用写入失败。', retryable: true } }
+        }
+      } else {
+        const current = projectConfig!
+        options.workbenchService!.updateProjectConfig(
+          scope.projectId,
+          { settings: { ...current.settings, llmCredentialId: credentialId } },
+          current.version,
+        )
+      }
+      invalidateCredentialRuntimes()
+      return { success: true, data: { configured: true } }
+    } catch (error: unknown) {
+      return { success: false, error: { code: 'INVALID_INPUT', message: safeError(error), retryable: false } }
+    }
+  })
+
+  ipcMain.handle('llmCredential:delete', async (_, value: unknown) => {
+    if (!credentialService) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+    try {
+      const scope = parseCredentialScope(value)
+      if (scope.scope === 'project' && !options.workbenchService?.getProject(scope.projectId)) throw new Error('project not found')
+      const settings = getSettings(userDataPath) as Record<string, unknown>
+      const credentialId = credentialIdForScope(scope, settings)
+      if (scope.scope === 'app') {
+        const next = { ...settings }
+        delete next.credentialId
+        if (!updateSettings(userDataPath, next)) {
+          return { success: false, error: { code: 'STORAGE_WRITE_FAILED', message: '凭据已删除，但配置引用清理失败。', retryable: true } }
+        }
+      } else {
+        const current = options.workbenchService!.getProjectConfig(scope.projectId)
+        const next = { ...current.settings }
+        delete next.llmCredentialId
+        options.workbenchService!.updateProjectConfig(scope.projectId, { settings: next }, current.version)
+      }
+      invalidateCredentialRuntimes()
+      const removed = credentialService.deleteCredential(credentialId)
+      if (!removed.success) {
+        return { success: false, error: { code: removed.error.code, message: '凭据引用已清理，但系统安全存储删除失败。请重试删除。', retryable: true } }
+      }
+      return { success: true, data: { deleted: removed.data } }
+    } catch (error: unknown) {
+      return { success: false, error: { code: 'INVALID_INPUT', message: safeError(error), retryable: false } }
+    }
+  })
+
+  ipcMain.handle('llmCredential:test', async (_, value: unknown) => {
+    if (!credentialService) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+    try {
+      const scope = parseCredentialScope(value)
+      if (scope.scope === 'project' && !options.workbenchService?.getProject(scope.projectId)) throw new Error('project not found')
+      const settings = getSettings(userDataPath) as Record<string, unknown>
+      const credential = credentialService.getCredential(credentialIdForScope(scope, settings))
+      if (!credential.success) return credential
+      const provider = typeof settings.provider === 'string' ? settings.provider : 'openai'
+      const headers: Record<string, string> = provider === 'anthropic'
+        ? { 'x-api-key': credential.data, 'anthropic-version': '2023-06-01' }
+        : { Authorization: `Bearer ${credential.data}` }
+      const response = await fetch(credentialTestEndpoint(provider), { headers })
+      if (!response.ok) {
+        return { success: false, error: { code: 'UNAVAILABLE', message: `连接测试失败（HTTP ${response.status}）。请检查 Provider、网络和 API Key。`, retryable: response.status >= 500 } }
+      }
+      return { success: true, data: { message: '连接测试成功。' } }
+    } catch (error: unknown) {
+      return { success: false, error: { code: 'UNAVAILABLE', message: safeError(error, '连接测试失败，请检查网络后重试。'), retryable: true } }
+    }
+  })
+
+  ipcMain.handle('llmCredential:deleteAll', async () => {
+    if (!credentialService) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+    try {
+      const settings = getSettings(userDataPath) as Record<string, unknown>
+      delete settings.credentialId
+      if (!updateSettings(userDataPath, settings)) {
+        return { success: false, error: { code: 'STORAGE_WRITE_FAILED', message: '无法清理全局凭据引用。', retryable: true } }
+      }
+      clearProjectCredentialReferences()
+      invalidateCredentialRuntimes()
+      const removed = credentialService.deleteAllCredentials()
+      if (!removed.success) {
+        return { success: false, error: { code: removed.error.code, message: '凭据引用已清理，但系统安全存储删除失败。请重试删除。', retryable: true } }
+      }
+      return { success: true, data: { deleted: removed.data } }
+    } catch (error: unknown) {
+      return { success: false, error: { code: 'STORAGE_WRITE_FAILED', message: safeError(error), retryable: true } }
     }
   })
 

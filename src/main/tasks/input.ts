@@ -52,7 +52,7 @@ function parseLlmConfig(value: unknown): LlmConfigInput {
     provider: optionalString(value.provider, 'llm.provider'),
     baseUrl: readString(value.baseUrl, 'llm.baseUrl'),
     model: readString(value.model, 'llm.model'),
-    apiKey: optionalString(value.apiKey, 'llm.apiKey'),
+    credentialId: optionalString(value.credentialId, 'llm.credentialId'),
     contextBudget: positiveInteger(value.contextBudget, 'llm.contextBudget'),
     maxOutputTokens: positiveInteger(value.maxOutputTokens, 'llm.maxOutputTokens'),
     temperature: optionalNumber(value.temperature, 'llm.temperature'),

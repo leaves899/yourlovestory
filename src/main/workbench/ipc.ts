@@ -330,6 +330,15 @@ function readOptionalJsonObject(record: Record<string, unknown>, field: string):
   return value as JsonObject
 }
 
+function containsPlaintextCredentialField(value: JsonObject): boolean {
+  for (const [key, item] of Object.entries(value)) {
+    if (key.replace(/[\s_-]/g, '').toLowerCase() === 'apikey') return true
+    if (Array.isArray(item) && item.some((entry) => typeof entry === 'object' && entry !== null && containsPlaintextCredentialField(entry as JsonObject))) return true
+    if (typeof item === 'object' && item !== null && !Array.isArray(item) && containsPlaintextCredentialField(item as JsonObject)) return true
+  }
+  return false
+}
+
 function readOptionalArrayOfStrings(
   record: Record<string, unknown>,
   field: string,
@@ -409,6 +418,10 @@ function parseProjectDeleteParams(value: unknown): ProjectDeleteParams {
 function parseConfigUpdateParams(value: unknown): ProjectConfigUpdateParams {
   const record = readRecord(value, 'project config input')
   const input = readRecord(record.input, 'input')
+  const settings = readOptionalJsonObject(input, 'settings')
+  if (settings && containsPlaintextCredentialField(settings)) {
+    throw new Error('项目配置不能保存 API Key，请使用系统安全凭据管理。')
+  }
   return {
     project_id: readString(record.project_id, 'project_id'),
     expected_version: readExpectedVersion(record),
@@ -418,7 +431,7 @@ function parseConfigUpdateParams(value: unknown): ProjectConfigUpdateParams {
       tone: readOptionalString(input, 'tone'),
       target_words: readOptionalNullableInteger(input, 'target_words', 1),
       context_budget: readOptionalNullableInteger(input, 'context_budget', 1),
-      settings: readOptionalJsonObject(input, 'settings'),
+      settings,
     },
   }
 }

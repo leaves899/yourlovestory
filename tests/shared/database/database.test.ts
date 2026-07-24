@@ -69,6 +69,13 @@ describe('SQLite database initialization', () => {
         'chapter_outlines',
       ]),
     )
+
+    const llmColumns = database!
+      .prepare<{ name: string }>('PRAGMA table_info(llm_configs)')
+      .all()
+      .map((column) => column.name)
+    expect(llmColumns).toContain('credential_id')
+    expect(llmColumns).not.toContain('api_key')
   })
 
   test('does not reapply an already recorded migration', () => {

@@ -23,8 +23,15 @@ function requireNonNegativeInteger(value: number, field: string): number {
 function normalizeBaseUrl(baseUrl: string): string {
   const normalized = baseUrl.trim().replace(/\/+$/, '')
   if (!normalized) throw new Error('baseUrl is required')
-  if (!/^https?:\/\//i.test(normalized)) {
+  let url: URL
+  try {
+    url = new URL(normalized)
+  } catch {
     throw new Error('baseUrl must use http or https')
+  }
+  const loopbackHosts = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopbackHosts.has(url.hostname))) {
+    throw new Error('baseUrl must use https unless it targets a loopback address')
   }
   return normalized
 }
@@ -59,7 +66,7 @@ export function normalizeLlmConfig(input: LlmConfigInput): LlmConfig {
     provider: input.provider?.trim() || 'openai-compatible',
     baseUrl: normalizeBaseUrl(input.baseUrl),
     model: input.model.trim() || (() => { throw new Error('model is required') })(),
-    apiKey: input.apiKey ?? '',
+    credentialId: input.credentialId?.trim() || undefined,
     contextBudget,
     maxOutputTokens,
     temperature: input.temperature,

@@ -7,7 +7,8 @@ export interface LlmConfigInput {
   provider?: string
   baseUrl: string
   model: string
-  apiKey?: string
+  /** Safe reference only. The main process resolves it immediately before use. */
+  credentialId?: string
   contextBudget?: number
   maxOutputTokens?: number
   temperature?: number
@@ -23,7 +24,7 @@ export interface LlmConfig {
   provider: string
   baseUrl: string
   model: string
-  apiKey: string
+  credentialId?: string
   contextBudget: number
   maxOutputTokens: number
   temperature?: number
@@ -33,6 +34,11 @@ export interface LlmConfig {
   maxRetryDelayMs: number
   timeoutMs?: number
   compat?: OpenAICompletionsCompat
+}
+
+/** Never expose this type through preload or renderer imports. */
+export interface ResolvedLlmConfig extends LlmConfig {
+  apiKey: string
 }
 
 export interface TokenUsage {

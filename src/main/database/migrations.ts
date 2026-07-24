@@ -5,6 +5,7 @@ import { novelProjectWorkbenchMigration } from './migrations/003_novel_project_w
 import { outlineWorkbenchMigration } from './migrations/004_outline_workbench'
 import { chapterGenerationMigration } from './migrations/005_chapter_generation'
 import { narrativeWorkbenchMigration } from './migrations/006_narrative_workbench'
+import { secureLlmCredentialsMigration } from './migrations/007_secure_llm_credentials'
 
 export interface Migration {
   version: number
@@ -25,6 +26,7 @@ export const migrations: readonly Migration[] = [
   outlineWorkbenchMigration,
   chapterGenerationMigration,
   narrativeWorkbenchMigration,
+  secureLlmCredentialsMigration,
 ]
 
 function ensureMigrationsTable(database: SqliteDatabase): void {

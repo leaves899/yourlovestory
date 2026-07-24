@@ -10,6 +10,7 @@ import type {
   TaskStore,
 } from '../database'
 import type { TaskEventSink } from './events'
+import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveData'
 
 export interface StartTaskInput {
   projectId: string
@@ -78,7 +79,7 @@ export interface TaskManagerOptions {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return sanitizeErrorMessage(error)
 }
 
 function toResult(result: AgentRunResult): JsonObject {
@@ -100,7 +101,7 @@ function toResult(result: AgentRunResult): JsonObject {
       },
     },
     ...(result.responseModel ? { responseModel: result.responseModel } : {}),
-    ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+    ...(result.errorMessage ? { errorMessage: sanitizeErrorMessage(result.errorMessage) } : {}),
   }
 }
 
@@ -109,6 +110,7 @@ function toPersistedInput(input: StartTaskInput): JsonObject {
     provider: input.llm.provider ?? 'openai-compatible',
     baseUrl: input.llm.baseUrl,
     model: input.llm.model,
+    ...(input.llm.credentialId === undefined ? {} : { credentialId: input.llm.credentialId }),
     ...(input.llm.contextBudget === undefined ? {} : { contextBudget: input.llm.contextBudget }),
     ...(input.llm.maxOutputTokens === undefined ? {} : { maxOutputTokens: input.llm.maxOutputTokens }),
     ...(input.llm.temperature === undefined ? {} : { temperature: input.llm.temperature }),
@@ -155,6 +157,7 @@ function inputFromTask(task: Task): StartTaskInput {
       provider: typeof llmValue.provider === 'string' ? llmValue.provider : undefined,
       baseUrl: requiredString(llmValue.baseUrl, 'llm.baseUrl'),
       model: requiredString(llmValue.model, 'llm.model'),
+      credentialId: typeof llmValue.credentialId === 'string' ? llmValue.credentialId : undefined,
       contextBudget: optionalNumber(llmValue.contextBudget),
       maxOutputTokens: optionalNumber(llmValue.maxOutputTokens),
       temperature: optionalNumber(llmValue.temperature),
