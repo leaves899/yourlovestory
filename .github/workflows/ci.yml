@@ -56,8 +56,9 @@ jobs:
       - name: Check for private information
         shell: bash
         run: |
+          private_info_pattern='小''明|xiao''ming|李''薇|<private-name-''[a-c]>'
           if grep -RInEi --include='*.ts' --include='*.tsx' --include='*.md' --include='*.yml' --include='*.yaml' \
-            '小明|xiaoming|李薇|<private-name-[a-c]>' .; then
+            "$private_info_pattern" .; then
             echo 'Potential private information found.'
             exit 1
           fi
