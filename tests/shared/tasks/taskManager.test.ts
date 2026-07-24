@@ -145,4 +145,52 @@ describe('TaskManager', () => {
       expect.objectContaining({ type: 'task:end', status: 'cancelled' }),
     )
   })
+
+  test('re-resolves the current project credential when a failed task resumes', async () => {
+    const resolvedCredentialIds: string[] = []
+    let currentCredentialId = 'llm:project:initial'
+    let attempts = 0
+    const manager = new TaskManager({
+      store: new TaskRepository(database),
+      agentFactory: {
+        create: async (input) => {
+          resolvedCredentialIds.push(input.llm.credentialId ?? '')
+          const agent: ProjectSessionAgent = {
+            projectId,
+            sessionId: input.sessionId,
+            prompt: async () => {
+              attempts += 1
+              if (attempts === 1) throw new Error('retryable failure')
+              return successfulResult()
+            },
+            abort: jest.fn(),
+            dispose: jest.fn(),
+          }
+          return agent
+        },
+      },
+      events: { publish: () => undefined },
+      resolveLlmConfig: (_projectId, input) => ({
+        ...input,
+        credentialId: currentCredentialId,
+      }),
+    })
+    const first = manager.start({
+      projectId,
+      sessionId: 'session-resume',
+      taskType: 'assistant',
+      prompt: '恢复任务',
+      llm: { baseUrl: 'https://example.invalid/v1', model: 'test-model' },
+    })
+    expect((await first.completion).status).toBe('failed')
+
+    currentCredentialId = 'llm:project:replacement'
+    const resumed = manager.resume(first.taskId)
+    expect(resumed).not.toBeNull()
+    expect((await resumed!.completion).status).toBe('completed')
+    expect(resolvedCredentialIds).toEqual([
+      'llm:project:initial',
+      'llm:project:replacement',
+    ])
+  })
 })

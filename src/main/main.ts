@@ -19,6 +19,7 @@ import {
 import { createNovelAgentTools } from '../agent/tools/novelTools'
 import { CredentialService } from './security/credentialService'
 import { migrateLegacyLlmCredentials } from './security/llmCredentials'
+import { LlmCredentialController } from './security/llmCredentialController'
 import { sanitizeErrorMessage } from '../shared/security/sanitizeSensitiveData'
 
 let mainWindow: BrowserWindow | null = null
@@ -123,7 +124,7 @@ app.whenReady().then(() => {
   migrateData()
   // Keep the destructive schema cleanup until after a verified safeStorage migration.
   database = initializeDatabase(app.getPath('userData'), {
-    migrations: migrations.filter((migration) => migration.version < 7),
+    migrations: migrations.filter((migration) => migration.version < 8),
   })
   credentialService = new CredentialService(app.getPath('userData'), safeStorage)
   const credentialMigration = migrateLegacyLlmCredentials(
@@ -138,13 +139,28 @@ app.whenReady().then(() => {
     runMigrations(database)
   }
   workbenchService = createWorkbenchService(database, { projectRoot: app.getPath('userData') })
+  const llmCredentialController = new LlmCredentialController({
+    userDataPath: app.getPath('userData'),
+    credentialService,
+    workbenchService,
+    database,
+    migrationIssue: credentialMigration.issues[0],
+    invalidateRuntimes: () => {
+      assistantService?.dispose()
+      taskManager?.dispose()
+    },
+  })
 
   createWindow()
   const agentFactory = createProjectSessionAgentFactory({
     resolveCredential: async (credentialId, config) => {
       const binding = credentialService!.getCredentialBinding(credentialId)
       if (!binding.success) throw new Error(binding.error.message)
-      if (!binding.data || binding.data.baseUrl !== config.baseUrl) {
+      if (
+        !binding.data
+        || binding.data.provider !== config.provider
+        || binding.data.baseUrl !== config.baseUrl
+      ) {
         throw new Error('该凭据只能用于保存时绑定的 Provider 接口。')
       }
       const resolved = credentialService!.getCredential(credentialId)
@@ -166,6 +182,8 @@ app.whenReady().then(() => {
         agentFactory,
       }),
     },
+    resolveLlmConfig: (projectId, input) =>
+      llmCredentialController.runtimeConfig(projectId, input),
   })
   assistantService = new AssistantService({
     store: new ChatRepository(database),
@@ -188,6 +206,8 @@ app.whenReady().then(() => {
     chapterGenerationService: workbenchService.chapterGeneration,
     narrativeWorkbenchService: workbenchService.narrative,
     credentialService,
+    database,
+    credentialController: llmCredentialController,
   })
 
   app.on('activate', () => {

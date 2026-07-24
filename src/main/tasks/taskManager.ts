@@ -76,6 +76,7 @@ export interface TaskManagerOptions {
   runners?: Readonly<Record<string, TaskRunner>>
   now?: () => string
   createAbortController?: () => AbortController
+  resolveLlmConfig?: (projectId: string, input: LlmConfigInput) => LlmConfigInput
 }
 
 function errorMessage(error: unknown): string {
@@ -202,15 +203,19 @@ export class TaskManager {
   }
 
   public start(input: StartTaskInput): TaskHandle {
+    const resolvedInput: StartTaskInput = {
+      ...input,
+      llm: this.options.resolveLlmConfig?.(input.projectId, input.llm) ?? input.llm,
+    }
     const createInput: CreateTaskInput = {
-      project_id: input.projectId,
-      chapter_id: input.chapterId,
-      parent_task_id: input.parentTaskId,
-      task_type: input.taskType,
-      input: toPersistedInput(input),
+      project_id: resolvedInput.projectId,
+      chapter_id: resolvedInput.chapterId,
+      parent_task_id: resolvedInput.parentTaskId,
+      task_type: resolvedInput.taskType,
+      input: toPersistedInput(resolvedInput),
     }
     const task = this.options.store.create(createInput)
-    return this.startExisting(task, input)
+    return this.startExisting(task, resolvedInput)
   }
 
   public startChapterGeneration(input: StartChapterGenerationInput): TaskHandle {
@@ -268,7 +273,11 @@ export class TaskManager {
     if (!task || task.status === 'completed') return null
     const active = this.completions.get(taskId)
     if (active) return { taskId, completion: active }
-    const input = inputFromTask(task)
+    const persistedInput = inputFromTask(task)
+    const input: StartTaskInput = {
+      ...persistedInput,
+      llm: this.options.resolveLlmConfig?.(task.project_id, persistedInput.llm) ?? persistedInput.llm,
+    }
     const pending = this.options.store.update(taskId, {
       status: 'pending',
       stage: 'resuming',

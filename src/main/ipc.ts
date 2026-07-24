@@ -1,8 +1,8 @@
-import { ipcMain, app } from 'electron'
+import { ipcMain, app, type IpcMainInvokeEvent } from 'electron'
 import type { LlmConfigInput } from '../agent/llm'
 import type { ChapterGenerationService } from '../shared/chapterGeneration'
 import type { ForeshadowStatus, NarrativeWorkbenchService } from '../shared/narrativeWorkbench'
-import type { JsonObject } from './database'
+import type { JsonObject, SqliteDatabase } from './database'
 import type { TaskManager, StartTaskInput } from './tasks'
 import { parseChapterGenerationStartParams, parseChapterPolishStartParams } from './tasks'
 export { parseChapterGenerationStartParams }
@@ -14,6 +14,11 @@ import { getSettings, updateSettings } from '../shared/persistence/settingsStore
 import { sanitizeErrorMessage } from '../shared/security/sanitizeSensitiveData'
 import type { CredentialService } from './security/credentialService'
 import { credentialBindingForProvider, getAppCredentialId, safeSettingsView } from './security/llmCredentials'
+import {
+  LlmCredentialController,
+  parseCredentialScope,
+  toSafeControllerFailure,
+} from './security/llmCredentialController'
 import {
   createCrush,
   listCrushes,
@@ -51,9 +56,9 @@ export interface IpcSetupOptions {
   chapterGenerationService?: ChapterGenerationService
   narrativeWorkbenchService?: NarrativeWorkbenchService
   credentialService?: CredentialService
+  database?: SqliteDatabase
+  credentialController?: LlmCredentialController
 }
-
-type CredentialScope = { scope: 'app' } | { scope: 'project'; projectId: string }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -95,27 +100,16 @@ function readOptionalNonNegativeInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
 }
 
-function parseCredentialScope(value: unknown): CredentialScope {
-  if (!isRecord(value) || (value.scope !== 'app' && value.scope !== 'project')) {
-    throw new Error('credential scope is invalid')
-  }
-  if (value.scope === 'app') return { scope: 'app' }
-  return { scope: 'project', projectId: readString(value.projectId, 'projectId') }
-}
-
-function credentialIdForScope(scope: CredentialScope, settings: Record<string, unknown>): string {
-  return scope.scope === 'app' ? getAppCredentialId(settings) : `llm:project:${scope.projectId}`
-}
-
 function safeError(error: unknown, fallback?: string): string {
   return sanitizeErrorMessage(error, fallback)
 }
 
-function credentialTestEndpoint(provider: string): string {
-  if (provider === 'anthropic') return 'https://api.anthropic.com/v1/models'
-  if (provider === 'google') return 'https://generativelanguage.googleapis.com/v1beta/models'
-  if (provider === 'deepseek') return 'https://api.deepseek.com/v1/models'
-  return 'https://api.openai.com/v1/models'
+function assertTrustedCredentialSender(event: IpcMainInvokeEvent): void {
+  const senderUrl = event.senderFrame?.url ?? event.sender?.getURL()
+  if (!senderUrl && process.env.NODE_ENV === 'test') return
+  if (senderUrl?.startsWith('file://')) return
+  if (senderUrl?.startsWith('http://localhost:3000/')) return
+  throw new Error('untrusted IPC sender')
 }
 
 function parseLlmConfig(value: unknown): LlmConfigInput {
@@ -124,7 +118,6 @@ function parseLlmConfig(value: unknown): LlmConfigInput {
     provider: readOptionalString(value.provider),
     baseUrl: readString(value.baseUrl, 'llm.baseUrl'),
     model: readString(value.model, 'llm.model'),
-    credentialId: readOptionalString(value.credentialId),
     contextBudget: readOptionalPositiveInteger(value.contextBudget),
     maxOutputTokens: readOptionalPositiveInteger(value.maxOutputTokens),
     temperature: typeof value.temperature === 'number' ? value.temperature : undefined,
@@ -334,17 +327,22 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     taskManager?.dispose()
   }
 
-  const clearProjectCredentialReferences = (): void => {
-    for (const project of options.workbenchService?.listProjects() ?? []) {
-      const current = options.workbenchService!.getProjectConfig(project.id)
-      if (!('llmCredentialId' in current.settings)) continue
-      const next = { ...current.settings }
-      delete next.llmCredentialId
-      options.workbenchService!.updateProjectConfig(project.id, { settings: next }, current.version)
-    }
-  }
-  registerWorkbenchIPC(options.workbenchService)
-  registerAssistantIPC(options.assistantService)
+  const credentialController = options.credentialController ?? (credentialService
+    ? new LlmCredentialController({
+        userDataPath,
+        credentialService,
+        workbenchService: options.workbenchService,
+        database: options.database,
+        invalidateRuntimes: invalidateCredentialRuntimes,
+      })
+    : undefined)
+  registerWorkbenchIPC(options.workbenchService, invalidateCredentialRuntimes)
+  registerAssistantIPC(
+    options.assistantService,
+    credentialController
+      ? (projectId, input) => credentialController.runtimeConfig(projectId, input)
+      : undefined,
+  )
 
   ipcMain.handle('task:run', async (_, params: unknown) => {
     if (!taskManager) throw new Error('TaskManager is not initialized')
@@ -619,7 +617,11 @@ export function setupIPC(options: IpcSetupOptions = {}) {
         const binding = credentialService.getCredentialBinding(credentialId)
         const expected = credentialBindingForProvider(settings.provider, settings.baseUrl)
         if (!binding.success) throw new Error(binding.error.message)
-        if (!binding.data || binding.data.baseUrl !== expected.baseUrl) {
+        if (
+          !binding.data
+          || binding.data.provider !== expected.provider
+          || binding.data.baseUrl !== expected.baseUrl
+        ) {
           throw new Error('Credential is restricted to its saved Provider endpoint.')
         }
         const result = credentialService.getCredential(credentialId)
@@ -764,6 +766,7 @@ export function setupIPC(options: IpcSetupOptions = {}) {
       if (!isRecord(params)) throw new Error('settings must be an object')
       // API Key must travel through llmCredential:save only.
       const next = stripLegacyCredentialValues(params) as Record<string, unknown>
+      delete next.credentialId
       const existing = getSettings(userDataPath) as Record<string, unknown>
       // Settings UI overwrites ordinary fields. Preserve the main-process-only
       // credential reference so a normal settings save cannot orphan it.
@@ -775,138 +778,56 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     }
   })
 
-  ipcMain.handle('llmCredential:status', async (_, value: unknown) => {
-    if (!credentialService) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+  ipcMain.handle('llmCredential:status', async (event, value: unknown) => {
+    if (!credentialController) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
     try {
-      const scope = parseCredentialScope(value)
-      if (scope.scope === 'project' && !options.workbenchService?.getProject(scope.projectId)) {
-        throw new Error('project not found')
-      }
-      const settings = getSettings(userDataPath) as Record<string, unknown>
-      const availability = credentialService.availability()
-      const configured = credentialService.hasCredential(credentialIdForScope(scope, settings))
-      return {
-        success: true,
-        data: {
-          configured: configured.success && configured.data,
-          storageAvailable: availability.available,
-          backend: availability.backend,
-          error: availability.error ? { code: availability.error.code, message: availability.error.message } : null,
-        },
-      }
+      assertTrustedCredentialSender(event)
+      return credentialController.status(parseCredentialScope(value))
     } catch (error: unknown) {
-      return { success: false, error: { code: 'INVALID_INPUT', message: safeError(error), retryable: false } }
+      return toSafeControllerFailure(error)
     }
   })
 
-  ipcMain.handle('llmCredential:save', async (_, value: unknown) => {
-    if (!credentialService || !isRecord(value)) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+  ipcMain.handle('llmCredential:save', async (event, value: unknown) => {
+    if (!credentialController || !isRecord(value)) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
     try {
-      const scope = parseCredentialScope(value.target)
-      const secret = readString(value.secret, 'secret')
-      if (secret.length > 4096) throw new Error('API Key is too long')
-      if (scope.scope === 'project' && !options.workbenchService?.getProject(scope.projectId)) throw new Error('project not found')
-      const settings = getSettings(userDataPath) as Record<string, unknown>
-      const credentialId = credentialIdForScope(scope, settings)
-      const projectConfig = scope.scope === 'project'
-        ? options.workbenchService!.getProjectConfig(scope.projectId)
-        : undefined
-      const binding = scope.scope === 'app'
-        ? credentialBindingForProvider(settings.provider, settings.baseUrl)
-        : credentialBindingForProvider(projectConfig!.settings.llmProvider, projectConfig!.settings.llmBaseUrl)
-      const saved = credentialService.saveCredential(credentialId, secret, binding)
-      if (!saved.success) return saved
-      if (scope.scope === 'app') {
-        const next: Record<string, unknown> = { ...settings, credentialId }
-        delete next.apiKey
-        delete next.api_key
-        if (!updateSettings(userDataPath, next)) {
-          return { success: false, error: { code: 'STORAGE_WRITE_FAILED', message: '凭据已加密，但配置引用写入失败。', retryable: true } }
-        }
-      } else {
-        const current = projectConfig!
-        options.workbenchService!.updateProjectConfig(
-          scope.projectId,
-          { settings: { ...current.settings, llmCredentialId: credentialId } },
-          current.version,
-        )
-      }
-      invalidateCredentialRuntimes()
-      return { success: true, data: { configured: true } }
+      assertTrustedCredentialSender(event)
+      return credentialController.save(
+        parseCredentialScope(value.target),
+        readString(value.secret, 'secret'),
+      )
     } catch (error: unknown) {
-      return { success: false, error: { code: 'INVALID_INPUT', message: safeError(error), retryable: false } }
+      return toSafeControllerFailure(error)
     }
   })
 
-  ipcMain.handle('llmCredential:delete', async (_, value: unknown) => {
-    if (!credentialService) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+  ipcMain.handle('llmCredential:delete', async (event, value: unknown) => {
+    if (!credentialController) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
     try {
-      const scope = parseCredentialScope(value)
-      if (scope.scope === 'project' && !options.workbenchService?.getProject(scope.projectId)) throw new Error('project not found')
-      const settings = getSettings(userDataPath) as Record<string, unknown>
-      const credentialId = credentialIdForScope(scope, settings)
-      if (scope.scope === 'app') {
-        const next = { ...settings }
-        delete next.credentialId
-        if (!updateSettings(userDataPath, next)) {
-          return { success: false, error: { code: 'STORAGE_WRITE_FAILED', message: '凭据已删除，但配置引用清理失败。', retryable: true } }
-        }
-      } else {
-        const current = options.workbenchService!.getProjectConfig(scope.projectId)
-        const next = { ...current.settings }
-        delete next.llmCredentialId
-        options.workbenchService!.updateProjectConfig(scope.projectId, { settings: next }, current.version)
-      }
-      invalidateCredentialRuntimes()
-      const removed = credentialService.deleteCredential(credentialId)
-      if (!removed.success) {
-        return { success: false, error: { code: removed.error.code, message: '凭据引用已清理，但系统安全存储删除失败。请重试删除。', retryable: true } }
-      }
-      return { success: true, data: { deleted: removed.data } }
+      assertTrustedCredentialSender(event)
+      return credentialController.delete(parseCredentialScope(value))
     } catch (error: unknown) {
-      return { success: false, error: { code: 'INVALID_INPUT', message: safeError(error), retryable: false } }
+      return toSafeControllerFailure(error)
     }
   })
 
-  ipcMain.handle('llmCredential:test', async (_, value: unknown) => {
-    if (!credentialService) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+  ipcMain.handle('llmCredential:test', async (event, value: unknown) => {
+    if (!credentialController) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
     try {
-      const scope = parseCredentialScope(value)
-      if (scope.scope === 'project' && !options.workbenchService?.getProject(scope.projectId)) throw new Error('project not found')
-      const settings = getSettings(userDataPath) as Record<string, unknown>
-      const credential = credentialService.getCredential(credentialIdForScope(scope, settings))
-      if (!credential.success) return credential
-      const provider = typeof settings.provider === 'string' ? settings.provider : 'openai'
-      const headers: Record<string, string> = provider === 'anthropic'
-        ? { 'x-api-key': credential.data, 'anthropic-version': '2023-06-01' }
-        : { Authorization: `Bearer ${credential.data}` }
-      const response = await fetch(credentialTestEndpoint(provider), { headers })
-      if (!response.ok) {
-        return { success: false, error: { code: 'UNAVAILABLE', message: `连接测试失败（HTTP ${response.status}）。请检查 Provider、网络和 API Key。`, retryable: response.status >= 500 } }
-      }
-      return { success: true, data: { message: '连接测试成功。' } }
+      assertTrustedCredentialSender(event)
+      return await credentialController.test(parseCredentialScope(value))
     } catch (error: unknown) {
-      return { success: false, error: { code: 'UNAVAILABLE', message: safeError(error, '连接测试失败，请检查网络后重试。'), retryable: true } }
+      return toSafeControllerFailure(error)
     }
   })
 
-  ipcMain.handle('llmCredential:deleteAll', async () => {
-    if (!credentialService) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+  ipcMain.handle('llmCredential:deleteAll', async (event) => {
+    if (!credentialController) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
     try {
-      const settings = getSettings(userDataPath) as Record<string, unknown>
-      delete settings.credentialId
-      if (!updateSettings(userDataPath, settings)) {
-        return { success: false, error: { code: 'STORAGE_WRITE_FAILED', message: '无法清理全局凭据引用。', retryable: true } }
-      }
-      clearProjectCredentialReferences()
-      invalidateCredentialRuntimes()
-      const removed = credentialService.deleteAllCredentials()
-      if (!removed.success) {
-        return { success: false, error: { code: removed.error.code, message: '凭据引用已清理，但系统安全存储删除失败。请重试删除。', retryable: true } }
-      }
-      return { success: true, data: { deleted: removed.data } }
+      assertTrustedCredentialSender(event)
+      return credentialController.deleteAll()
     } catch (error: unknown) {
-      return { success: false, error: { code: 'STORAGE_WRITE_FAILED', message: safeError(error), retryable: true } }
+      return toSafeControllerFailure(error)
     }
   })
 

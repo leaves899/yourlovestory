@@ -22,7 +22,6 @@ CREATE TABLE llm_configs (
   base_url TEXT NOT NULL,
   model TEXT NOT NULL,
   api_key TEXT NOT NULL DEFAULT '',
-  credential_id TEXT NOT NULL DEFAULT '',
   context_budget INTEGER,
   max_output_tokens INTEGER,
   temperature REAL,

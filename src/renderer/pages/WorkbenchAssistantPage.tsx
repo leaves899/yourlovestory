@@ -32,7 +32,6 @@ const defaultForm: AssistantLlmForm = {
 
 function WorkbenchAssistantPage() {
   const currentProject = useWorkbenchStore((state) => state.currentProject)
-  const projectConfig = useWorkbenchStore((state) => state.config)
   const {
     sessions,
     activeSessionId,
@@ -65,12 +64,7 @@ function WorkbenchAssistantPage() {
     if (!input.trim() || busy || !currentProject) return
     const prompt = input
     setInput('')
-    await sendPrompt(prompt, {
-      ...form,
-      credentialId: credentialConfigured && typeof projectConfig?.settings.llmCredentialId === 'string'
-        ? projectConfig.settings.llmCredentialId
-        : 'llm:app-default',
-    })
+    await sendPrompt(prompt, form)
   }
 
   if (!currentProject) {

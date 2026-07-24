@@ -11,10 +11,11 @@ class FakeSafeStorage implements SafeStorageAdapter {
   public available = true
   public failEncrypt = false
   public failDecrypt = false
+  public failEncryptValue: string | null = null
 
   public isEncryptionAvailable(): boolean { return this.available }
   public encryptString(value: string): Buffer {
-    if (this.failEncrypt) throw new Error('encrypt failed')
+    if (this.failEncrypt || value === this.failEncryptValue) throw new Error('encrypt failed')
     return Buffer.from(`encrypted:${value}`, 'utf8')
   }
   public decryptString(value: Buffer): string {
@@ -76,6 +77,27 @@ describe('CredentialService', () => {
     expect(service.getCredential('llm:app-default')).toMatchObject({ success: false, error: { code: 'CORRUPTED' } })
   })
 
+  it('rejects malformed Base64 payloads as corrupted data', () => {
+    fs.mkdirSync(path.join(root, 'security'), { recursive: true })
+    fs.writeFileSync(
+      path.join(root, 'security', 'llm-credentials.json'),
+      JSON.stringify({
+        version: 1,
+        credentials: {
+          'llm:app-default': {
+            payload: 'not valid base64',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+        },
+      }),
+      'utf8',
+    )
+    expect(service.getCredential('llm:app-default')).toMatchObject({
+      success: false,
+      error: { code: 'CORRUPTED' },
+    })
+  })
+
   it('rejects Linux basic_text backends', () => {
     const linux = new CredentialService(root, {
       isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
@@ -109,21 +131,89 @@ describe('CredentialService', () => {
   it('migrates legacy project JSON without retaining a plaintext key in SQLite', () => {
     const database = initializeDatabase(root, {
       filename: path.join(root, 'legacy.sqlite'),
-      migrations: migrations.filter((migration) => migration.version < 7),
+      migrations: migrations.filter((migration) => migration.version < 8),
     })
     try {
       database.prepare("INSERT INTO projects (id, slug, name) VALUES ('project-1', 'project-1', 'Project')").run()
       database.prepare("INSERT INTO project_configs (project_id, settings_json) VALUES ('project-1', ?)").run(
-        JSON.stringify({ apiKey: TEST_SECRET, nested: { api_key: TEST_SECRET } }),
+        JSON.stringify({
+          openai: { apiKey: 'sk-test-openai-secret-111' },
+          deepseek: { api_key: 'sk-test-deepseek-secret-222' },
+        }),
       )
       const report = migrateLegacyLlmCredentials(root, root, database, service)
       const row = database.prepare<{ settings_json: string }>('SELECT settings_json FROM project_configs WHERE project_id = ?').get('project-1')
-      expect(report.migrated).toBe(1)
-      expect(row?.settings_json).not.toContain(TEST_SECRET)
-      expect(row?.settings_json).toContain('llmCredentialId')
-      expect(service.getCredential('llm:project:project-1')).toEqual({ success: true, data: TEST_SECRET })
+      const settings = JSON.parse(row!.settings_json) as {
+        openai: { credentialId: string }
+        deepseek: { credentialId: string }
+      }
+      expect(report).toMatchObject({ migrated: 2, pending: 0 })
+      expect(row?.settings_json).not.toContain('sk-test-openai-secret-111')
+      expect(row?.settings_json).not.toContain('sk-test-deepseek-secret-222')
+      expect(settings.openai.credentialId).not.toBe(settings.deepseek.credentialId)
+      expect(service.getCredential(settings.openai.credentialId)).toEqual({
+        success: true,
+        data: 'sk-test-openai-secret-111',
+      })
+      expect(service.getCredential(settings.deepseek.credentialId)).toEqual({
+        success: true,
+        data: 'sk-test-deepseek-secret-222',
+      })
+      expect(migrateLegacyLlmCredentials(root, root, database, service).migrated).toBe(0)
     } finally {
       database.close()
     }
+  })
+
+  it('migrates project credentials independently and retains only a failed plaintext field', () => {
+    const database = initializeDatabase(root, {
+      filename: path.join(root, 'partial.sqlite'),
+      migrations: migrations.filter((migration) => migration.version < 8),
+    })
+    try {
+      database.prepare("INSERT INTO projects (id, slug, name) VALUES ('project-2', 'project-2', 'Project')").run()
+      database.prepare("INSERT INTO project_configs (project_id, settings_json) VALUES ('project-2', ?)").run(
+        JSON.stringify({
+          openai: { apiKey: 'sk-test-openai-secret-111' },
+          deepseek: { api_key: 'sk-test-deepseek-secret-222' },
+        }),
+      )
+      safeStorage.failEncryptValue = 'sk-test-deepseek-secret-222'
+      const first = migrateLegacyLlmCredentials(root, root, database, service)
+      const partial = database.prepare<{ settings_json: string }>(
+        'SELECT settings_json FROM project_configs WHERE project_id = ?',
+      ).get('project-2')!.settings_json
+
+      expect(first).toMatchObject({ migrated: 1, pending: 1 })
+      expect(partial).not.toContain('sk-test-openai-secret-111')
+      expect(partial).toContain('sk-test-deepseek-secret-222')
+      expect(
+        database.prepare<{ count: number }>(
+          'SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 8',
+        ).get(),
+      ).toEqual({ count: 0 })
+
+      safeStorage.failEncryptValue = null
+      const recovered = migrateLegacyLlmCredentials(root, root, database, service)
+      const completed = database.prepare<{ settings_json: string }>(
+        'SELECT settings_json FROM project_configs WHERE project_id = ?',
+      ).get('project-2')!.settings_json
+      expect(recovered).toMatchObject({ migrated: 1, pending: 0 })
+      expect(completed).not.toContain('sk-test-')
+    } finally {
+      database.close()
+    }
+  })
+
+  it('restores the previous encrypted credential when reference commit fails', () => {
+    expect(service.saveCredential('llm:app-default', TEST_SECRET).success).toBe(true)
+    const result = service.saveCredentialWithCommit(
+      'llm:app-default',
+      'sk-test-secret-do-not-expose-replacement',
+      { provider: 'openai', baseUrl: 'https://api.openai.com/v1' },
+      () => false,
+    )
+    expect(result).toMatchObject({ success: false, error: { code: 'REFERENCE_WRITE_FAILED' } })
+    expect(service.getCredential('llm:app-default')).toEqual({ success: true, data: TEST_SECRET })
   })
 })

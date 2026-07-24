@@ -1,8 +1,20 @@
 const REDACTED = '[REDACTED]'
 const CIRCULAR = '[Circular]'
 const UNAVAILABLE = '[Unserializable sensitive value]'
+const sensitiveKeys = new Set([
+  'apikey',
+  'xapikey',
+  'authorization',
+  'proxyauthorization',
+  'token',
+  'accesstoken',
+  'refreshtoken',
+  'secret',
+  'password',
+  'credential',
+  'credentialid',
+])
 
-const sensitiveKeyPattern = /^(?:api[_-]?key|authorization|proxy[_-]?authorization|token|access[_-]?token|refresh[_-]?token|secret|password|credential(?:[_-]?id)?)$/i
 const bearerPattern = /\bBearer\s+[A-Za-z0-9._~+/=:-]+/gi
 const keyPattern = /\b(?:sk-(?:[A-Za-z0-9_-]{8,})|sk-ant-[A-Za-z0-9_-]+|AIza[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})\b/g
 const queryPattern = /([?&](?:api[_-]?key|apikey|token|access[_-]?token|refresh[_-]?token|secret|key)=)[^&#\s]*/gi
@@ -15,7 +27,8 @@ function redactString(value: string): string {
 }
 
 function isSensitiveKey(key: string): boolean {
-  return sensitiveKeyPattern.test(key.replace(/[\s_-]/g, ''))
+  const normalized = key.replace(/[^a-z0-9]/gi, '').toLowerCase()
+  return sensitiveKeys.has(normalized)
 }
 
 function errorValue(error: Error): Record<string, unknown> {
@@ -75,7 +88,25 @@ export function sanitizeErrorMessage(error: unknown, fallback = '操作失败，
 }
 
 export function sanitizeForExport<T>(value: T): T {
-  return sanitizeSensitiveData(value) as T
+  const sanitized = sanitizeSensitiveData(value)
+  const filterCredentialPayloads = (current: unknown): unknown => {
+    if (Array.isArray(current)) return current.map(filterCredentialPayloads)
+    if (!current || typeof current !== 'object') return current
+    const record = current as Record<string, unknown>
+    const isCredentialRecord = typeof record.payload === 'string'
+      && (typeof record.updatedAt === 'string' || 'binding' in record)
+    const result: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(record)) {
+      const normalized = key.replace(/[^a-z0-9]/gi, '').toLowerCase()
+      result[key] = isCredentialRecord && normalized === 'payload'
+        ? REDACTED
+        : normalized === 'encryptedpayload' || normalized === 'ciphertext'
+          ? REDACTED
+          : filterCredentialPayloads(item)
+    }
+    return result
+  }
+  return filterCredentialPayloads(sanitized) as T
 }
 
 export { REDACTED }

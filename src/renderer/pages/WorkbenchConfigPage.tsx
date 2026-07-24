@@ -83,8 +83,14 @@ function WorkbenchConfigPage() {
     setCredentialBusy(true)
     try {
       const response = await window.electronAPI.deleteLlmCredential({ scope: 'project', projectId: currentProject.id })
-      setCredentialConfigured(false)
-      if (response.success) await refreshProjectData(currentProject.id)
+      if (response.success) {
+        const status = await window.electronAPI.getLlmCredentialStatus({
+          scope: 'project',
+          projectId: currentProject.id,
+        })
+        setCredentialConfigured(status.success && status.data?.configured === true)
+        await refreshProjectData(currentProject.id)
+      }
       setCredentialMessage(response.success ? '项目凭据已删除。' : response.error?.message ?? '删除凭据失败。')
     } finally {
       setCredentialBusy(false)

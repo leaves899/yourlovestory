@@ -20,7 +20,7 @@ function requireNonNegativeInteger(value: number, field: string): number {
   return value
 }
 
-function normalizeBaseUrl(baseUrl: string): string {
+export function normalizeLlmBaseUrl(baseUrl: string): string {
   const normalized = baseUrl.trim().replace(/\/+$/, '')
   if (!normalized) throw new Error('baseUrl is required')
   let url: URL
@@ -64,7 +64,7 @@ export function normalizeLlmConfig(input: LlmConfigInput): LlmConfig {
 
   return {
     provider: input.provider?.trim() || 'openai-compatible',
-    baseUrl: normalizeBaseUrl(input.baseUrl),
+    baseUrl: normalizeLlmBaseUrl(input.baseUrl),
     model: input.model.trim() || (() => { throw new Error('model is required') })(),
     credentialId: input.credentialId?.trim() || undefined,
     contextBudget,

@@ -283,7 +283,6 @@ function AssistantPage() {
         llm: {
           baseUrl: llm.baseUrl,
           model: llm.model,
-          credentialId: 'llm:app-default',
           contextBudget: parseNumber(llm.contextBudget),
           maxOutputTokens: parseNumber(llm.maxOutputTokens),
           streamingEnabled: true,

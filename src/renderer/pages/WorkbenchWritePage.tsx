@@ -35,7 +35,7 @@ const defaultLlm: AssistantLlmForm = {
 }
 
 function WorkbenchWritePage() {
-  const { currentProject, chapterOutlines, config } = useWorkbenchStore()
+  const { currentProject, chapterOutlines } = useWorkbenchStore()
   const { activeSessionId, projectId: assistantProjectId, initialize: initializeAssistant, createSession } = useAssistantStore()
   const {
     tasks,
@@ -91,12 +91,7 @@ function WorkbenchWritePage() {
       sessionId,
       chapterOutlineId: selectedChapter.id,
       autoConfirm,
-      llm: createLlmConfig({
-        ...llm,
-        credentialId: typeof config?.settings.llmCredentialId === 'string'
-          ? config.settings.llmCredentialId
-          : 'llm:app-default',
-      }),
+      llm: createLlmConfig(llm),
     })
   }
 

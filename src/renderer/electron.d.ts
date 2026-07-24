@@ -142,11 +142,11 @@ interface ElectronAPI {
   ) => Promise<{ success: boolean; data?: { configured: boolean }; error?: { code: string; message: string; retryable: boolean } }>
   deleteLlmCredential: (
     target: { scope: 'app' } | { scope: 'project'; projectId: string },
-  ) => Promise<{ success: boolean; data?: { deleted: boolean }; error?: { code: string; message: string; retryable: boolean } }>
+  ) => Promise<{ success: boolean; data?: { deleted: boolean; referencesCleared: boolean; remaining: number }; error?: { code: string; message: string; retryable: boolean } }>
   testLlmCredential: (
     target: { scope: 'app' } | { scope: 'project'; projectId: string },
   ) => Promise<{ success: boolean; data?: { message: string }; error?: { code: string; message: string; retryable: boolean } }>
-  deleteAllLlmCredentials: () => Promise<{ success: boolean; data?: { deleted: number }; error?: { code: string; message: string; retryable: boolean } }>
+  deleteAllLlmCredentials: () => Promise<{ success: boolean; data?: { deleted: number; failed: number; referencesCleared: boolean; remaining: number }; error?: { code: string; message: string; retryable: boolean } }>
 
   // 应用
   getAppInfo: () => Promise<any>

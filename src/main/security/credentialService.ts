@@ -11,6 +11,11 @@ export type CredentialErrorCode =
   | 'CORRUPTED'
   | 'STORAGE_READ_FAILED'
   | 'STORAGE_WRITE_FAILED'
+  | 'REFERENCE_WRITE_FAILED'
+  | 'ROLLBACK_FAILED'
+  | 'BINDING_MISMATCH'
+  | 'TEST_TIMEOUT'
+  | 'PARTIAL_FAILURE'
 
 export interface CredentialError {
   code: CredentialErrorCode
@@ -56,7 +61,27 @@ function fail<T>(code: CredentialErrorCode, message: string, retryable: boolean)
 function isCredentialFile(value: unknown): value is CredentialFile {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<CredentialFile>
-  return candidate.version === FILE_VERSION && !!candidate.credentials && typeof candidate.credentials === 'object'
+  if (
+    candidate.version !== FILE_VERSION
+    || !candidate.credentials
+    || typeof candidate.credentials !== 'object'
+  ) {
+    return false
+  }
+  return Object.values(candidate.credentials).every((record) =>
+    Boolean(
+      record
+      && typeof record === 'object'
+      && typeof record.payload === 'string'
+      && typeof record.updatedAt === 'string',
+    ),
+  )
+}
+
+function decodePayload(value: string): Buffer | null {
+  if (!value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return null
+  const decoded = Buffer.from(value, 'base64')
+  return decoded.length > 0 && decoded.toString('base64') === value ? decoded : null
 }
 
 /** Main-process only wrapper around Electron safeStorage. */
@@ -150,6 +175,40 @@ export class CredentialService {
     return this.writeFile(next)
   }
 
+  /**
+   * Replaces a credential and commits its ordinary-storage reference as one
+   * recoverable operation. If the reference write fails, the exact prior
+   * encrypted record set is restored; plaintext is never used for rollback.
+   */
+  public saveCredentialWithCommit(
+    credentialId: string,
+    secret: string,
+    binding: CredentialBinding,
+    commitReference: () => boolean | void,
+  ): CredentialResult<void> {
+    const previous = this.readFile()
+    if (!previous.success) return previous
+    const saved = this.saveCredential(credentialId, secret, binding)
+    if (!saved.success) return saved
+
+    try {
+      if (commitReference() === false) {
+        throw new Error('reference write failed')
+      }
+      return { success: true, data: undefined }
+    } catch {
+      const rolledBack = this.writeFile(previous.data)
+      if (!rolledBack.success) {
+        return fail(
+          'ROLLBACK_FAILED',
+          '配置引用写入失败，且无法恢复原加密凭据。请勿继续使用并重试保存。',
+          true,
+        )
+      }
+      return fail('REFERENCE_WRITE_FAILED', '配置引用写入失败，原加密凭据已恢复。', true)
+    }
+  }
+
   /** This method is intentionally main-process only and is never bridged to renderer. */
   public getCredential(credentialId: string): CredentialResult<string> {
     if (!this.isValidId(credentialId)) return fail('INVALID_INPUT', '凭据引用无效。', false)
@@ -160,8 +219,8 @@ export class CredentialService {
     const record = file.data.credentials[credentialId]
     if (!record) return fail('NOT_FOUND', '未找到已保存的 API Key。', false)
     try {
-      const payload = Buffer.from(record.payload, 'base64')
-      if (payload.length === 0) return fail('CORRUPTED', '已保存的凭据数据损坏。', false)
+      const payload = decodePayload(record.payload)
+      if (!payload) return fail('CORRUPTED', '已保存的凭据数据损坏。', false)
       return { success: true, data: this.safeStorage.decryptString(payload) }
     } catch {
       return fail('DECRYPT_FAILED', '无法解密已保存的 API Key，请重新保存凭据。', false)
@@ -193,6 +252,13 @@ export class CredentialService {
     const count = Object.keys(file.data.credentials).length
     const written = this.writeFile({ version: FILE_VERSION, credentials: {} })
     return written.success ? { success: true, data: count } : written
+  }
+
+  /** Main-process metadata used to verify scoped bulk deletion. */
+  public listCredentialIds(): CredentialResult<string[]> {
+    const file = this.readFile()
+    if (!file.success) return file
+    return { success: true, data: Object.keys(file.data.credentials) }
   }
 
   private isValidId(value: string): boolean {

@@ -111,6 +111,29 @@ describe('SQLite database initialization', () => {
       database!.prepare<{ count: number }>('SELECT COUNT(*) AS count FROM schema_migrations').get(),
     ).toEqual({ count: migrations.length })
   })
+
+  test('upgrades an existing database through independent credential reference and cleanup migrations', () => {
+    database?.close()
+    const legacy = initializeDatabase(tempRoot, {
+      filename: path.join(tempRoot, 'legacy-upgrade.sqlite'),
+      migrations: migrations.filter((migration) => migration.version < 7),
+    })
+    database = legacy
+    const before = legacy.prepare<{ name: string }>('PRAGMA table_info(llm_configs)').all()
+    expect(before.map((column) => column.name)).toContain('api_key')
+    expect(before.map((column) => column.name)).not.toContain('credential_id')
+
+    runMigrations(legacy, migrations.filter((migration) => migration.version < 8))
+    const during = legacy.prepare<{ name: string }>('PRAGMA table_info(llm_configs)').all()
+    expect(during.map((column) => column.name)).toEqual(
+      expect.arrayContaining(['api_key', 'credential_id']),
+    )
+
+    runMigrations(legacy)
+    const after = legacy.prepare<{ name: string }>('PRAGMA table_info(llm_configs)').all()
+    expect(after.map((column) => column.name)).toContain('credential_id')
+    expect(after.map((column) => column.name)).not.toContain('api_key')
+  })
 })
 
 describe('project and chapter repositories', () => {

@@ -7,6 +7,11 @@ describe('sanitizeSensitiveData', () => {
     const input = {
       apiKey: TEST_SECRET,
       nested: [{ Authorization: `Bearer ${TEST_SECRET}` }],
+      headers: {
+        'x-api-key': TEST_SECRET,
+        'X_API_KEY': TEST_SECRET,
+        'Proxy-Authorization': `Bearer ${TEST_SECRET}`,
+      },
       url: `https://example.test/?token=${TEST_SECRET}&x=1`,
       error: Object.assign(new Error(`failed with ${TEST_SECRET}`), { cause: { refresh_token: TEST_SECRET } }),
     }
@@ -15,6 +20,8 @@ describe('sanitizeSensitiveData', () => {
     expect(JSON.stringify(output)).not.toContain(TEST_SECRET)
     expect(output.apiKey).toBe(REDACTED)
     expect((output.nested as Array<Record<string, unknown>>)[0].Authorization).toBe(REDACTED)
+    expect((output.headers as Record<string, unknown>)['x-api-key']).toBe(REDACTED)
+    expect((output.headers as Record<string, unknown>).X_API_KEY).toBe(REDACTED)
   })
 
   it('handles circular values and produces export-safe copies', () => {
@@ -24,5 +31,26 @@ describe('sanitizeSensitiveData', () => {
     expect(output).not.toBe(circular)
     expect(JSON.stringify(output)).not.toContain(TEST_SECRET)
     expect(JSON.stringify(output)).toContain('[Circular]')
+  })
+
+  it('removes encrypted credential payloads from export and diagnostic representations', () => {
+    const exported = sanitizeForExport({
+      project: { title: 'safe' },
+      credentialStore: {
+        version: 1,
+        credentials: {
+          'llm:app-default': {
+            payload: 'base64-encrypted-payload',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+            binding: { provider: 'openai', baseUrl: 'https://api.openai.com/v1' },
+          },
+        },
+      },
+      diagnostic: { encryptedPayload: 'cipher', ciphertext: 'cipher' },
+    })
+    const serialized = JSON.stringify(exported)
+    expect(serialized).not.toContain('base64-encrypted-payload')
+    expect(serialized).not.toContain('"cipher"')
+    expect(serialized).toContain('"title":"safe"')
   })
 })
