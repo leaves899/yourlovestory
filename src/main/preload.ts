@@ -160,6 +160,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 设置
   getSettings: () => ipcRenderer.invoke('settings:get'),
   updateSettings: (params: any) => ipcRenderer.invoke('settings:update', params),
+  getLlmCredentialStatus: (target: { scope: 'app' } | { scope: 'project'; projectId: string }) =>
+    ipcRenderer.invoke('llmCredential:status', target),
+  saveLlmCredential: (
+    target: { scope: 'app' } | { scope: 'project'; projectId: string },
+    secret: string,
+  ) => ipcRenderer.invoke('llmCredential:save', { target, secret }),
+  deleteLlmCredential: (target: { scope: 'app' } | { scope: 'project'; projectId: string }) =>
+    ipcRenderer.invoke('llmCredential:delete', target),
+  testLlmCredential: (target: { scope: 'app' } | { scope: 'project'; projectId: string }) =>
+    ipcRenderer.invoke('llmCredential:test', target),
+  deleteAllLlmCredentials: () => ipcRenderer.invoke('llmCredential:deleteAll'),
 
   // 应用
   getAppInfo: () => ipcRenderer.invoke('app:info'),

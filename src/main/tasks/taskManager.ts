@@ -10,6 +10,7 @@ import type {
   TaskStore,
 } from '../database'
 import type { TaskEventSink } from './events'
+import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveData'
 
 export interface StartTaskInput {
   projectId: string
@@ -75,10 +76,11 @@ export interface TaskManagerOptions {
   runners?: Readonly<Record<string, TaskRunner>>
   now?: () => string
   createAbortController?: () => AbortController
+  resolveLlmConfig?: (projectId: string, input: LlmConfigInput) => LlmConfigInput
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return sanitizeErrorMessage(error)
 }
 
 function toResult(result: AgentRunResult): JsonObject {
@@ -100,7 +102,7 @@ function toResult(result: AgentRunResult): JsonObject {
       },
     },
     ...(result.responseModel ? { responseModel: result.responseModel } : {}),
-    ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+    ...(result.errorMessage ? { errorMessage: sanitizeErrorMessage(result.errorMessage) } : {}),
   }
 }
 
@@ -109,6 +111,7 @@ function toPersistedInput(input: StartTaskInput): JsonObject {
     provider: input.llm.provider ?? 'openai-compatible',
     baseUrl: input.llm.baseUrl,
     model: input.llm.model,
+    ...(input.llm.credentialId === undefined ? {} : { credentialId: input.llm.credentialId }),
     ...(input.llm.contextBudget === undefined ? {} : { contextBudget: input.llm.contextBudget }),
     ...(input.llm.maxOutputTokens === undefined ? {} : { maxOutputTokens: input.llm.maxOutputTokens }),
     ...(input.llm.temperature === undefined ? {} : { temperature: input.llm.temperature }),
@@ -155,6 +158,7 @@ function inputFromTask(task: Task): StartTaskInput {
       provider: typeof llmValue.provider === 'string' ? llmValue.provider : undefined,
       baseUrl: requiredString(llmValue.baseUrl, 'llm.baseUrl'),
       model: requiredString(llmValue.model, 'llm.model'),
+      credentialId: typeof llmValue.credentialId === 'string' ? llmValue.credentialId : undefined,
       contextBudget: optionalNumber(llmValue.contextBudget),
       maxOutputTokens: optionalNumber(llmValue.maxOutputTokens),
       temperature: optionalNumber(llmValue.temperature),
@@ -199,15 +203,19 @@ export class TaskManager {
   }
 
   public start(input: StartTaskInput): TaskHandle {
+    const resolvedInput: StartTaskInput = {
+      ...input,
+      llm: this.options.resolveLlmConfig?.(input.projectId, input.llm) ?? input.llm,
+    }
     const createInput: CreateTaskInput = {
-      project_id: input.projectId,
-      chapter_id: input.chapterId,
-      parent_task_id: input.parentTaskId,
-      task_type: input.taskType,
-      input: toPersistedInput(input),
+      project_id: resolvedInput.projectId,
+      chapter_id: resolvedInput.chapterId,
+      parent_task_id: resolvedInput.parentTaskId,
+      task_type: resolvedInput.taskType,
+      input: toPersistedInput(resolvedInput),
     }
     const task = this.options.store.create(createInput)
-    return this.startExisting(task, input)
+    return this.startExisting(task, resolvedInput)
   }
 
   public startChapterGeneration(input: StartChapterGenerationInput): TaskHandle {
@@ -265,7 +273,11 @@ export class TaskManager {
     if (!task || task.status === 'completed') return null
     const active = this.completions.get(taskId)
     if (active) return { taskId, completion: active }
-    const input = inputFromTask(task)
+    const persistedInput = inputFromTask(task)
+    const input: StartTaskInput = {
+      ...persistedInput,
+      llm: this.options.resolveLlmConfig?.(task.project_id, persistedInput.llm) ?? persistedInput.llm,
+    }
     const pending = this.options.store.update(taskId, {
       status: 'pending',
       stage: 'resuming',

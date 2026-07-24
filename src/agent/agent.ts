@@ -15,6 +15,7 @@ import {
   toTokenUsage,
   type LlmConfig,
   type LlmConfigInput,
+  type ResolvedLlmConfig,
   type LlmRunStats,
 } from './llm/types'
 import { configureToolExecution, createDangerousOperationHook, type DangerousOperationConfirmation } from './permissions'
@@ -63,6 +64,7 @@ export interface AgentFactoryDependencies {
   loadRuntime?: () => Promise<PiRuntime>
   loadTools?: () => Promise<readonly AgentTool[]>
   sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>
+  resolveCredential?: (credentialId: string, config: LlmConfig) => Promise<string>
 }
 
 function isAssistantMessage(message: AgentMessage): message is AssistantMessage {
@@ -160,10 +162,14 @@ export function createProjectSessionAgentFactory(
 
   return {
     create: async (options) => {
-      const [runtime, configuredLlm] = await Promise.all([
+      const [runtime, normalizedLlm] = await Promise.all([
         loadRuntime(),
         Promise.resolve(normalizeLlmConfig(options.llm)),
       ])
+      const apiKey = normalizedLlm.credentialId
+        ? await (dependencies.resolveCredential?.(normalizedLlm.credentialId, normalizedLlm) ?? Promise.resolve(''))
+        : ''
+      const configuredLlm: ResolvedLlmConfig = { ...normalizedLlm, apiKey }
       const baseTools = options.tools ?? (await loadTools())
       const tools = [...baseTools, ...(options.additionalTools ?? [])]
       const model = createDynamicPiModel(configuredLlm)

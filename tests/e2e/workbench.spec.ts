@@ -76,6 +76,22 @@ async function injectWorkbenchMock(page: import('@playwright/test').Page): Promi
         return { success: true }
       },
       getNovelProjectConfig: async () => success({ project_id: currentProject.id, default_llm_config_id: null, genre: '', tone: '', target_words: null, context_budget: null, settings: {}, version: 1, created_at: now, updated_at: now }),
+      getLlmCredentialStatus: async () => success({
+        configured: true,
+        storageAvailable: true,
+        backend: 'test',
+        error: null,
+      }),
+      saveLlmCredential: async () => success({ configured: true }),
+      testLlmCredential: async () => success({ message: '连接测试成功。' }),
+      deleteLlmCredential: async () => ({
+        success: false,
+        error: {
+          code: 'STORAGE_WRITE_FAILED',
+          message: '安全存储删除失败，请重试。',
+          retryable: true,
+        },
+      }),
       listNovelVolumes: emptyList,
       listNovelVolumeOutlines: emptyList,
       listNovelChapterOutlines: async () => success([chapter]),
@@ -147,5 +163,14 @@ test.describe('长篇创作工作台', () => {
     await expect(page.getByTestId('start-chapter-generation')).toBeDisabled()
     await page.goto('/#/fragment')
     await expect(page.getByTestId('fragment-page')).toBeVisible()
+  })
+
+  test('项目凭据删除失败时保持已配置状态并显示安全错误', async ({ page }) => {
+    await page.goto('/#/workbench/config')
+    await expect(page.getByText('已安全保存，不会回填或显示完整 API Key。')).toBeVisible()
+    page.once('dialog', (dialog) => dialog.accept())
+    await page.getByRole('button', { name: '删除凭据' }).click()
+    await expect(page.getByText('安全存储删除失败，请重试。')).toBeVisible()
+    await expect(page.getByText('已安全保存，不会回填或显示完整 API Key。')).toBeVisible()
   })
 })

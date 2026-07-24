@@ -1,8 +1,8 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, safeStorage } from 'electron'
 import * as fs from 'fs'
 import path from 'path'
 import { setupIPC } from './ipc'
-import { ChatRepository, initializeDatabase, TaskRepository } from './database'
+import { ChatRepository, initializeDatabase, migrations, runMigrations, TaskRepository } from './database'
 import type { SqliteDatabase } from './database'
 import { createProjectSessionAgentFactory } from '../agent/agent'
 import {
@@ -17,12 +17,17 @@ import {
   createWebContentsAssistantEventSink,
 } from './assistant'
 import { createNovelAgentTools } from '../agent/tools/novelTools'
+import { CredentialService } from './security/credentialService'
+import { migrateLegacyLlmCredentials } from './security/llmCredentials'
+import { LlmCredentialController } from './security/llmCredentialController'
+import { sanitizeErrorMessage } from '../shared/security/sanitizeSensitiveData'
 
 let mainWindow: BrowserWindow | null = null
 let database: SqliteDatabase | null = null
 let taskManager: TaskManager | null = null
 let workbenchService: WorkbenchService | null = null
 let assistantService: AssistantService | null = null
+let credentialService: CredentialService | null = null
 
 const e2eUserDataPath = process.env.YOURCRUSH_E2E_USER_DATA
 if (process.env.NODE_ENV === 'test' && e2eUserDataPath) {
@@ -37,18 +42,6 @@ if (process.env.NODE_ENV === 'test' && e2eUserDataPath) {
 function migrateData() {
   const appPath = app.getAppPath()
   const userDataPath = app.getPath('userData')
-
-  // 迁移 settings.json
-  const oldSettings = path.join(appPath, 'settings.json')
-  const newSettings = path.join(userDataPath, 'settings.json')
-  if (fs.existsSync(oldSettings) && !fs.existsSync(newSettings)) {
-    try {
-      fs.copyFileSync(oldSettings, newSettings)
-      console.log('[Migration] settings.json 迁移成功')
-    } catch (e) {
-      console.error('[Migration] settings.json 迁移失败:', e)
-    }
-  }
 
   // 迁移 crushes 目录（排除 TEMPLATE）
   // 只在 userData 目录下没有 crushes 目录时才进行迁移
@@ -74,8 +67,8 @@ function migrateData() {
           console.log(`[Migration] 角色 ${entry.name} 迁移成功`)
         }
       }
-    } catch (e) {
-      console.error('[Migration] crushes 目录迁移失败:', e)
+    } catch (error: unknown) {
+      console.error('[Migration] crushes 目录迁移失败:', sanitizeErrorMessage(error))
     }
   }
 }
@@ -90,6 +83,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
     },
     titleBarStyle: 'hiddenInset',
     show: false,
@@ -119,16 +113,64 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url !== mainWindow?.webContents.getURL()) event.preventDefault()
+  })
 }
 
 app.whenReady().then(() => {
   // 启动时执行数据迁移
   migrateData()
-  database = initializeDatabase(app.getPath('userData'))
+  // Keep the destructive schema cleanup until after a verified safeStorage migration.
+  database = initializeDatabase(app.getPath('userData'), {
+    migrations: migrations.filter((migration) => migration.version < 8),
+  })
+  credentialService = new CredentialService(app.getPath('userData'), safeStorage)
+  const credentialMigration = migrateLegacyLlmCredentials(
+    app.getPath('userData'),
+    app.getAppPath(),
+    database,
+    credentialService,
+  )
+  if (credentialMigration.pending > 0) {
+    console.warn('[CredentialMigration] pending', {
+      pending: credentialMigration.pending,
+      failed: credentialMigration.failed,
+    })
+  } else {
+    runMigrations(database)
+  }
   workbenchService = createWorkbenchService(database, { projectRoot: app.getPath('userData') })
+  const llmCredentialController = new LlmCredentialController({
+    userDataPath: app.getPath('userData'),
+    credentialService,
+    workbenchService,
+    database,
+    migrationIssues: credentialMigration.issues,
+    invalidateRuntimes: () => {
+      assistantService?.dispose()
+      taskManager?.dispose()
+    },
+  })
 
   createWindow()
-  const agentFactory = createProjectSessionAgentFactory()
+  const agentFactory = createProjectSessionAgentFactory({
+    resolveCredential: async (credentialId, config) => {
+      const binding = credentialService!.getCredentialBinding(credentialId)
+      if (!binding.success) throw new Error(binding.error.message)
+      if (
+        !binding.data
+        || binding.data.provider !== config.provider
+        || binding.data.baseUrl !== config.baseUrl
+      ) {
+        throw new Error('该凭据只能用于保存时绑定的 Provider 接口。')
+      }
+      const resolved = credentialService!.getCredential(credentialId)
+      if (!resolved.success) throw new Error(resolved.error.message)
+      return resolved.data
+    },
+  })
   taskManager = new TaskManager({
     store: new TaskRepository(database),
     agentFactory,
@@ -143,6 +185,8 @@ app.whenReady().then(() => {
         agentFactory,
       }),
     },
+    resolveLlmConfig: (projectId, input) =>
+      llmCredentialController.runtimeConfig(projectId, input),
   })
   assistantService = new AssistantService({
     store: new ChatRepository(database),
@@ -164,6 +208,9 @@ app.whenReady().then(() => {
     assistantService,
     chapterGenerationService: workbenchService.chapterGeneration,
     narrativeWorkbenchService: workbenchService.narrative,
+    credentialService,
+    database,
+    credentialController: llmCredentialController,
   })
 
   app.on('activate', () => {
@@ -184,6 +231,7 @@ app.on('will-quit', () => {
   taskManager = null
   assistantService?.dispose()
   assistantService = null
+  credentialService = null
   workbenchService = null
   database?.close()
   database = null

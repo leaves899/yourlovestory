@@ -42,18 +42,22 @@ function setupCrushForGeneration(slug: string): void {
   fs.mkdirSync(crushDir, { recursive: true })
   fs.writeFileSync(path.join(crushDir, 'persona.md'), '# test\n', 'utf-8')
   updateSettings(tmpRoot, {
-    apiKey: 'test-api-key',
+    credentialId: 'llm:app-default',
     provider: 'anthropic',
     model: 'test-model',
   })
 }
 
+const credentialResolver = {
+  getCredential: async () => 'sk-test-secret-do-not-expose-123456',
+}
+
 describe('runPipeline', () => {
-  test('returns error when apiKey is missing', async () => {
+  test('returns an actionable error when a secure credential resolver is unavailable', async () => {
     const result = await runPipeline(tmpRoot, { slug: 'test', day_number: 1 })
     expect(result.success).toBe(false)
     if (result.success) return
-    expect(result.errors[0]).toContain('API Key')
+    expect(result.errors[0]).toContain('安全保存')
   })
 
   test('dry_run returns prompts without generating content', async () => {
@@ -272,7 +276,7 @@ describe('generateDay', () => {
     }
   })
 
-  test('requires apiKey for a new day', async () => {
+  test('requires a secure credential resolver for a new day', async () => {
     const crushDir = path.join(tmpRoot, 'crushes', 'test')
     fs.mkdirSync(crushDir, { recursive: true })
     fs.writeFileSync(path.join(crushDir, 'persona.md'), '# test\n', 'utf-8')
@@ -285,7 +289,7 @@ describe('generateDay', () => {
 
     expect(result.success).toBe(false)
     if (result.success) return
-    expect(result.errors[0]).toContain('API Key')
+    expect(result.errors[0]).toContain('安全保存')
   })
 
   test('updates relationship after the day file is written and returns relationship data', async () => {
@@ -342,7 +346,7 @@ describe('generateDay', () => {
       slug: 'test',
       day_number: 1,
       summary: '测试摘要',
-    })
+    }, credentialResolver)
 
     expect(result.success).toBe(true)
     if (!result.success) return
@@ -369,7 +373,7 @@ describe('generateDay', () => {
       slug: 'test',
       day_number: 1,
       summary: '测试摘要',
-    })
+    }, credentialResolver)
 
     const dayFile = path.join(tmpRoot, 'crushes', 'test', 'memories', 'chats', 'day1.md')
 

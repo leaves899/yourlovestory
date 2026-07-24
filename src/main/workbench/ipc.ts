@@ -330,6 +330,41 @@ function readOptionalJsonObject(record: Record<string, unknown>, field: string):
   return value as JsonObject
 }
 
+function containsPlaintextCredentialField(value: JsonObject): boolean {
+  for (const [key, item] of Object.entries(value)) {
+    if (key.replace(/[\s_-]/g, '').toLowerCase() === 'apikey') return true
+    if (Array.isArray(item) && item.some((entry) => typeof entry === 'object' && entry !== null && containsPlaintextCredentialField(entry as JsonObject))) return true
+    if (typeof item === 'object' && item !== null && !Array.isArray(item) && containsPlaintextCredentialField(item as JsonObject)) return true
+  }
+  return false
+}
+
+function containsCredentialReferenceField(value: JsonObject): boolean {
+  for (const [key, item] of Object.entries(value)) {
+    if (isCredentialMetadataKey(key) && key.replace(/[^a-z0-9]/gi, '').toLowerCase() !== 'apikey') {
+      return true
+    }
+    if (
+      Array.isArray(item)
+      && item.some((entry) =>
+        typeof entry === 'object'
+        && entry !== null
+        && containsCredentialReferenceField(entry as JsonObject))
+    ) {
+      return true
+    }
+    if (
+      typeof item === 'object'
+      && item !== null
+      && !Array.isArray(item)
+      && containsCredentialReferenceField(item as JsonObject)
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 function readOptionalArrayOfStrings(
   record: Record<string, unknown>,
   field: string,
@@ -409,6 +444,13 @@ function parseProjectDeleteParams(value: unknown): ProjectDeleteParams {
 function parseConfigUpdateParams(value: unknown): ProjectConfigUpdateParams {
   const record = readRecord(value, 'project config input')
   const input = readRecord(record.input, 'input')
+  const settings = readOptionalJsonObject(input, 'settings')
+  if (settings && containsPlaintextCredentialField(settings)) {
+    throw new Error('项目配置不能保存 API Key，请使用系统安全凭据管理。')
+  }
+  if (settings && containsCredentialReferenceField(settings)) {
+    throw new Error('项目配置不能直接指定凭据引用，请使用系统安全凭据管理。')
+  }
   return {
     project_id: readString(record.project_id, 'project_id'),
     expected_version: readExpectedVersion(record),
@@ -418,8 +460,51 @@ function parseConfigUpdateParams(value: unknown): ProjectConfigUpdateParams {
       tone: readOptionalString(input, 'tone'),
       target_words: readOptionalNullableInteger(input, 'target_words', 1),
       context_budget: readOptionalNullableInteger(input, 'context_budget', 1),
-      settings: readOptionalJsonObject(input, 'settings'),
+      settings,
     },
+  }
+}
+
+function isCredentialMetadataKey(key: string): boolean {
+  const normalized = key.replace(/[^a-z0-9]/gi, '').toLowerCase()
+  return normalized === 'apikey'
+    || normalized === 'credentialid'
+    || normalized.endsWith('credentialid')
+}
+
+function stripCredentialMetadata(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripCredentialMetadata)
+  if (!value || typeof value !== 'object') return value
+  const result: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (isCredentialMetadataKey(key)) continue
+    result[key] = stripCredentialMetadata(item)
+  }
+  return result
+}
+
+function restoreCredentialMetadata(existing: unknown, incoming: unknown): unknown {
+  if (Array.isArray(existing) && Array.isArray(incoming)) {
+    return incoming.map((item, index) => restoreCredentialMetadata(existing[index], item))
+  }
+  if (!existing || typeof existing !== 'object' || Array.isArray(existing)) return incoming
+  if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return incoming
+  const result: Record<string, unknown> = { ...(incoming as Record<string, unknown>) }
+  for (const [key, item] of Object.entries(existing)) {
+    if (isCredentialMetadataKey(key)) {
+      result[key] = item
+      continue
+    }
+    if (key in result) result[key] = restoreCredentialMetadata(item, result[key])
+  }
+  return result
+}
+
+function safeProjectConfigView(config: ProjectConfig): ProjectConfig {
+  return {
+    ...config,
+    default_llm_config_id: null,
+    settings: stripCredentialMetadata(config.settings) as JsonObject,
   }
 }
 
@@ -881,7 +966,10 @@ function success<T>(data: T): WorkbenchResponse<T> {
   return { success: true, data }
 }
 
-export function registerWorkbenchIPC(service: NovelProjectService | undefined): void {
+export function registerWorkbenchIPC(
+  service: NovelProjectService | undefined,
+  onProjectConfigChanged?: () => void,
+): void {
   if (!service) return
 
   ipcMain.handle('novelProject:list', async () => success<Project[]>(service.listProjects()))
@@ -916,13 +1004,24 @@ export function registerWorkbenchIPC(service: NovelProjectService | undefined): 
   })
 
   ipcMain.handle('novelProject:config:get', async (_, value: unknown) =>
-    success(service.getProjectConfig(parseProjectIdParams(value).project_id)),
+    success(safeProjectConfigView(service.getProjectConfig(parseProjectIdParams(value).project_id))),
   )
   ipcMain.handle('novelProject:config:update', async (_, value: unknown) => {
     const params = parseConfigUpdateParams(value)
-    return success(
-      service.updateProjectConfig(params.project_id, params.input, params.expected_version),
+    if (params.input.settings) {
+      const current = service.getProjectConfig(params.project_id)
+      params.input.settings = restoreCredentialMetadata(
+        current.settings,
+        params.input.settings,
+      ) as JsonObject
+    }
+    const updated = service.updateProjectConfig(
+      params.project_id,
+      params.input,
+      params.expected_version,
     )
+    onProjectConfigChanged?.()
+    return success(safeProjectConfigView(updated))
   })
 
   ipcMain.handle('novelProject:volume:create', async (_, value: unknown) =>

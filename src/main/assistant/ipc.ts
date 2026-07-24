@@ -31,7 +31,6 @@ function parseLlmConfig(value: unknown): LlmConfigInput {
     provider: optionalString(value.provider),
     baseUrl: requiredString(value.baseUrl, 'llm.baseUrl'),
     model: requiredString(value.model, 'llm.model'),
-    apiKey: optionalString(value.apiKey),
     contextBudget: optionalPositiveInteger(value.contextBudget),
     maxOutputTokens: optionalPositiveInteger(value.maxOutputTokens),
     temperature: typeof value.temperature === 'number' ? value.temperature : undefined,
@@ -59,7 +58,10 @@ function parseSessionType(value: unknown): ChatSessionType | undefined {
   return value
 }
 
-export function registerAssistantIPC(service: AssistantService | undefined): void {
+export function registerAssistantIPC(
+  service: AssistantService | undefined,
+  resolveLlmConfig?: (projectId: string, input: LlmConfigInput) => LlmConfigInput,
+): void {
   if (!service) return
 
   ipcMain.handle('assistant:session:create', async (_, value: unknown) => {
@@ -101,12 +103,15 @@ export function registerAssistantIPC(service: AssistantService | undefined): voi
 
   ipcMain.handle('assistant:prompt', async (_, value: unknown) => {
     if (!isRecord(value)) throw new Error('assistant prompt input is required')
+    const sessionId = requiredString(value.sessionId, 'sessionId')
+    const projectId = service.getSession(sessionId).session.project_id
+    const parsedLlm = parseLlmConfig(value.llm)
     return {
       success: true,
       data: await service.prompt({
-        sessionId: requiredString(value.sessionId, 'sessionId'),
+        sessionId,
         prompt: requiredString(value.prompt, 'prompt'),
-        llm: parseLlmConfig(value.llm),
+        llm: resolveLlmConfig?.(projectId, parsedLlm) ?? parsedLlm,
         systemPrompt: optionalString(value.systemPrompt),
       }),
     }

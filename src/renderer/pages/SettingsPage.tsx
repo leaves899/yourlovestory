@@ -55,6 +55,9 @@ function SettingsPage() {
   const [provider, setProvider] = useState('anthropic')
   const [model, setModel] = useState('claude-sonnet-4-20250514')
   const [apiKey, setApiKey] = useState('')
+  const [credentialConfigured, setCredentialConfigured] = useState(false)
+  const [credentialError, setCredentialError] = useState<string | null>(null)
+  const [credentialBusy, setCredentialBusy] = useState(false)
   const [temperature, setTemperature] = useState(0.7)
   const [maxTokens, setMaxTokens] = useState(4096)
 
@@ -81,7 +84,10 @@ function SettingsPage() {
         setBackupPath(settings.backupPath || '')
         setProvider(settings.provider || 'anthropic')
         setModel(settings.model || 'claude-sonnet-4-20250514')
-        setApiKey(settings.apiKey || '')
+        // Saved credentials are deliberately never returned to renderer.
+        setApiKey('')
+        setCredentialConfigured(Boolean(settings.credential?.configured))
+        setCredentialError(settings.credential?.error?.message ?? null)
         setTemperature(settings.temperature || 0.7)
         setMaxTokens(settings.maxTokens || 4096)
         setCustomSystemPrompt(settings.customSystemPrompt || '')
@@ -98,6 +104,12 @@ function SettingsPage() {
     }).catch(() => {
       // 忽略错误，使用默认值
     })
+    window.electronAPI.getLlmCredentialStatus({ scope: 'app' }).then((response) => {
+      if (response.success && response.data) {
+        setCredentialConfigured(response.data.configured)
+        setCredentialError(response.data.error?.message ?? null)
+      }
+    }).catch(() => setCredentialError('无法检查系统安全存储。'))
   }, [])
 
   // 加载关系进度
@@ -123,7 +135,6 @@ function SettingsPage() {
         backupPath,
         provider,
         model,
-        apiKey,
         temperature,
         maxTokens,
         customSystemPrompt,
@@ -159,6 +170,62 @@ function SettingsPage() {
         status: 'error',
         duration: 3000,
       })
+    }
+  }
+
+  const saveCredential = async () => {
+    const secret = apiKey.trim()
+    if (!secret) {
+      toast({ title: '请输入新的 API Key', status: 'warning', duration: 3000 })
+      return
+    }
+    setCredentialBusy(true)
+    try {
+      const result = await window.electronAPI.saveLlmCredential({ scope: 'app' }, secret)
+      if (!result.success) throw new Error(result.error?.message ?? '凭据保存失败')
+      setCredentialConfigured(true)
+      setCredentialError(null)
+      toast({ title: 'API Key 已安全保存', status: 'success', duration: 3000 })
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '凭据保存失败'
+      setCredentialError(message)
+      toast({ title: '凭据保存失败', description: message, status: 'error', duration: 4000 })
+    } finally {
+      // Shorten renderer plaintext lifetime even when the operation fails.
+      setApiKey('')
+      setCredentialBusy(false)
+    }
+  }
+
+  const testCredential = async () => {
+    setCredentialBusy(true)
+    try {
+      const result = await window.electronAPI.testLlmCredential({ scope: 'app' })
+      if (!result.success) throw new Error(result.error?.message ?? '连接测试失败')
+      toast({ title: result.data?.message ?? '连接测试成功', status: 'success', duration: 3000 })
+    } catch (error: unknown) {
+      toast({ title: '连接测试失败', description: error instanceof Error ? error.message : '请检查网络和配置。', status: 'error', duration: 4000 })
+    } finally {
+      setCredentialBusy(false)
+    }
+  }
+
+  const deleteCredential = async (all: boolean) => {
+    const confirmation = all ? '确定删除全部模型凭据吗？此操作不可撤销。' : '确定删除当前日记模型凭据吗？'
+    if (!window.confirm(confirmation)) return
+    setCredentialBusy(true)
+    try {
+      const result = all
+        ? await window.electronAPI.deleteAllLlmCredentials()
+        : await window.electronAPI.deleteLlmCredential({ scope: 'app' })
+      if (!result.success) throw new Error(result.error?.message ?? '删除凭据失败')
+      setCredentialConfigured(false)
+      setCredentialError(null)
+      toast({ title: all ? '已删除全部模型凭据' : '已删除 API Key', status: 'success', duration: 3000 })
+    } catch (error: unknown) {
+      toast({ title: '删除凭据失败', description: error instanceof Error ? error.message : '请重试。', status: 'error', duration: 4000 })
+    } finally {
+      setCredentialBusy(false)
     }
   }
 
@@ -218,8 +285,19 @@ function SettingsPage() {
                     type="password"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="sk-"
+                    placeholder={credentialConfigured ? '已安全保存。输入新值可替换。' : '输入 API Key'}
                   />
+                  <Text mt={2} fontSize="sm" color={credentialError ? 'red.500' : 'ink.500'}>
+                    {credentialError ?? (credentialConfigured ? '已安全保存，不会回填到输入框。' : '尚未配置 API Key。')}
+                  </Text>
+                  <HStack mt={3} spacing={2} flexWrap="wrap">
+                    <Button size="sm" colorScheme="cinnabar" isLoading={credentialBusy} onClick={() => void saveCredential()}>
+                      {credentialConfigured ? '替换并安全保存' : '安全保存'}
+                    </Button>
+                    <Button size="sm" variant="outline" isDisabled={!credentialConfigured || credentialBusy} onClick={() => void testCredential()}>测试连接</Button>
+                    <Button size="sm" variant="outline" colorScheme="red" isDisabled={!credentialConfigured || credentialBusy} onClick={() => void deleteCredential(false)}>删除凭据</Button>
+                    <Button size="sm" variant="ghost" colorScheme="red" isLoading={credentialBusy} onClick={() => void deleteCredential(true)}>删除全部模型凭据</Button>
+                  </HStack>
                 </Box>
 
                 <Box>
