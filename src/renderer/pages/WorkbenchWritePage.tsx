@@ -22,6 +22,10 @@ import {
 } from '@chakra-ui/react'
 import { FaCheck, FaPlay, FaRedo, FaStop, FaTimes } from 'react-icons/fa'
 import { WorkbenchEmpty, WorkbenchError, WorkbenchPage, outlineStatusLabel, statusColor } from '../components/WorkbenchPrimitives'
+import {
+  inspectLlmEndpoint,
+  LlmEndpointSecurityNotice,
+} from '../components/LlmEndpointSecurityNotice'
 import { createLlmConfig } from '../services/assistantService'
 import { useAssistantStore, type AssistantLlmForm } from '../stores/assistantStore'
 import { useTaskStore } from '../stores/taskStore'
@@ -58,6 +62,7 @@ function WorkbenchWritePage() {
   const [chapterId, setChapterId] = useState('')
   const [autoConfirm, setAutoConfirm] = useState(false)
   const [llm, setLlm] = useState<AssistantLlmForm>(defaultLlm)
+  const endpointSecurity = inspectLlmEndpoint(llm.baseUrl)
 
   useEffect(() => {
     if (!currentProject) return
@@ -77,6 +82,7 @@ function WorkbenchWritePage() {
   const start = async (): Promise<void> => {
     if (!currentProject || !selectedChapter || busy) return
     if (selectedChapter.status === 'draft') return
+    if (!endpointSecurity.valid) return
     let sessionId = activeSessionId
     if (!sessionId || assistantProjectId !== currentProject.id) {
       await initializeAssistant(currentProject.id)
@@ -103,6 +109,7 @@ function WorkbenchWritePage() {
   return (
     <WorkbenchPage eyebrow="WRITING PIPELINE" title="章节写作" description="生成需要已确认或已锁定的卷章大纲。任务会持续发送阶段、内容、检查点和审核事件，失败后可以从恢复入口继续。">
       <WorkbenchError message={error} />
+      <LlmEndpointSecurityNotice baseUrl={llm.baseUrl} />
       {chapterOutlines.length === 0 ? <WorkbenchEmpty title="还没有章节大纲" description="先在卷章大纲页创建并确认章节，再开始生成。" /> : <Stack spacing={5}>
         <Card>
           <CardBody>
@@ -111,7 +118,7 @@ function WorkbenchWritePage() {
                 <FormControl><FormLabel>目标章节</FormLabel><Select value={selectedChapter?.id ?? ''} onChange={(event) => setChapterId(event.target.value)}>{chapterOutlines.map((chapter) => <option key={chapter.id} value={chapter.id}>第 {chapter.chapter_number} 章 · {chapter.title} · {outlineStatusLabel(chapter.status)}</option>)}</Select></FormControl>
                 {selectedChapter && <Alert status={selectedChapter.status === 'draft' ? 'warning' : 'info'}><AlertIcon /><Text>当前状态：{outlineStatusLabel(selectedChapter.status)}。{selectedChapter.status === 'draft' ? '确认大纲后才可以生成。' : '生成将使用当前版本，若版本发生变化会提示冲突。'}</Text></Alert>}
                 <HStack><Checkbox isChecked={autoConfirm} onChange={(event) => setAutoConfirm(event.target.checked)} isDisabled={busy}>审核通过后自动确认</Checkbox><Text fontSize="sm" color="ink.500">建议首次生成关闭自动确认</Text></HStack>
-                <HStack><Button colorScheme="cinnabar" leftIcon={<FaPlay />} onClick={() => void start()} isDisabled={busy || !selectedChapter || selectedChapter.status === 'draft'} data-testid="start-chapter-generation">{busy ? '生成中' : '开始生成'}</Button><Button variant="outline" leftIcon={<FaStop />} onClick={() => void cancel()} isDisabled={!busy}>取消任务</Button></HStack>
+                <HStack><Button colorScheme="cinnabar" leftIcon={<FaPlay />} onClick={() => void start()} isDisabled={busy || !selectedChapter || selectedChapter.status === 'draft' || !endpointSecurity.valid} data-testid="start-chapter-generation">{busy ? '生成中' : '开始生成'}</Button><Button variant="outline" leftIcon={<FaStop />} onClick={() => void cancel()} isDisabled={!busy}>取消任务</Button></HStack>
               </Stack>
               <Stack spacing={3}><Text fontWeight="bold">模型参数</Text><FormControl><FormLabel fontSize="sm">兼容接口</FormLabel><Input size="sm" value={llm.baseUrl} onChange={(event) => setLlm({ ...llm, baseUrl: event.target.value })} /></FormControl><FormControl><FormLabel fontSize="sm">模型</FormLabel><Input size="sm" value={llm.model} onChange={(event) => setLlm({ ...llm, model: event.target.value })} /></FormControl><FormControl><FormLabel fontSize="sm">API Key</FormLabel><Input size="sm" type="password" value={llm.apiKey} onChange={(event) => setLlm({ ...llm, apiKey: event.target.value })} /></FormControl></Stack>
             </SimpleGrid>
