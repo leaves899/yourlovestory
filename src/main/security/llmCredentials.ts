@@ -4,7 +4,10 @@ import { createHash } from 'node:crypto'
 import type { SqliteDatabase } from '../database'
 import { getSettings, updateSettings } from '../../shared/persistence/settingsStore'
 import { sanitizeSensitiveData } from '../../shared/security/sanitizeSensitiveData'
-import { normalizeLlmBaseUrl } from '../../agent/llm/config'
+import {
+  LlmBaseUrlValidationError,
+  normalizeLlmBaseUrl,
+} from '../../agent/llm/config'
 import type { CredentialService, CredentialAvailability, CredentialBinding } from './credentialService'
 
 export const APP_LLM_CREDENTIAL_ID = 'llm:app-default'
@@ -19,11 +22,13 @@ export interface CredentialMigrationIssue {
 export interface CredentialMigrationReport {
   migrated: number
   pending: number
+  failed: number
   issues: CredentialMigrationIssue[]
 }
 
 interface LegacyLlmConfigRow {
   id: string
+  project_id: string
   api_key: string
   credential_id?: string
   provider?: string
@@ -66,6 +71,65 @@ export function credentialBindingForProvider(provider: unknown, baseUrl?: unknow
     provider: selected,
     baseUrl: normalizeLlmBaseUrl(configuredUrl ?? defaults[selected] ?? defaults['openai-compatible']),
   }
+}
+
+type MigrationBindingResult =
+  | { success: true; data: CredentialBinding }
+  | {
+      success: false
+      error: {
+        code: 'INVALID_LEGACY_LLM_BASE_URL'
+          | 'INSECURE_LEGACY_LLM_BASE_URL'
+          | 'CREDENTIAL_BINDING_INVALID'
+        message: string
+        unexpected: boolean
+      }
+    }
+
+function credentialBindingForMigration(
+  provider: unknown,
+  baseUrl?: unknown,
+): MigrationBindingResult {
+  try {
+    return { success: true, data: credentialBindingForProvider(provider, baseUrl) }
+  } catch (caught) {
+    if (caught instanceof LlmBaseUrlValidationError) {
+      return {
+        success: false,
+        error: {
+          code: caught.code === 'INSECURE_LLM_BASE_URL'
+            ? 'INSECURE_LEGACY_LLM_BASE_URL'
+            : 'INVALID_LEGACY_LLM_BASE_URL',
+          message: '历史模型接口地址无效或不符合当前安全策略，请在设置页重新配置。',
+          unexpected: false,
+        },
+      }
+    }
+    return {
+      success: false,
+      error: {
+        code: 'CREDENTIAL_BINDING_INVALID',
+        message: '历史模型凭据绑定无法处理，原明文已保留，请在设置页重新配置。',
+        unexpected: true,
+      },
+    }
+  }
+}
+
+function recordBindingIssue(
+  report: CredentialMigrationReport,
+  source: CredentialMigrationIssue['source'],
+  identifier: string,
+  result: Extract<MigrationBindingResult, { success: false }>,
+): void {
+  report.pending += 1
+  if (result.error.unexpected) report.failed += 1
+  report.issues.push({
+    source,
+    identifier,
+    code: result.error.code,
+    message: result.error.message,
+  })
 }
 
 function settingsFile(root: string): string {
@@ -115,10 +179,15 @@ function migrateSettingsAt(
       return
     }
   }
+  const binding = credentialBindingForMigration(settings.provider, settings.baseUrl)
+  if (!binding.success) {
+    recordBindingIssue(report, 'settings', 'app-default', binding)
+    return
+  }
   const saved = credentialService.saveCredential(
     APP_LLM_CREDENTIAL_ID,
     plaintext,
-    credentialBindingForProvider(settings.provider, settings.baseUrl),
+    binding.data,
   )
   if (!saved.success) {
     report.pending += 1
@@ -170,9 +239,15 @@ function migrateDatabase(
     return
   }
   const rows = database.prepare<LegacyLlmConfigRow>(
-    "SELECT id, api_key, credential_id, provider, base_url FROM llm_configs WHERE TRIM(api_key) <> ''",
+    "SELECT id, project_id, api_key, credential_id, provider, base_url FROM llm_configs WHERE TRIM(api_key) <> ''",
   ).all()
   for (const row of rows) {
+    const identifier = `${row.project_id}:${row.id}`
+    const binding = credentialBindingForMigration(row.provider, row.base_url)
+    if (!binding.success) {
+      recordBindingIssue(report, 'database', identifier, binding)
+      continue
+    }
     const credentialId = nonEmptyString(row.credential_id) ?? credentialIdForRow(row.id)
     const existing = credentialService.hasCredential(credentialId)
     if (!existing.success) {
@@ -196,7 +271,7 @@ function migrateDatabase(
     const saved = credentialService.saveCredential(
       credentialId,
       row.api_key,
-      credentialBindingForProvider(row.provider, row.base_url),
+      binding.data,
     )
     if (!saved.success) {
       report.pending += 1
@@ -351,6 +426,11 @@ function migrateProjectConfigSettings(
         })
         continue
       }
+      const binding = credentialBindingForMigration(location.provider, location.baseUrl)
+      if (!binding.success) {
+        recordBindingIssue(report, 'database', identifier, binding)
+        continue
+      }
       const credentialId = stableProjectCredentialId(row.project_id, location)
       const existing = credentialService.hasCredential(credentialId)
       if (!existing.success) {
@@ -374,7 +454,7 @@ function migrateProjectConfigSettings(
       const saved = credentialService.saveCredential(
         credentialId,
         location.secret,
-        credentialBindingForProvider(location.provider, location.baseUrl),
+        binding.data,
       )
       const verified = saved.success ? credentialService.getCredential(credentialId) : saved
       if (!saved.success || !verified.success || verified.data !== location.secret) {
@@ -419,7 +499,7 @@ export function migrateLegacyLlmCredentials(
   database: SqliteDatabase,
   credentialService: CredentialService,
 ): CredentialMigrationReport {
-  const report: CredentialMigrationReport = { migrated: 0, pending: 0, issues: [] }
+  const report: CredentialMigrationReport = { migrated: 0, pending: 0, failed: 0, issues: [] }
   const availability = credentialService.availability()
   if (!availability.available) {
     // Keep the final schema migration blocked so legacy plaintext is retained

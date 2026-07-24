@@ -134,7 +134,10 @@ app.whenReady().then(() => {
     credentialService,
   )
   if (credentialMigration.pending > 0) {
-    console.warn('[CredentialMigration] pending', { pending: credentialMigration.pending })
+    console.warn('[CredentialMigration] pending', {
+      pending: credentialMigration.pending,
+      failed: credentialMigration.failed,
+    })
   } else {
     runMigrations(database)
   }
@@ -144,7 +147,7 @@ app.whenReady().then(() => {
     credentialService,
     workbenchService,
     database,
-    migrationIssue: credentialMigration.issues[0],
+    migrationIssues: credentialMigration.issues,
     invalidateRuntimes: () => {
       assistantService?.dispose()
       taskManager?.dispose()

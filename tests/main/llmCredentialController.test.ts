@@ -62,6 +62,12 @@ describe('LlmCredentialController', () => {
     testTimeoutMs?: number
     writeSettings?: (value: Record<string, unknown>) => boolean
     invalidateRuntimes?: () => void
+    migrationIssues?: Array<{
+      source: 'settings' | 'database'
+      identifier: string
+      code: string
+      message: string
+    }>
   } = {}): LlmCredentialController {
     return new LlmCredentialController({
       userDataPath: root,
@@ -76,6 +82,7 @@ describe('LlmCredentialController', () => {
       fetchImpl: overrides.fetchImpl,
       testTimeoutMs: overrides.testTimeoutMs,
       invalidateRuntimes: overrides.invalidateRuntimes,
+      migrationIssues: overrides.migrationIssues,
     })
   }
 
@@ -121,6 +128,44 @@ describe('LlmCredentialController', () => {
     expect(result).toMatchObject({ success: false, error: { code: 'BINDING_MISMATCH' } })
     expect(JSON.stringify(result)).not.toContain(TEST_SECRET)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('reports an invalid legacy URL as unconfigured without allowing runtime or test requests', async () => {
+    const fetchMock = jest.fn(async () => ({ ok: true, status: 200 } as Response))
+    settings = {
+      provider: 'openai',
+      baseUrl: 'http://192.168.1.20:11434',
+      apiKey: TEST_SECRET,
+    }
+    const subject = controller({
+      fetchImpl: fetchMock as typeof fetch,
+      migrationIssues: [{
+        source: 'settings',
+        identifier: 'app-default',
+        code: 'INSECURE_LEGACY_LLM_BASE_URL',
+        message: '历史模型接口地址不符合当前安全策略，请重新配置。',
+      }],
+    })
+
+    expect(subject.status({ scope: 'app' })).toMatchObject({
+      success: true,
+      data: {
+        configured: false,
+        error: { code: 'INSECURE_LEGACY_LLM_BASE_URL' },
+      },
+    })
+    await expect(subject.test({ scope: 'app' })).rejects.toThrow(
+      'baseUrl must use https unless it targets a loopback address',
+    )
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    settings.baseUrl = 'https://app.example/v1'
+    expect(subject.save({ scope: 'app' }, TEST_SECRET)).toMatchObject({ success: true })
+    expect(subject.status({ scope: 'app' })).toMatchObject({
+      success: true,
+      data: { configured: true, error: null },
+    })
+    expect(settings.apiKey).toBeUndefined()
   })
 
   it('resolves runtime endpoints from project ownership instead of renderer input', () => {

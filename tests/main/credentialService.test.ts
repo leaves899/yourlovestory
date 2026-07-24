@@ -4,6 +4,7 @@ import * as path from 'node:path'
 import { CredentialService, type SafeStorageAdapter } from '@/main/security/credentialService'
 import { migrateLegacyLlmCredentials } from '@/main/security/llmCredentials'
 import { initializeDatabase, migrations } from '@/main/database'
+import * as llmConfig from '@/agent/llm/config'
 
 const TEST_SECRET = 'sk-test-secret-do-not-expose-123456'
 
@@ -128,6 +129,32 @@ describe('CredentialService', () => {
     expect(fs.readFileSync(path.join(root, 'settings.json'), 'utf8')).toContain(TEST_SECRET)
   })
 
+  it.each([
+    ['not a valid url', 'INVALID_LEGACY_LLM_BASE_URL'],
+    ['http://192.168.1.20:11434', 'INSECURE_LEGACY_LLM_BASE_URL'],
+  ])('retains global plaintext and reports a safe pending issue for legacy URL %s', (baseUrl, code) => {
+    fs.writeFileSync(
+      path.join(root, 'settings.json'),
+      JSON.stringify({ provider: 'openai', baseUrl, apiKey: TEST_SECRET }),
+      'utf8',
+    )
+    const database = { prepare: () => ({ all: () => [] }) } as never
+
+    const report = migrateLegacyLlmCredentials(root, root, database, service)
+    const persisted = fs.readFileSync(path.join(root, 'settings.json'), 'utf8')
+
+    expect(report).toMatchObject({
+      migrated: 0,
+      pending: 1,
+      failed: 0,
+      issues: [{ source: 'settings', identifier: 'app-default', code }],
+    })
+    expect(JSON.stringify(report)).not.toContain(TEST_SECRET)
+    expect(persisted).toContain(TEST_SECRET)
+    expect(persisted).not.toContain('credentialId')
+    expect(service.listCredentialIds()).toEqual({ success: true, data: [] })
+  })
+
   it('migrates legacy project JSON without retaining a plaintext key in SQLite', () => {
     const database = initializeDatabase(root, {
       filename: path.join(root, 'legacy.sqlite'),
@@ -201,6 +228,152 @@ describe('CredentialService', () => {
       expect(recovered).toMatchObject({ migrated: 1, pending: 0 })
       expect(completed).not.toContain('sk-test-')
     } finally {
+      database.close()
+    }
+  })
+
+  it('continues database migration while retaining a row with an insecure legacy URL', () => {
+    const database = initializeDatabase(root, {
+      filename: path.join(root, 'legacy-invalid-url.sqlite'),
+      migrations: migrations.filter((migration) => migration.version < 8),
+    })
+    try {
+      database.prepare(
+        "INSERT INTO projects (id, slug, name) VALUES ('project-db', 'project-db', 'Project')",
+      ).run()
+      const insert = database.prepare(
+        `INSERT INTO llm_configs
+          (id, project_id, name, provider, base_url, model, api_key)
+         VALUES (?, 'project-db', ?, 'openai', ?, 'test-model', ?)`,
+      )
+      insert.run('valid-config', 'Valid', 'https://api.example.test/v1', TEST_SECRET)
+      insert.run('invalid-config', 'Invalid', 'http://10.0.0.8:8080', TEST_SECRET)
+
+      const report = migrateLegacyLlmCredentials(root, root, database, service)
+      const rows = database.prepare<{
+        id: string
+        api_key: string
+        credential_id: string
+      }>('SELECT id, api_key, credential_id FROM llm_configs ORDER BY id').all()
+      const invalid = rows.find((row) => row.id === 'invalid-config')!
+      const valid = rows.find((row) => row.id === 'valid-config')!
+
+      expect(report).toMatchObject({ migrated: 1, pending: 1, failed: 0 })
+      expect(report.issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          identifier: 'project-db:invalid-config',
+          code: 'INSECURE_LEGACY_LLM_BASE_URL',
+        }),
+      ]))
+      expect(invalid.api_key).toBe(TEST_SECRET)
+      expect(invalid.credential_id).toBe('')
+      expect(valid.api_key).toBe('')
+      expect(valid.credential_id).toBe('llm-config:valid-config')
+      expect(
+        database.prepare<{ count: number }>(
+          'SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 8',
+        ).get(),
+      ).toEqual({ count: 0 })
+      expect(database.prepare<{ name: string }>('PRAGMA table_info(llm_configs)').all())
+        .toEqual(expect.arrayContaining([expect.objectContaining({ name: 'api_key' })]))
+      expect(JSON.stringify(report)).not.toContain(TEST_SECRET)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('migrates valid project credentials around an invalid URL and recovers after correction', () => {
+    const database = initializeDatabase(root, {
+      filename: path.join(root, 'project-mixed-url.sqlite'),
+      migrations: migrations.filter((migration) => migration.version < 8),
+    })
+    try {
+      database.prepare(
+        "INSERT INTO projects (id, slug, name) VALUES ('project-mixed', 'project-mixed', 'Project')",
+      ).run()
+      database.prepare(
+        "INSERT INTO project_configs (project_id, settings_json) VALUES ('project-mixed', ?)",
+      ).run(JSON.stringify({
+        valid: {
+          provider: 'deepseek',
+          baseUrl: 'https://api.deepseek.com/v1',
+          apiKey: TEST_SECRET,
+        },
+        invalid: {
+          provider: 'openai',
+          baseUrl: 'http://172.16.0.5:3000',
+          apiKey: TEST_SECRET,
+        },
+      }))
+
+      const first = migrateLegacyLlmCredentials(root, root, database, service)
+      const partialRow = database.prepare<{ settings_json: string }>(
+        "SELECT settings_json FROM project_configs WHERE project_id = 'project-mixed'",
+      ).get()!
+      const partial = JSON.parse(partialRow.settings_json) as {
+        valid: { apiKey?: string; credentialId?: string }
+        invalid: { apiKey?: string; credentialId?: string; baseUrl: string }
+      }
+
+      expect(first).toMatchObject({ migrated: 1, pending: 1, failed: 0 })
+      expect(partial.valid.apiKey).toBeUndefined()
+      expect(partial.valid.credentialId).toBeDefined()
+      expect(partial.invalid.apiKey).toBe(TEST_SECRET)
+      expect(partial.invalid.credentialId).toBeUndefined()
+      expect(migrateLegacyLlmCredentials(root, root, database, service))
+        .toMatchObject({ migrated: 0, pending: 1, failed: 0 })
+
+      partial.invalid.baseUrl = 'https://local-model.example/v1'
+      database.prepare(
+        "UPDATE project_configs SET settings_json = ? WHERE project_id = 'project-mixed'",
+      ).run(JSON.stringify(partial))
+      const recovered = migrateLegacyLlmCredentials(root, root, database, service)
+      const completed = database.prepare<{ settings_json: string }>(
+        "SELECT settings_json FROM project_configs WHERE project_id = 'project-mixed'",
+      ).get()!.settings_json
+
+      expect(recovered).toMatchObject({ migrated: 1, pending: 0, failed: 0 })
+      expect(completed).not.toContain(TEST_SECRET)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('returns a structured failure for an unexpected binding error and continues other records', () => {
+    fs.writeFileSync(
+      path.join(root, 'settings.json'),
+      JSON.stringify({ provider: 'openai', baseUrl: 'https://app.example/v1', apiKey: TEST_SECRET }),
+      'utf8',
+    )
+    const database = initializeDatabase(root, {
+      filename: path.join(root, 'unexpected-binding.sqlite'),
+      migrations: migrations.filter((migration) => migration.version < 8),
+    })
+    try {
+      database.prepare(
+        "INSERT INTO projects (id, slug, name) VALUES ('project-next', 'project-next', 'Project')",
+      ).run()
+      database.prepare(
+        `INSERT INTO llm_configs
+          (id, project_id, name, provider, base_url, model, api_key)
+         VALUES ('next-config', 'project-next', 'Next', 'openai',
+           'https://api.example.test/v1', 'test-model', ?)`,
+      ).run(TEST_SECRET)
+      jest.spyOn(llmConfig, 'normalizeLlmBaseUrl')
+        .mockImplementationOnce(() => { throw new Error('unexpected implementation failure') })
+
+      const report = migrateLegacyLlmCredentials(root, root, database, service)
+
+      expect(report).toMatchObject({
+        migrated: 1,
+        pending: 1,
+        failed: 1,
+        issues: [expect.objectContaining({ code: 'CREDENTIAL_BINDING_INVALID' })],
+      })
+      expect(fs.readFileSync(path.join(root, 'settings.json'), 'utf8')).toContain(TEST_SECRET)
+      expect(JSON.stringify(report)).not.toContain(TEST_SECRET)
+    } finally {
+      jest.restoreAllMocks()
       database.close()
     }
   })

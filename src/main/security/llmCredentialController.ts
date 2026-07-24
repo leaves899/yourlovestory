@@ -13,6 +13,7 @@ import type {
 import {
   APP_LLM_CREDENTIAL_ID,
   credentialBindingForProvider,
+  type CredentialMigrationIssue,
 } from './llmCredentials'
 
 export type CredentialScope = { scope: 'app' } | { scope: 'project'; projectId: string }
@@ -27,7 +28,7 @@ export interface CredentialControllerOptions {
   invalidateRuntimes?: () => void
   readSettings?: () => Record<string, unknown>
   writeSettings?: (settings: Record<string, unknown>) => boolean
-  migrationIssue?: { code: string; message: string }
+  migrationIssues?: CredentialMigrationIssue[]
 }
 
 interface LlmConfigRow {
@@ -118,12 +119,14 @@ function requestHeaders(provider: string, secret: string): Record<string, string
 export class LlmCredentialController {
   private readonly readSettings: () => Record<string, unknown>
   private readonly writeSettings: (settings: Record<string, unknown>) => boolean
+  private migrationIssues: CredentialMigrationIssue[]
 
   public constructor(private readonly options: CredentialControllerOptions) {
     this.readSettings = options.readSettings
       ?? (() => getSettings(options.userDataPath) as Record<string, unknown>)
     this.writeSettings = options.writeSettings
       ?? ((settings) => updateSettings(options.userDataPath, settings))
+    this.migrationIssues = [...(options.migrationIssues ?? [])]
   }
 
   public resolveContext(target: CredentialScope): ResolvedCredentialContext {
@@ -196,7 +199,24 @@ export class LlmCredentialController {
     error: { code: string; message: string } | null
   }> {
     const availability = this.options.credentialService.availability()
-    const context = this.resolveContext(target)
+    const migrationIssue = this.migrationIssueFor(target)
+    let context: ResolvedCredentialContext
+    try {
+      context = this.resolveContext(target)
+    } catch (caught) {
+      if (!migrationIssue) throw caught
+      return {
+        success: true,
+        data: {
+          configured: false,
+          storageAvailable: availability.available,
+          backend: availability.backend,
+          error: availability.error
+            ? { code: availability.error.code, message: availability.error.message }
+            : { code: migrationIssue.code, message: migrationIssue.message },
+        },
+      }
+    }
     if (!context.referenced) {
       return {
         success: true,
@@ -206,7 +226,9 @@ export class LlmCredentialController {
           backend: availability.backend,
           error: availability.error
             ? { code: availability.error.code, message: availability.error.message }
-            : this.options.migrationIssue ?? null,
+            : migrationIssue
+              ? { code: migrationIssue.code, message: migrationIssue.message }
+              : null,
         },
       }
     }
@@ -226,7 +248,9 @@ export class LlmCredentialController {
           ? { code: 'BINDING_MISMATCH', message: 'Provider 或接口地址已变更，请重新保存凭据完成绑定。' }
           : availability.error
             ? { code: availability.error.code, message: availability.error.message }
-            : this.options.migrationIssue ?? null,
+            : migrationIssue
+              ? { code: migrationIssue.code, message: migrationIssue.message }
+              : null,
       },
     }
   }
@@ -243,6 +267,7 @@ export class LlmCredentialController {
       () => this.writeReference(context),
     )
     if (!committed.success) return committed
+    this.clearMigrationIssuesFor(target)
     this.options.invalidateRuntimes?.()
     return { success: true, data: { configured: true } }
   }
@@ -407,6 +432,22 @@ export class LlmCredentialController {
     ).get(configId, projectId)
   }
 
+  private migrationIssueFor(target: CredentialScope): CredentialMigrationIssue | undefined {
+    return this.migrationIssues.find((issue) => {
+      if (target.scope === 'app') {
+        return issue.source === 'settings' && issue.identifier === 'app-default'
+      }
+      return issue.source === 'database'
+        && issue.identifier.startsWith(`${target.projectId}:`)
+    })
+  }
+
+  private clearMigrationIssuesFor(target: CredentialScope): void {
+    const current = this.migrationIssueFor(target)
+    if (!current) return
+    this.migrationIssues = this.migrationIssues.filter((issue) => issue !== current)
+  }
+
   private writeReference(context: ResolvedCredentialContext): boolean {
     if (context.target.scope === 'app') {
       const settings = this.readSettings()
@@ -416,8 +457,14 @@ export class LlmCredentialController {
       return this.writeSettings(settings)
     }
     if (context.llmConfigId && this.options.database) {
+      const plaintextAssignment = hasColumn(this.options.database, 'llm_configs', 'api_key')
+        ? ", api_key = ''"
+        : ''
       const result = this.options.database
-        .prepare('UPDATE llm_configs SET credential_id = ? WHERE id = ? AND project_id = ?')
+        .prepare(
+          `UPDATE llm_configs SET credential_id = ?${plaintextAssignment}
+           WHERE id = ? AND project_id = ?`,
+        )
         .run(context.credentialId, context.llmConfigId, context.target.projectId)
       return result.changes === 1
     }

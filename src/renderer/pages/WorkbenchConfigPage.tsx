@@ -44,7 +44,11 @@ function WorkbenchConfigPage() {
     void window.electronAPI.getLlmCredentialStatus({ scope: 'project', projectId: currentProject.id })
       .then((response) => {
         setCredentialConfigured(response.success && response.data?.configured === true)
-        setCredentialMessage(response.success ? '' : response.error?.message ?? '无法读取凭据状态。')
+        setCredentialMessage(
+          response.success
+            ? response.data?.error?.message ?? ''
+            : response.error?.message ?? '无法读取凭据状态。',
+        )
       })
       .catch(() => setCredentialMessage('无法读取凭据状态。'))
   }, [currentProject])
@@ -134,7 +138,7 @@ function WorkbenchConfigPage() {
               <FormControl><FormLabel>上下文预算</FormLabel><Input type="number" value={contextBudget} onChange={(event) => { setContextBudget(event.target.value); markDirty() }} placeholder="Token 预算" /></FormControl>
             </SimpleGrid>
             <FormControl><FormLabel>扩展设置 JSON</FormLabel><Textarea minH="180px" fontFamily="mono" value={settings} onChange={(event) => { setSettings(event.target.value); markDirty() }} /></FormControl>
-            <Card variant="outline"><CardBody><Stack spacing={3}><Text fontWeight="bold">项目模型凭据</Text><Text fontSize="sm" color={credentialConfigured ? 'green.600' : 'orange.600'}>{credentialConfigured ? '已安全保存，不会回填或显示完整 API Key。' : '尚未配置，保存后仅由主进程使用。'}</Text><FormControl><FormLabel fontSize="sm">保存或替换 API Key</FormLabel><Input type="password" value={credentialInput} onChange={(event) => setCredentialInput(event.target.value)} autoComplete="off" placeholder="仅用于本次安全保存" /></FormControl><HStack flexWrap="wrap"><Button size="sm" colorScheme="cinnabar" isLoading={credentialBusy} onClick={() => void saveCredential()} isDisabled={!credentialInput.trim()}>保存或替换</Button><Button size="sm" variant="outline" isLoading={credentialBusy} onClick={() => void testCredential()} isDisabled={!credentialConfigured}>测试连接</Button><Button size="sm" variant="outline" colorScheme="red" isLoading={credentialBusy} onClick={() => void deleteCredential()} isDisabled={!credentialConfigured}>删除凭据</Button></HStack>{credentialMessage && <Text fontSize="sm" color="ink.600">{credentialMessage}</Text>}</Stack></CardBody></Card>
+            <Card variant="outline"><CardBody><Stack spacing={3}><Text fontWeight="bold">项目模型凭据</Text><Text fontSize="sm" color={credentialConfigured ? 'green.600' : 'orange.600'}>{credentialConfigured ? '已安全保存，不会回填或显示完整 API Key。' : '尚未配置，保存后仅由主进程使用。'}</Text><Text fontSize="sm" color="ink.500">使用自定义 HTTPS 模型接口时，API Key 会发送到你保存并绑定的该服务地址；renderer 不能临时覆盖地址。</Text><FormControl><FormLabel fontSize="sm">保存或替换 API Key</FormLabel><Input type="password" value={credentialInput} onChange={(event) => setCredentialInput(event.target.value)} autoComplete="off" placeholder="仅用于本次安全保存" /></FormControl><HStack flexWrap="wrap"><Button size="sm" colorScheme="cinnabar" isLoading={credentialBusy} onClick={() => void saveCredential()} isDisabled={!credentialInput.trim()}>保存或替换</Button><Button size="sm" variant="outline" isLoading={credentialBusy} onClick={() => void testCredential()} isDisabled={!credentialConfigured}>测试连接</Button><Button size="sm" variant="outline" colorScheme="red" isLoading={credentialBusy} onClick={() => void deleteCredential()} isDisabled={!credentialConfigured}>删除凭据</Button></HStack>{credentialMessage && <Text fontSize="sm" color="ink.600">{credentialMessage}</Text>}</Stack></CardBody></Card>
             <Alert status="info"><AlertIcon /><Text>亲密内容默认关闭。只有项目目录中明确启用配置时，相关 Agent 工具才会处理对应内容。</Text></Alert>
             <Button alignSelf="flex-start" colorScheme="cinnabar" isLoading={saving} onClick={() => void save()} data-testid="save-project-config">保存配置</Button>
           </Stack>
