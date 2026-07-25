@@ -1,6 +1,11 @@
 import type { Static } from 'typebox'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import type { LlmConfigInput } from '../llm'
+import {
+  defineAgentTool,
+  type RegisteredAgentTool,
+  type ToolRisk,
+} from '../permissions'
 import { loadTypeBoxRuntime, type TypeBoxBuilder } from '../runtime'
 import type { WorkbenchService } from '../../main/workbench'
 import type {
@@ -155,12 +160,67 @@ function requiredString(value: string | undefined, field: string): string {
   return value
 }
 
+function actionFromArgs(args: unknown): string | undefined {
+  if (typeof args !== 'object' || args === null || Array.isArray(args)) return undefined
+  const action = (args as { action?: unknown }).action
+  return typeof action === 'string' ? action : undefined
+}
+
+export function resolveOutlineToolRisk(args: unknown): ToolRisk {
+  switch (actionFromArgs(args)) {
+    case 'create_volume_outline':
+    case 'update_volume_outline':
+    case 'create_chapter_outline':
+    case 'update_chapter_outline':
+      return 'write'
+    case 'confirm_volume_outline':
+    case 'lock_volume_outline':
+    case 'confirm_chapter_outline':
+    case 'lock_chapter_outline':
+      return 'destructive'
+    default:
+      return 'destructive'
+  }
+}
+
+export function resolveNarrativeToolRisk(args: unknown): ToolRisk {
+  switch (actionFromArgs(args)) {
+    case 'list_memories':
+    case 'list_memory_proposals':
+    case 'list_foreshadows':
+    case 'list_skills':
+    case 'list_revisions':
+    case 'get_blocks':
+    case 'diff_revisions':
+    case 'diff_versions':
+      return 'read'
+    case 'approve_memory':
+    case 'reject_memory':
+    case 'apply_revision':
+    case 'transition_foreshadow':
+    case 'toggle_skill':
+      return 'destructive'
+    default:
+      return 'destructive'
+  }
+}
+
+export function resolveCreativeToolRisk(args: unknown): ToolRisk {
+  switch (actionFromArgs(args)) {
+    case 'start_chapter_generation':
+    case 'start_chapter_polish':
+      return 'destructive'
+    default:
+      return 'destructive'
+  }
+}
+
 function createContextTool(
   service: WorkbenchService,
   projectId: string,
   schemas: ToolSchemas,
-): AgentTool<ToolSchemas['context'], ToolDetails> {
-  return {
+): RegisteredAgentTool<ToolSchemas['context'], ToolDetails> {
+  return defineAgentTool({
     name: 'novel_context',
     label: 'Novel Context',
     description: '读取当前长篇项目的角色、世界观、提纲、章节和叙事状态。',
@@ -208,20 +268,24 @@ function createContextTool(
       }
       return result(read(params.action))
     },
-  }
+  }, {
+    defaultRisk: 'read',
+    scopes: ['novel:read'],
+    confirmation: 'never',
+    executionMode: 'parallel',
+  })
 }
 
 function createOutlineTool(
   service: WorkbenchService,
   projectId: string,
   schemas: ToolSchemas,
-): AgentTool<ToolSchemas['outline'], ToolDetails> {
-  return {
+): RegisteredAgentTool<ToolSchemas['outline'], ToolDetails> {
+  return defineAgentTool({
     name: 'outline_manager',
     label: 'Outline Manager',
     description: '创建、修改、确认或锁定当前项目的卷纲和章节大纲。写入操作需要确认。',
     parameters: schemas.outline,
-    executionMode: 'sequential',
     execute: async (_toolCallId: string, params: OutlineParameters) => {
       switch (params.action) {
         case 'create_volume_outline': {
@@ -297,20 +361,25 @@ function createOutlineTool(
           return result(service.lockChapterOutline(projectId, requiredString(params.outline_id, 'outline_id'), params.expected_version))
       }
     },
-  }
+  }, {
+    defaultRisk: 'write',
+    scopes: ['novel:outline:read', 'novel:outline:write', 'novel:outline:lock'],
+    confirmation: 'always',
+    executionMode: 'sequential',
+    resolveRisk: resolveOutlineToolRisk,
+  })
 }
 
 function createNarrativeTool(
   service: WorkbenchService,
   projectId: string,
   schemas: ToolSchemas,
-): AgentTool<ToolSchemas['narrative'], ToolDetails> {
-  return {
+): RegisteredAgentTool<ToolSchemas['narrative'], ToolDetails> {
+  return defineAgentTool({
     name: 'narrative_manager',
     label: 'Narrative Manager',
     description: '读取和管理叙事记忆、伏笔、写作技能、章节修订及差异。写入操作需要确认。',
     parameters: schemas.narrative,
-    executionMode: 'sequential',
     execute: async (_toolCallId: string, params: NarrativeParameters) => {
       switch (params.action) {
         case 'list_memories': return result(service.narrative.listMemories(projectId))
@@ -353,15 +422,21 @@ function createNarrativeTool(
         ))
       }
     },
-  }
+  }, {
+    defaultRisk: 'destructive',
+    scopes: ['novel:narrative:read', 'novel:narrative:write'],
+    confirmation: 'destructive',
+    executionMode: 'sequential',
+    resolveRisk: resolveNarrativeToolRisk,
+  })
 }
 
 function createChapterTool(
   service: WorkbenchService,
   projectId: string,
   schemas: ToolSchemas,
-): AgentTool<ToolSchemas['chapter'], ToolDetails> {
-  return {
+): RegisteredAgentTool<ToolSchemas['chapter'], ToolDetails> {
+  return defineAgentTool({
     name: 'chapter_context',
     label: 'Chapter Context',
     description: '读取当前长篇项目的章节列表或指定章节正文。',
@@ -370,20 +445,24 @@ function createChapterTool(
       if (params.action === 'list') return result(service.listChapters(projectId))
       return result(service.getChapter(projectId, requiredString(params.chapter_id, 'chapter_id')))
     },
-  }
+  }, {
+    defaultRisk: 'read',
+    scopes: ['novel:chapter:read'],
+    confirmation: 'never',
+    executionMode: 'parallel',
+  })
 }
 
 function createCreativeTool(
   projectId: string,
   options: NovelAgentToolOptions,
   schemas: ToolSchemas,
-): AgentTool<ToolSchemas['creative'], ToolDetails> {
-  return {
+): RegisteredAgentTool<ToolSchemas['creative'], ToolDetails> {
+  return defineAgentTool({
     name: 'creative_task',
     label: 'Creative Task',
     description: '启动章节生成或章节润色任务，任务会在后台保存进度并支持恢复。',
     parameters: schemas.creative,
-    executionMode: 'sequential',
     execute: async (_toolCallId: string, params: CreativeParameters) => {
       if (params.action === 'start_chapter_generation') {
         if (!options.startChapterGeneration) throw new Error('chapter generation is not available')
@@ -411,7 +490,13 @@ function createCreativeTool(
       })
       return result({ task_id: task.taskId, status: 'started' })
     },
-  }
+  }, {
+    defaultRisk: 'destructive',
+    scopes: ['novel:creative:write'],
+    confirmation: 'destructive',
+    executionMode: 'sequential',
+    resolveRisk: resolveCreativeToolRisk,
+  })
 }
 
 export async function createNovelAgentTools(

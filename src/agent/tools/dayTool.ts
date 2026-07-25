@@ -1,7 +1,7 @@
 import type { Static } from 'typebox'
-import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { app } from 'electron'
 import { generateDay } from '../../shared/day/dayService'
+import { defineAgentTool, type RegisteredAgentTool } from '../permissions'
 import type { TypeBoxBuilder } from '../runtime'
 
 /**
@@ -23,7 +23,6 @@ function createDayParameters(Type: TypeBoxBuilder) {
   ycm_pill: Type.Optional(Type.Number({ description: '优思明颗数' })),
   })
 }
-
 type DayParameters = Static<ReturnType<typeof createDayParameters>>
 
 function errorText(error: unknown): string {
@@ -32,29 +31,34 @@ function errorText(error: unknown): string {
 
 export function createDayTool(
   Type: TypeBoxBuilder,
-): AgentTool<ReturnType<typeof createDayParameters>, { success: boolean; error?: string }> {
+): RegisteredAgentTool<ReturnType<typeof createDayParameters>, { success: boolean; error?: string }> {
   const dayParameters = createDayParameters(Type)
-  return {
-  name: 'day_writer',
-  label: 'Day Writer',
-  description: '运行日常写作流水线，生成一天的生活叙事',
-  parameters: dayParameters,
-  execute: async (_toolCallId: string, params: DayParameters) => {
-    try {
-      const projectRoot = app.getPath('userData')
-      const result = await generateDay(projectRoot, params)
+  return defineAgentTool<ReturnType<typeof createDayParameters>, { success: boolean; error?: string }>({
+    name: 'day_writer',
+    label: 'Day Writer',
+    description: '运行日常写作流水线，生成一天的生活叙事',
+    parameters: dayParameters,
+    execute: async (_toolCallId: string, params: DayParameters) => {
+      try {
+        const projectRoot = app.getPath('userData')
+        const result = await generateDay(projectRoot, params)
 
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-        details: { success: result.success },
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+          details: { success: result.success },
+        }
+      } catch (error: unknown) {
+        const message = errorText(error)
+        return {
+          content: [{ type: 'text' as const, text: `错误: ${message}` }],
+          details: { success: false, error: message },
+        }
       }
-    } catch (error: unknown) {
-      const message = errorText(error)
-      return {
-        content: [{ type: 'text' as const, text: `错误: ${message}` }],
-        details: { success: false, error: message },
-      }
-    }
-  },
-  }
+    },
+  }, {
+    defaultRisk: 'write',
+    scopes: ['day:write'],
+    confirmation: 'destructive',
+    executionMode: 'sequential',
+  })
 }
