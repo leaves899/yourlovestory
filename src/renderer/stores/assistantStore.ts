@@ -9,7 +9,6 @@ import assistantService, {
 export interface AssistantLlmForm {
   baseUrl: string
   model: string
-  apiKey: string
   contextBudget: string
   maxOutputTokens: string
 }

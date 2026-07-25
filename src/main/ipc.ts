@@ -1,9 +1,9 @@
-import { ipcMain, app } from 'electron'
+import { ipcMain, app, type IpcMainInvokeEvent } from 'electron'
 import type { LlmConfigInput } from '../agent/llm'
 import { normalizeLlmBaseUrl } from '../agent/llm/config'
 import type { ChapterGenerationService } from '../shared/chapterGeneration'
 import type { ForeshadowStatus, NarrativeWorkbenchService } from '../shared/narrativeWorkbench'
-import type { JsonObject } from './database'
+import type { JsonObject, SqliteDatabase } from './database'
 import type { TaskManager, StartTaskInput } from './tasks'
 import { parseChapterGenerationStartParams, parseChapterPolishStartParams } from './tasks'
 export { parseChapterGenerationStartParams }
@@ -12,6 +12,14 @@ import { registerWorkbenchIPC } from './workbench'
 import type { AssistantService } from './assistant'
 import { registerAssistantIPC } from './assistant'
 import { getSettings, updateSettings } from '../shared/persistence/settingsStore'
+import { sanitizeErrorMessage } from '../shared/security/sanitizeSensitiveData'
+import type { CredentialService } from './security/credentialService'
+import { credentialBindingForProvider, getAppCredentialId, safeSettingsView } from './security/llmCredentials'
+import {
+  LlmCredentialController,
+  parseCredentialScope,
+  toSafeControllerFailure,
+} from './security/llmCredentialController'
 import {
   createCrush,
   listCrushes,
@@ -48,10 +56,24 @@ export interface IpcSetupOptions {
   assistantService?: AssistantService
   chapterGenerationService?: ChapterGenerationService
   narrativeWorkbenchService?: NarrativeWorkbenchService
+  credentialService?: CredentialService
+  database?: SqliteDatabase
+  credentialController?: LlmCredentialController
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function stripLegacyCredentialValues(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripLegacyCredentialValues)
+  if (!isRecord(value)) return value
+  const result: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value)) {
+    if (key.replace(/[\s_-]/g, '').toLowerCase() === 'apikey') continue
+    result[key] = stripLegacyCredentialValues(item)
+  }
+  return result
 }
 
 function isJsonValue(value: unknown): value is JsonObject[string] {
@@ -79,13 +101,24 @@ function readOptionalNonNegativeInteger(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined
 }
 
+function safeError(error: unknown, fallback?: string): string {
+  return sanitizeErrorMessage(error, fallback)
+}
+
+function assertTrustedCredentialSender(event: IpcMainInvokeEvent): void {
+  const senderUrl = event.senderFrame?.url ?? event.sender?.getURL()
+  if (!senderUrl && process.env.NODE_ENV === 'test') return
+  if (senderUrl?.startsWith('file://')) return
+  if (senderUrl?.startsWith('http://localhost:3000/')) return
+  throw new Error('untrusted IPC sender')
+}
+
 function parseLlmConfig(value: unknown): LlmConfigInput {
   if (!isRecord(value)) throw new Error('llm config is required')
   return {
     provider: readOptionalString(value.provider),
     baseUrl: normalizeLlmBaseUrl(readString(value.baseUrl, 'llm.baseUrl')),
     model: readString(value.model, 'llm.model'),
-    apiKey: readOptionalString(value.apiKey),
     contextBudget: readOptionalPositiveInteger(value.contextBudget),
     maxOutputTokens: readOptionalPositiveInteger(value.maxOutputTokens),
     temperature: typeof value.temperature === 'number' ? value.temperature : undefined,
@@ -287,8 +320,30 @@ export function setupIPC(options: IpcSetupOptions = {}) {
   const userDataPath = app.getPath('userData')
   const taskManager = options.taskManager
   const narrativeWorkbenchService = options.narrativeWorkbenchService ?? options.workbenchService?.narrative
-  registerWorkbenchIPC(options.workbenchService)
-  registerAssistantIPC(options.assistantService)
+  const credentialService = options.credentialService
+
+  const invalidateCredentialRuntimes = (): void => {
+    // Existing agents may hold a resolved key. Abort them before another call.
+    options.assistantService?.dispose()
+    taskManager?.dispose()
+  }
+
+  const credentialController = options.credentialController ?? (credentialService
+    ? new LlmCredentialController({
+        userDataPath,
+        credentialService,
+        workbenchService: options.workbenchService,
+        database: options.database,
+        invalidateRuntimes: invalidateCredentialRuntimes,
+      })
+    : undefined)
+  registerWorkbenchIPC(options.workbenchService, invalidateCredentialRuntimes)
+  registerAssistantIPC(
+    options.assistantService,
+    credentialController
+      ? (projectId, input) => credentialController.runtimeConfig(projectId, input)
+      : undefined,
+  )
 
   ipcMain.handle('task:run', async (_, params: unknown) => {
     if (!taskManager) throw new Error('TaskManager is not initialized')
@@ -556,7 +611,25 @@ export function setupIPC(options: IpcSetupOptions = {}) {
 
   // 日常写作（已迁移到 TS dayService）
   ipcMain.handle('day:generate', async (_, params) =>
-    generateDay(userDataPath, params)
+    generateDay(userDataPath, params, {
+      getCredential: async (credentialId) => {
+        if (!credentialService) throw new Error('系统安全存储未初始化。')
+        const settings = getSettings(userDataPath) as Record<string, unknown>
+        const binding = credentialService.getCredentialBinding(credentialId)
+        const expected = credentialBindingForProvider(settings.provider, settings.baseUrl)
+        if (!binding.success) throw new Error(binding.error.message)
+        if (
+          !binding.data
+          || binding.data.provider !== expected.provider
+          || binding.data.baseUrl !== expected.baseUrl
+        ) {
+          throw new Error('Credential is restricted to its saved Provider endpoint.')
+        }
+        const result = credentialService.getCredential(credentialId)
+        if (!result.success) throw new Error(result.error.message)
+        return result.data
+      },
+    })
   )
 
   ipcMain.handle('day:list', async (_, params) =>
@@ -638,8 +711,8 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     try {
       const progress = loadProgress(userDataPath, params.slug)
       return { success: true, data: progress }
-    } catch (error: any) {
-      return { success: false, errors: [error.message] }
+    } catch (error: unknown) {
+      return { success: false, errors: [safeError(error)] }
     }
   })
 
@@ -647,8 +720,8 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     try {
       const result = detectNarrativeSignals(userDataPath, params.slug, params.narrativeText)
       return { success: true, data: result }
-    } catch (error: any) {
-      return { success: false, errors: [error.message] }
+    } catch (error: unknown) {
+      return { success: false, errors: [safeError(error)] }
     }
   })
 
@@ -656,8 +729,8 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     try {
       const progress = confirmPhaseAdvance(userDataPath, params.slug, params.reason)
       return { success: true, data: progress }
-    } catch (error: any) {
-      return { success: false, errors: [error.message] }
+    } catch (error: unknown) {
+      return { success: false, errors: [safeError(error)] }
     }
   })
 
@@ -665,28 +738,97 @@ export function setupIPC(options: IpcSetupOptions = {}) {
     try {
       const progress = setPhase(userDataPath, params.slug, params.phase)
       return { success: true, data: progress }
-    } catch (error: any) {
-      return { success: false, errors: [error.message] }
+    } catch (error: unknown) {
+      return { success: false, errors: [safeError(error)] }
     }
   })
 
   // 设置直接调用 shared settingsStore。
   ipcMain.handle('settings:get', async () => {
     try {
-      const data = getSettings(userDataPath)
-      return { success: true, data }
-    } catch (error: any) {
-      return { success: false, errors: [error.message] }
+      const data = getSettings(userDataPath) as Record<string, unknown>
+      const status = credentialService?.availability()
+      const configured = credentialService
+        ? credentialService.hasCredential(getAppCredentialId(data))
+        : { success: true as const, data: false }
+      return {
+        success: true,
+        data: status && configured.success
+          ? safeSettingsView(data, status, configured.data)
+          : stripLegacyCredentialValues(data),
+      }
+    } catch (error: unknown) {
+      return { success: false, errors: [safeError(error)] }
     }
   })
 
-  ipcMain.handle('settings:update', async (_, params) => {
+  ipcMain.handle('settings:update', async (_, params: unknown) => {
     try {
-      // 前端直接传递设置对象，而不是 params.settings
-      const success = updateSettings(userDataPath, params)
+      if (!isRecord(params)) throw new Error('settings must be an object')
+      // API Key must travel through llmCredential:save only.
+      const next = stripLegacyCredentialValues(params) as Record<string, unknown>
+      delete next.credentialId
+      const existing = getSettings(userDataPath) as Record<string, unknown>
+      // Settings UI overwrites ordinary fields. Preserve the main-process-only
+      // credential reference so a normal settings save cannot orphan it.
+      if (typeof existing.credentialId === 'string') next.credentialId = existing.credentialId
+      const success = updateSettings(userDataPath, next)
       return { success }
-    } catch (error: any) {
-      return { success: false, errors: [error.message] }
+    } catch (error: unknown) {
+      return { success: false, errors: [safeError(error)] }
+    }
+  })
+
+  ipcMain.handle('llmCredential:status', async (event, value: unknown) => {
+    if (!credentialController) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+    try {
+      assertTrustedCredentialSender(event)
+      return credentialController.status(parseCredentialScope(value))
+    } catch (error: unknown) {
+      return toSafeControllerFailure(error)
+    }
+  })
+
+  ipcMain.handle('llmCredential:save', async (event, value: unknown) => {
+    if (!credentialController || !isRecord(value)) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+    try {
+      assertTrustedCredentialSender(event)
+      return credentialController.save(
+        parseCredentialScope(value.target),
+        readString(value.secret, 'secret'),
+      )
+    } catch (error: unknown) {
+      return toSafeControllerFailure(error)
+    }
+  })
+
+  ipcMain.handle('llmCredential:delete', async (event, value: unknown) => {
+    if (!credentialController) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+    try {
+      assertTrustedCredentialSender(event)
+      return credentialController.delete(parseCredentialScope(value))
+    } catch (error: unknown) {
+      return toSafeControllerFailure(error)
+    }
+  })
+
+  ipcMain.handle('llmCredential:test', async (event, value: unknown) => {
+    if (!credentialController) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+    try {
+      assertTrustedCredentialSender(event)
+      return await credentialController.test(parseCredentialScope(value))
+    } catch (error: unknown) {
+      return toSafeControllerFailure(error)
+    }
+  })
+
+  ipcMain.handle('llmCredential:deleteAll', async (event) => {
+    if (!credentialController) return { success: false, error: { code: 'UNAVAILABLE', message: '凭据服务未初始化。', retryable: true } }
+    try {
+      assertTrustedCredentialSender(event)
+      return credentialController.deleteAll()
+    } catch (error: unknown) {
+      return toSafeControllerFailure(error)
     }
   })
 

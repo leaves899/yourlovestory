@@ -46,7 +46,6 @@ import {
 interface LlmForm {
   baseUrl: string
   model: string
-  apiKey: string
   contextBudget: string
   maxOutputTokens: string
 }
@@ -60,7 +59,6 @@ interface ConfirmationRequest {
 const defaultLlm: LlmForm = {
   baseUrl: 'https://api.openai.com/v1',
   model: '',
-  apiKey: '',
   contextBudget: '64000',
   maxOutputTokens: '4096',
 }
@@ -294,7 +292,6 @@ function AssistantPage() {
         llm: {
           baseUrl: llm.baseUrl,
           model: llm.model,
-          apiKey: llm.apiKey || undefined,
           contextBudget: parseNumber(llm.contextBudget),
           maxOutputTokens: parseNumber(llm.maxOutputTokens),
           streamingEnabled: true,
@@ -478,10 +475,7 @@ function AssistantPage() {
                 <FormLabel>模型名称</FormLabel>
                 <Input value={llm.model} onChange={(event) => setLlm((current) => ({ ...current, model: event.target.value }))} placeholder="填写模型名称" />
               </FormControl>
-              <FormControl>
-                <FormLabel>API Key</FormLabel>
-                <Input type="password" value={llm.apiKey} onChange={(event) => setLlm((current) => ({ ...current, apiKey: event.target.value }))} placeholder="仅在当前运行中使用" />
-              </FormControl>
+              <Text fontSize="sm" color="ink.600">API Key 由设置页的系统安全存储管理，不会进入会话或 renderer 状态。</Text>
               <SimpleGrid columns={2} spacing={3}>
                 <FormControl>
                   <FormLabel>上下文预算</FormLabel>

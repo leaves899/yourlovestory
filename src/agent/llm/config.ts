@@ -66,7 +66,7 @@ export function normalizeLlmConfig(input: LlmConfigInput): LlmConfig {
     provider: input.provider?.trim() || 'openai-compatible',
     baseUrl: normalizeLlmBaseUrl(input.baseUrl),
     model: input.model.trim() || (() => { throw new Error('model is required') })(),
-    apiKey: input.apiKey ?? '',
+    credentialId: input.credentialId?.trim() || undefined,
     contextBudget,
     maxOutputTokens,
     temperature: input.temperature,

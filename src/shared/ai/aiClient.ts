@@ -33,6 +33,7 @@ interface AnthropicResponse {
 /** OpenAI 兼容 API 响应 */
 interface OpenAIResponse {
   choices: Array<{
+    finish_reason?: string
     message: {
       content: string
       reasoning_content?: string  // DeepSeek 思维链字段
@@ -63,8 +64,7 @@ async function callAnthropic(params: AICallParams): Promise<string> {
   })
 
   if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Anthropic API 错误 (${response.status}): ${errorText}`)
+    throw new Error(`Anthropic API 错误 (${response.status})。`)
   }
 
   const data = (await response.json()) as AnthropicResponse
@@ -99,18 +99,6 @@ async function callOpenAICompatible(params: AICallParams): Promise<string> {
     throw new Error(`${params.provider} API Key 未配置`)
   }
 
-  // 检查请求内容大小（限制为 100KB）
-  const requestSize = JSON.stringify({
-    model: params.modelId,
-    max_tokens: params.maxTokens ?? 4096,
-    temperature: params.temperature ?? 0.8,
-    messages,
-  }).length
-
-  if (requestSize > 100000) {
-    console.warn(`[${params.provider}] 请求大小: ${(requestSize / 1024).toFixed(2)} KB`)
-  }
-
   const response = await fetchModelEndpoint(baseUrl, {
     method: 'POST',
     headers: {
@@ -126,19 +114,12 @@ async function callOpenAICompatible(params: AICallParams): Promise<string> {
   })
 
   if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`${params.provider} API 错误 (${response.status}): ${errorText}`)
+    throw new Error(`${params.provider} API 错误 (${response.status})。`)
   }
 
   const data = (await response.json()) as OpenAIResponse
   const choice = data.choices?.[0]?.message
-  const finishReason = (data as any).choices?.[0]?.finish_reason
-
-  console.log(`[${params.provider}] API 响应:`, {
-    finish_reason: finishReason,
-    content_length: choice?.content?.length ?? 0,
-    max_tokens_requested: params.maxTokens,
-  })
+  const finishReason = data.choices?.[0]?.finish_reason
 
   if (!choice) {
     throw new Error('AI 未返回有效内容，请重试')
@@ -154,7 +135,7 @@ async function callOpenAICompatible(params: AICallParams): Promise<string> {
 
   // 检查是否因 token 上限被截断
   if (finishReason === 'length') {
-    console.warn(`[${params.provider}] 叙事因达到 max_tokens 上限被截断。建议增加 maxTokens 设置。`)
+    // The caller gets the truncated text. Do not log provider response metadata.
   }
 
   return text

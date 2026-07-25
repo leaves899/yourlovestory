@@ -7,7 +7,7 @@ import type {
   StopReason,
 } from '@earendil-works/pi-ai'
 import type { StreamFn } from '@earendil-works/pi-agent-core'
-import type { LlmConfig, LlmStreamDependencies } from './types'
+import type { ResolvedLlmConfig, LlmStreamDependencies } from './types'
 import { emptyTokenUsage } from './types'
 import {
   installLlmFetchGuard,
@@ -15,6 +15,7 @@ import {
   isLlmEndpointSecurityMessage,
   normalizeModelEndpoint,
 } from './urlSecurity'
+import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveData'
 
 function isContentEvent(event: AssistantMessageEvent): boolean {
   return event.type !== 'start' && event.type !== 'done' && event.type !== 'error'
@@ -33,7 +34,7 @@ function createErrorMessage(
     model: model.id,
     usage: emptyTokenUsage(),
     stopReason: reason,
-    errorMessage: error instanceof Error ? error.message : String(error),
+    errorMessage: sanitizeErrorMessage(error),
     timestamp: Date.now(),
   }
 }
@@ -59,7 +60,7 @@ async function runAttempt(
   model: Model<string>,
   context: Context,
   options: Parameters<StreamFn>[2],
-  config: LlmConfig,
+  config: ResolvedLlmConfig,
   sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>,
 ): Promise<void> {
   const signal = options?.signal
@@ -186,7 +187,7 @@ async function runAttempt(
 export function createRetryingStreamFn(
   baseStream: StreamFn,
   createStream: LlmStreamDependencies['createStream'],
-  config: LlmConfig,
+  config: ResolvedLlmConfig,
   sleep: LlmStreamDependencies['sleep'] = defaultSleep,
 ): StreamFn {
   return (model, context, options) => {

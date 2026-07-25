@@ -22,6 +22,7 @@ import { PHASE_PROMPT_CONFIG } from '../relationship/phase_prompts'
 import { assertIntimateContentAllowed, getIntimatePolicy } from '../intimate/policy'
 import { assertPhaseRulesAllowed } from '../intimate/policy'
 import { assertSafeDayNumber, safeCrushPath } from '../security/pathSafety'
+import { sanitizeErrorMessage } from '../security/sanitizeSensitiveData'
 
 export type DayResult =
   | { success: true; data: any; total?: number }
@@ -50,6 +51,10 @@ export type GenerateDayResponse =
       warnings?: string[]
     }
   | { success: false; errors: string[] }
+
+export interface DayCredentialResolver {
+  getCredential(credentialId: string): Promise<string>
+}
 
 function chatsDir(projectRoot: string, slug: string): string {
   return safeCrushPath(projectRoot, slug, 'memories', 'chats')
@@ -99,7 +104,8 @@ export async function runPipeline(
     sex_details?: string
     handwriting?: string
     ycm_pill?: number
-  }
+  },
+  credentials?: DayCredentialResolver,
 ): Promise<GenerateDayResponse> {
   try {
     dayPath(projectRoot, params.slug, params.day_number)
@@ -109,27 +115,22 @@ export async function runPipeline(
       sexDetails: params.sex_details,
     })
 
-    const settings = getSettings(projectRoot)
-    const apiKey = settings.apiKey as string | undefined
-    if (!apiKey) {
+    const settings = getSettings(projectRoot) as Record<string, unknown>
+    const credentialId = typeof settings.credentialId === 'string' && settings.credentialId.trim()
+      ? settings.credentialId
+      : 'llm:app-default'
+    if (!credentials) {
       return {
         success: false,
-        errors: ['请先在设置中配置 AI API Key（打开设置页面，选择 Provider 并填写 API Key）'],
+        errors: ['请先在设置页安全保存 AI 凭据。'],
       }
     }
+    const apiKey = await credentials.getCredential(credentialId)
 
     const provider = (settings.provider as string) || 'anthropic'
     const modelId = (settings.model as string) || 'claude-sonnet-4-20250514'
     const temperature = (settings.temperature as number) ?? 0.8
     const maxTokens = (settings.maxTokens as number) ?? 4096
-
-    console.log('[DayService] AI settings:', {
-      provider,
-      modelId,
-      temperature,
-      maxTokens,
-      apiKeyConfigured: Boolean(apiKey),
-    })
 
     const customPrompts: CustomPrompts = {
       customSystemPrompt: settings.customSystemPrompt as string | undefined,
@@ -191,15 +192,15 @@ export async function runPipeline(
         params.slug,
         narrative
       )
-    } catch (error: any) {
-      warnings.push(`关系进度更新失败: ${String(error?.message ?? error)}`)
+    } catch (error: unknown) {
+      warnings.push(`关系进度更新失败: ${sanitizeErrorMessage(error)}`)
     }
 
     return warnings.length > 0
       ? { success: true, data, warnings }
       : { success: true, data }
-  } catch (e: any) {
-    return { success: false, errors: [String(e?.message ?? e)] }
+  } catch (error: unknown) {
+    return { success: false, errors: [sanitizeErrorMessage(error)] }
   }
 }
 
@@ -219,7 +220,8 @@ export async function generateDay(
     dry_run?: boolean
     skip_skill?: boolean
     skip_check?: boolean
-  }
+  },
+  credentials?: DayCredentialResolver,
 ): Promise<GenerateDayResponse> {
   try {
     dayPath(projectRoot, params.slug, params.day_number)
@@ -257,9 +259,9 @@ export async function generateDay(
       }
     }
 
-    return await runPipeline(projectRoot, params)
-  } catch (e: any) {
-    return { success: false, errors: [String(e?.message ?? e)] }
+    return await runPipeline(projectRoot, params, credentials)
+  } catch (error: unknown) {
+    return { success: false, errors: [sanitizeErrorMessage(error)] }
   }
 }
 

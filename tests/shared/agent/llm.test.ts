@@ -13,7 +13,7 @@ import {
   INVALID_LLM_BASE_URL,
   normalizeLlmConfig,
 } from '@/agent/llm'
-import type { LlmConfig } from '@/agent/llm'
+import type { ResolvedLlmConfig } from '@/agent/llm'
 
 class TestEventStream implements AsyncIterable<AssistantMessageEvent> {
   private readonly events: AssistantMessageEvent[] = []
@@ -96,7 +96,7 @@ describe('统一 LLM 配置和动态模型', () => {
     const config = normalizeLlmConfig({
       baseUrl: 'https://example.invalid/v1/',
       model: 'writer-model',
-      apiKey: 'secret',
+      credentialId: 'llm:app-default',
       contextBudget: 10_000,
       maxOutputTokens: 1_000,
       maxRetries: 1,
@@ -120,18 +120,22 @@ describe('统一 LLM 配置和动态模型', () => {
     )
     expect(normalizeLlmConfig({ baseUrl: 'http://localhost:1234///', model: 'x' }).baseUrl)
       .toBe('http://localhost:1234')
+    expect(() => normalizeLlmConfig({ baseUrl: 'http://127.0.0.1:11434', model: 'x' })).not.toThrow()
     expect(() => normalizeLlmConfig({ baseUrl: 'https://example.invalid', model: ' ' })).toThrow()
   })
 })
 
 describe('LLM stream cancellation and finite retries', () => {
   test('retries a transport error before streaming content and preserves chunks', async () => {
-    const config: LlmConfig = normalizeLlmConfig({
-      baseUrl: 'https://example.invalid/v1',
-      model: 'writer-model',
-      maxRetries: 1,
-      retryDelayMs: 7,
-    })
+    const config: ResolvedLlmConfig = {
+      ...normalizeLlmConfig({
+        baseUrl: 'https://example.invalid/v1',
+        model: 'writer-model',
+        maxRetries: 1,
+        retryDelayMs: 7,
+      }),
+      apiKey: 'sk-test-secret-do-not-expose-123456',
+    }
     const model = createDynamicPiModel(config)
     const errorMessage = assistant(model, 'error')
     const successMessage = assistant(model, 'stop')
@@ -175,7 +179,10 @@ describe('LLM stream cancellation and finite retries', () => {
   })
 
   test('ends with aborted finish reason when the signal is already cancelled', async () => {
-    const config = normalizeLlmConfig({ baseUrl: 'https://example.invalid', model: 'writer-model' })
+    const config: ResolvedLlmConfig = {
+      ...normalizeLlmConfig({ baseUrl: 'https://example.invalid', model: 'writer-model' }),
+      apiKey: 'sk-test-secret-do-not-expose-123456',
+    }
     const model = createDynamicPiModel(config)
     const controller = new AbortController()
     controller.abort()
@@ -196,12 +203,14 @@ describe('LLM stream cancellation and finite retries', () => {
   })
 
   test('在每次请求前重新校验模型端点，且不会把 API key 交给不安全端点', async () => {
-    const config = normalizeLlmConfig({
-      baseUrl: 'https://provider.example/v1',
-      model: 'writer-model',
+    const config: ResolvedLlmConfig = {
+      ...normalizeLlmConfig({
+        baseUrl: 'https://provider.example/v1',
+        model: 'writer-model',
+        maxRetries: 2,
+      }),
       apiKey: 'secret-api-key',
-      maxRetries: 2,
-    })
+    }
     const model = createDynamicPiModel(config)
     model.baseUrl = 'http://evil.example'
     let calls = 0
@@ -224,10 +233,13 @@ describe('LLM stream cancellation and finite retries', () => {
   })
 
   test('请求使用经过校验和规范化的 URL', async () => {
-    const config = normalizeLlmConfig({
-      baseUrl: 'https://provider.example/v1',
-      model: 'writer-model',
-    })
+    const config: ResolvedLlmConfig = {
+      ...normalizeLlmConfig({
+        baseUrl: 'https://provider.example/v1',
+        model: 'writer-model',
+      }),
+      apiKey: 'sk-test-secret-do-not-expose-123456',
+    }
     const model = createDynamicPiModel(config)
     model.baseUrl = 'HTTPS://Provider.Example/v1///'
     let requestedBaseUrl = ''

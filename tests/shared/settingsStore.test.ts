@@ -70,7 +70,7 @@ describe('settingsStore - getSettings / updateSettings', () => {
   })
 
   it('updateSettings 后 getSettings 读回', () => {
-    const settings = { theme: 'dark', language: 'zh', apiKey: 'sk-xxx' }
+    const settings = { theme: 'dark', language: 'zh', credentialId: 'llm:app-default' }
     expect(updateSettings(tmpRoot, settings)).toBe(true)
     expect(getSettings(tmpRoot)).toEqual(settings)
   })

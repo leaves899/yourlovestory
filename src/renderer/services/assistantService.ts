@@ -81,7 +81,6 @@ const assistantService: AssistantService = {
 export function createLlmConfig(input: {
   baseUrl: string
   model: string
-  apiKey?: string
   contextBudget: string
   maxOutputTokens: string
 }): LlmConfigInput {
@@ -93,7 +92,6 @@ export function createLlmConfig(input: {
     provider: 'openai-compatible',
     baseUrl: input.baseUrl,
     model: input.model,
-    apiKey: input.apiKey,
     contextBudget: parsePositive(input.contextBudget),
     maxOutputTokens: parsePositive(input.maxOutputTokens),
     streamingEnabled: true,

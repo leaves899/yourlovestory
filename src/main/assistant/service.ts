@@ -7,6 +7,7 @@ import type {
 } from '../../agent/permissions'
 import type { LlmConfigInput } from '../../agent/llm'
 import { normalizeLlmBaseUrl } from '../../agent/llm/config'
+import { sanitizeErrorMessage, sanitizeSensitiveData } from '../../shared/security/sanitizeSensitiveData'
 import {
   isJsonValue,
   type ChatMessage,
@@ -75,13 +76,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function toJsonObject(value: unknown): JsonObject {
-  if (isRecord(value) && Object.values(value).every(isJsonValue)) return value as JsonObject
-  return { value: toJsonValue(value) }
+  const sanitized = sanitizeSensitiveData(value)
+  if (isRecord(sanitized) && Object.values(sanitized).every(isJsonValue)) return sanitized as JsonObject
+  return { value: toJsonValue(sanitized) }
 }
 
 function toJsonValue(value: unknown): JsonObject[string] {
   if (isJsonValue(value)) return value
-  if (value instanceof Error) return value.message
+  if (value instanceof Error) return sanitizeErrorMessage(value)
   if (typeof value === 'string') return value
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'boolean') return value
@@ -100,7 +102,7 @@ function messageText(message: AgentMessage): string {
 }
 
 function serializeMessage(message: AgentMessage): JsonObject {
-  const parsed: unknown = JSON.parse(JSON.stringify(message))
+  const parsed: unknown = sanitizeSensitiveData(message)
   if (!isRecord(parsed) || !Object.values(parsed).every(isJsonValue)) {
     throw new Error('Agent message cannot be serialized')
   }
@@ -148,6 +150,7 @@ function llmConfigForStorage(config: LlmConfigInput): JsonObject {
     provider: config.provider ?? 'openai-compatible',
     baseUrl: config.baseUrl,
     model: config.model,
+    credentialId: config.credentialId ?? null,
     contextBudget: config.contextBudget ?? null,
     maxOutputTokens: config.maxOutputTokens ?? null,
     streamingEnabled: config.streamingEnabled ?? true,
@@ -237,17 +240,18 @@ export class AssistantService {
           : result.errorMessage || result.finishReason === 'error'
             ? 'error'
             : 'completed'
+        const safeResultError = result.errorMessage ? sanitizeErrorMessage(result.errorMessage) : undefined
         this.publish({
           type: 'assistant:end',
           sessionId: session.id,
           status,
           text: result.text,
           stats: result,
-          ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+          ...(safeResultError ? { errorMessage: safeResultError } : {}),
         })
-        return { ...result, status }
+        return { ...result, ...(safeResultError ? { errorMessage: safeResultError } : {}), status }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
+        const message = sanitizeErrorMessage(error)
         this.publish({ type: 'assistant:error', sessionId: session.id, error: message })
         const result: AssistantPromptResult = {
           text: '',

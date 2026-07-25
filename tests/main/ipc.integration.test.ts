@@ -32,6 +32,11 @@ jest.mock('electron', () => ({
 }))
 
 import { setupIPC } from '../../src/main/ipc'
+import {
+  CredentialService,
+  type SafeStorageAdapter,
+} from '../../src/main/security/credentialService'
+import { LlmCredentialController } from '../../src/main/security/llmCredentialController'
 import type { Fragment } from '../../src/shared/fragment/models'
 
 async function invoke<T>(channel: string, params?: unknown): Promise<T> {
@@ -107,5 +112,55 @@ describe('主进程 IPC 集成', () => {
     await expect(invoke('task:get', { taskId: 'missing-task' })).rejects.toThrow(
       'TaskManager is not initialized',
     )
+  })
+
+  test('凭据 IPC 仅返回状态且不存在读取明文通道', async () => {
+    class FakeSafeStorage implements SafeStorageAdapter {
+      public isEncryptionAvailable(): boolean { return true }
+      public encryptString(value: string): Buffer { return Buffer.from(`encrypted:${value}`) }
+      public decryptString(value: Buffer): string {
+        return value.toString().slice('encrypted:'.length)
+      }
+    }
+    const service = new CredentialService(mockUserDataPath, new FakeSafeStorage(), 'win32')
+    let settings: Record<string, unknown> = {
+      provider: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+    }
+    const controller = new LlmCredentialController({
+      userDataPath: mockUserDataPath,
+      credentialService: service,
+      readSettings: () => ({ ...settings }),
+      writeSettings: (value) => {
+        settings = { ...value }
+        return true
+      },
+    })
+    setupIPC({ credentialService: service, credentialController: controller })
+
+    const secret = 'sk-test-secret-do-not-expose-123456'
+    const saved = await invoke<Record<string, unknown>>('llmCredential:save', {
+      target: { scope: 'app' },
+      secret,
+      credentialId: 'renderer-controlled-id',
+    })
+    expect(saved).toMatchObject({ success: true, data: { configured: true } })
+    expect(JSON.stringify(saved)).not.toContain(secret)
+
+    const status = await invoke<Record<string, unknown>>('llmCredential:status', { scope: 'app' })
+    expect(status).toMatchObject({ success: true, data: { configured: true } })
+    expect(JSON.stringify(status)).not.toContain(secret)
+    expect(mockHandlers.has('llmCredential:read')).toBe(false)
+    expect(mockHandlers.has('llmCredential:get')).toBe(false)
+
+    const deleted = await invoke<Record<string, unknown>>('llmCredential:delete', { scope: 'app' })
+    expect(deleted).toMatchObject({
+      success: true,
+      data: { deleted: true, referencesCleared: true, remaining: 0 },
+    })
+    expect(service.getCredential('llm:app-default')).toMatchObject({
+      success: false,
+      error: { code: 'NOT_FOUND' },
+    })
   })
 })
