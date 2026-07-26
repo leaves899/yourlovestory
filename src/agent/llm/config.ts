@@ -1,22 +1,22 @@
 import type { LlmConfig, LlmConfigInput } from './types'
+import { normalizeModelEndpoint } from './urlSecurity'
+export {
+  CROSS_ORIGIN_LLM_REDIRECT,
+  INSECURE_LLM_BASE_URL,
+  INVALID_LLM_BASE_URL,
+  LOCAL_HTTP_ONLY,
+  LlmBaseUrlValidationError,
+  LlmEndpointSecurityError,
+  normalizeModelEndpoint,
+  type LlmBaseUrlErrorCode,
+  type ModelEndpoint,
+} from './urlSecurity'
 
 export const DEFAULT_CONTEXT_BUDGET = 64_000
 export const DEFAULT_MAX_OUTPUT_TOKENS = 4_096
 export const DEFAULT_MAX_RETRIES = 2
 export const DEFAULT_RETRY_DELAY_MS = 250
 export const DEFAULT_MAX_RETRY_DELAY_MS = 5_000
-
-export type LlmBaseUrlErrorCode = 'INVALID_LLM_BASE_URL' | 'INSECURE_LLM_BASE_URL'
-
-export class LlmBaseUrlValidationError extends Error {
-  public constructor(
-    public readonly code: LlmBaseUrlErrorCode,
-    message: string,
-  ) {
-    super(message)
-    this.name = 'LlmBaseUrlValidationError'
-  }
-}
 
 function requirePositiveInteger(value: number, field: string): number {
   if (!Number.isInteger(value) || value <= 0) {
@@ -33,33 +33,7 @@ function requireNonNegativeInteger(value: number, field: string): number {
 }
 
 export function normalizeLlmBaseUrl(baseUrl: string): string {
-  const normalized = baseUrl.trim().replace(/\/+$/, '')
-  if (!normalized) {
-    throw new LlmBaseUrlValidationError('INVALID_LLM_BASE_URL', 'baseUrl is required')
-  }
-  let url: URL
-  try {
-    url = new URL(normalized)
-  } catch {
-    throw new LlmBaseUrlValidationError(
-      'INVALID_LLM_BASE_URL',
-      'baseUrl must use http or https',
-    )
-  }
-  const loopbackHosts = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new LlmBaseUrlValidationError(
-      'INVALID_LLM_BASE_URL',
-      'baseUrl must use http or https',
-    )
-  }
-  if (url.protocol === 'http:' && !loopbackHosts.has(url.hostname)) {
-    throw new LlmBaseUrlValidationError(
-      'INSECURE_LLM_BASE_URL',
-      'baseUrl must use https unless it targets a loopback address',
-    )
-  }
-  return normalized
+  return normalizeModelEndpoint(baseUrl).normalized
 }
 
 export function normalizeLlmConfig(input: LlmConfigInput): LlmConfig {

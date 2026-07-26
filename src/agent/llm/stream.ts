@@ -9,6 +9,12 @@ import type {
 import type { StreamFn } from '@earendil-works/pi-agent-core'
 import type { ResolvedLlmConfig, LlmStreamDependencies } from './types'
 import { emptyTokenUsage } from './types'
+import {
+  installLlmFetchGuard,
+  isLlmEndpointSecurityError,
+  isLlmEndpointSecurityMessage,
+  normalizeModelEndpoint,
+} from './urlSecurity'
 import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveData'
 
 function isContentEvent(event: AssistantMessageEvent): boolean {
@@ -73,22 +79,34 @@ async function runAttempt(
     let shouldRetry = false
 
     try {
-      const source = await baseStream(model, context, {
-        ...options,
-        apiKey: config.apiKey,
-        temperature: config.temperature,
-        maxTokens: config.maxOutputTokens,
-        maxRetries: 0,
-        timeoutMs: config.timeoutMs,
-        maxRetryDelayMs: config.maxRetryDelayMs,
-      })
+      // 配置可能来自旧任务或被直接构造，不能只信任创建模型时的校验。
+      const endpoint = normalizeModelEndpoint(model.baseUrl)
+      const requestModel = { ...model, baseUrl: endpoint.normalized }
+      const restoreFetchGuard = installLlmFetchGuard()
+      let source: Awaited<ReturnType<StreamFn>>
+      try {
+        source = await baseStream(requestModel, context, {
+          ...options,
+          apiKey: config.apiKey,
+          temperature: config.temperature,
+          maxTokens: config.maxOutputTokens,
+          maxRetries: 0,
+          timeoutMs: config.timeoutMs,
+          maxRetryDelayMs: config.maxRetryDelayMs,
+        })
+      } finally {
+        restoreFetchGuard()
+      }
 
       for await (const event of source) {
+        const securityFailure = event.type === 'error'
+          && isLlmEndpointSecurityMessage(event.error.errorMessage)
         if (
           event.type === 'error' &&
           !hasContent &&
           attempt < config.maxRetries &&
-          event.reason !== 'aborted'
+          event.reason !== 'aborted' &&
+          !securityFailure
         ) {
           shouldRetry = true
           break
@@ -121,7 +139,8 @@ async function runAttempt(
         result.stopReason === 'error' &&
         !hasContent &&
         attempt < config.maxRetries &&
-        !signal?.aborted
+        !signal?.aborted &&
+        !isLlmEndpointSecurityMessage(result.errorMessage)
       ) {
         attempt += 1
         const delay = Math.min(
@@ -136,6 +155,12 @@ async function runAttempt(
       output.end(result)
       return
     } catch (error) {
+      if (isLlmEndpointSecurityError(error)) {
+        const failure = createErrorMessage(model, 'error', error)
+        output.push({ type: 'error', reason: 'error', error: failure })
+        output.end(failure)
+        return
+      }
       if (signal?.aborted) {
         const aborted = createErrorMessage(model, 'aborted', 'LLM request was cancelled')
         output.push({ type: 'error', reason: 'aborted', error: aborted })

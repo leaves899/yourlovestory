@@ -4,6 +4,7 @@ import type { SqliteDatabase } from '../database'
 import type { WorkbenchService } from '../workbench'
 import { getSettings, updateSettings } from '../../shared/persistence/settingsStore'
 import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveData'
+import { createSecureFetch } from '../../shared/security/urlSecurity'
 import type {
   CredentialBinding,
   CredentialError,
@@ -331,7 +332,8 @@ export class LlmCredentialController {
     const timeoutMs = this.options.testTimeoutMs ?? 10_000
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
     try {
-      const response = await (this.options.fetchImpl ?? fetch)(testEndpoint(context.binding), {
+      const secureFetch = createSecureFetch(this.options.fetchImpl ?? fetch)
+      const response = await secureFetch(testEndpoint(context.binding), {
         headers: requestHeaders(context.binding.provider, credential.data),
         signal: controller.signal,
       })

@@ -1,6 +1,7 @@
 import type { AgentEvent } from '@earendil-works/pi-agent-core'
 import type { AgentFactory, AgentRunResult } from '../../agent/agent'
 import type { LlmConfigInput } from '../../agent/llm'
+import { normalizeLlmBaseUrl } from '../../agent/llm/config'
 import type { ChapterGenerationStage } from '../../shared/chapterGeneration'
 import type {
   CreateTaskInput,
@@ -156,7 +157,7 @@ function inputFromTask(task: Task): StartTaskInput {
     prompt: typeof task.input.prompt === 'string' ? task.input.prompt : '',
     llm: {
       provider: typeof llmValue.provider === 'string' ? llmValue.provider : undefined,
-      baseUrl: requiredString(llmValue.baseUrl, 'llm.baseUrl'),
+      baseUrl: normalizeLlmBaseUrl(requiredString(llmValue.baseUrl, 'llm.baseUrl')),
       model: requiredString(llmValue.model, 'llm.model'),
       credentialId: typeof llmValue.credentialId === 'string' ? llmValue.credentialId : undefined,
       contextBudget: optionalNumber(llmValue.contextBudget),
@@ -203,19 +204,23 @@ export class TaskManager {
   }
 
   public start(input: StartTaskInput): TaskHandle {
-    const resolvedInput: StartTaskInput = {
+    const resolvedLlm = this.options.resolveLlmConfig?.(input.projectId, input.llm) ?? input.llm
+    const validatedInput: StartTaskInput = {
       ...input,
-      llm: this.options.resolveLlmConfig?.(input.projectId, input.llm) ?? input.llm,
+      llm: {
+        ...resolvedLlm,
+        baseUrl: normalizeLlmBaseUrl(resolvedLlm.baseUrl),
+      },
     }
     const createInput: CreateTaskInput = {
-      project_id: resolvedInput.projectId,
-      chapter_id: resolvedInput.chapterId,
-      parent_task_id: resolvedInput.parentTaskId,
-      task_type: resolvedInput.taskType,
-      input: toPersistedInput(resolvedInput),
+      project_id: validatedInput.projectId,
+      chapter_id: validatedInput.chapterId,
+      parent_task_id: validatedInput.parentTaskId,
+      task_type: validatedInput.taskType,
+      input: toPersistedInput(validatedInput),
     }
     const task = this.options.store.create(createInput)
-    return this.startExisting(task, resolvedInput)
+    return this.startExisting(task, validatedInput)
   }
 
   public startChapterGeneration(input: StartChapterGenerationInput): TaskHandle {
@@ -274,9 +279,13 @@ export class TaskManager {
     const active = this.completions.get(taskId)
     if (active) return { taskId, completion: active }
     const persistedInput = inputFromTask(task)
+    const resolvedLlm = this.options.resolveLlmConfig?.(task.project_id, persistedInput.llm) ?? persistedInput.llm
     const input: StartTaskInput = {
       ...persistedInput,
-      llm: this.options.resolveLlmConfig?.(task.project_id, persistedInput.llm) ?? persistedInput.llm,
+      llm: {
+        ...resolvedLlm,
+        baseUrl: normalizeLlmBaseUrl(resolvedLlm.baseUrl),
+      },
     }
     const pending = this.options.store.update(taskId, {
       status: 'pending',

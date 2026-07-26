@@ -5,6 +5,8 @@
  * 不依赖 ESM-only 的 pi-ai 包，兼容主进程 CJS 编译。
  */
 
+import { createSecureFetch } from '../security/urlSecurity'
+
 /** AI 调用参数 */
 export interface AICallParams {
   systemPrompt: string
@@ -31,6 +33,7 @@ interface AnthropicResponse {
 /** OpenAI 兼容 API 响应 */
 interface OpenAIResponse {
   choices: Array<{
+    finish_reason?: string
     message: {
       content: string
       reasoning_content?: string  // DeepSeek 思维链字段
@@ -38,9 +41,13 @@ interface OpenAIResponse {
   }>
 }
 
+function fetchModelEndpoint(input: string, init: RequestInit): Promise<Response> {
+  return createSecureFetch(globalThis.fetch)(input, init)
+}
+
 /** 构建 Anthropic API 请求 */
 async function callAnthropic(params: AICallParams): Promise<string> {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetchModelEndpoint('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -92,7 +99,7 @@ async function callOpenAICompatible(params: AICallParams): Promise<string> {
     throw new Error(`${params.provider} API Key 未配置`)
   }
 
-  const response = await fetch(baseUrl, {
+  const response = await fetchModelEndpoint(baseUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -112,7 +119,7 @@ async function callOpenAICompatible(params: AICallParams): Promise<string> {
 
   const data = (await response.json()) as OpenAIResponse
   const choice = data.choices?.[0]?.message
-  const finishReason = (data as any).choices?.[0]?.finish_reason
+  const finishReason = data.choices?.[0]?.finish_reason
 
   if (!choice) {
     throw new Error('AI 未返回有效内容，请重试')

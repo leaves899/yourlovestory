@@ -1,5 +1,6 @@
 import type { LlmConfigInput } from '../../agent/llm'
 import type { StartChapterGenerationInput, StartChapterPolishInput } from './taskManager'
+import { normalizeLlmBaseUrl } from '../../agent/llm/config'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -50,7 +51,7 @@ function parseLlmConfig(value: unknown): LlmConfigInput {
   if (!isRecord(value)) throw new Error('llm config is required')
   return {
     provider: optionalString(value.provider, 'llm.provider'),
-    baseUrl: readString(value.baseUrl, 'llm.baseUrl'),
+    baseUrl: normalizeLlmBaseUrl(readString(value.baseUrl, 'llm.baseUrl')),
     model: readString(value.model, 'llm.model'),
     contextBudget: positiveInteger(value.contextBudget, 'llm.contextBudget'),
     maxOutputTokens: positiveInteger(value.maxOutputTokens, 'llm.maxOutputTokens'),

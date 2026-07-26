@@ -8,6 +8,7 @@ import {
   type SafeStorageAdapter,
 } from '@/main/security/credentialService'
 import { LlmCredentialController } from '@/main/security/llmCredentialController'
+import { INSECURE_LLM_BASE_URL } from '@/shared/security/urlSecurity'
 
 const TEST_SECRET = 'sk-test-secret-do-not-expose-123456'
 
@@ -108,9 +109,27 @@ describe('LlmCredentialController', () => {
     expect(subject.save({ scope: 'app' }, TEST_SECRET).success).toBe(true)
     expect(await subject.test({ scope: 'app' })).toMatchObject({ success: true })
     expect(fetchMock.mock.calls[0][0]).toBe('https://app.example/v1/models')
-    expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toEqual({
+    const request = fetchMock.mock.calls[0][1] as RequestInit
+    expect(request.redirect).toBe('manual')
+    expect(request.headers).toEqual({
       Authorization: `Bearer ${TEST_SECRET}`,
     })
+  })
+
+  it('blocks credential test redirects before sending a secret to another origin', async () => {
+    const fetchMock = jest.fn(async () => new Response(null, {
+      status: 302,
+      headers: { location: 'https://untrusted.example/models' },
+    }))
+    const subject = controller({ fetchImpl: fetchMock as typeof fetch })
+    expect(subject.save({ scope: 'app' }, TEST_SECRET).success).toBe(true)
+
+    const result = await subject.test({ scope: 'app' })
+
+    expect(result).toMatchObject({ success: false, error: { code: 'UNAVAILABLE' } })
+    expect(JSON.stringify(result)).not.toContain(TEST_SECRET)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect((fetchMock.mock.calls[0][1] as RequestInit).redirect).toBe('manual')
   })
 
   it('rejects changed bindings before fetch and never exposes the secret', async () => {
@@ -154,9 +173,9 @@ describe('LlmCredentialController', () => {
         error: { code: 'INSECURE_LEGACY_LLM_BASE_URL' },
       },
     })
-    await expect(subject.test({ scope: 'app' })).rejects.toThrow(
-      'baseUrl must use https unless it targets a loopback address',
-    )
+    await expect(subject.test({ scope: 'app' })).rejects.toMatchObject({
+      code: INSECURE_LLM_BASE_URL,
+    })
     expect(fetchMock).not.toHaveBeenCalled()
 
     settings.baseUrl = 'https://app.example/v1'
