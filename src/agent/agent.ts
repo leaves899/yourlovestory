@@ -18,7 +18,12 @@ import {
   type ResolvedLlmConfig,
   type LlmRunStats,
 } from './llm/types'
-import { configureToolExecution, createDangerousOperationHook, type DangerousOperationConfirmation } from './permissions'
+import {
+  configureToolExecution,
+  createDangerousOperationHook,
+  createToolPolicyRegistry,
+  type DangerousOperationConfirmation,
+} from './permissions'
 import { loadDefaultAgentTools, loadDefaultPiRuntime, type PiRuntime } from './runtime'
 
 const DEFAULT_SYSTEM_PROMPT = '你是长篇创作项目助手，只依据当前项目和会话上下文工作。'
@@ -32,8 +37,6 @@ export interface AgentCreationOptions {
   tools?: readonly AgentTool[]
   additionalTools?: readonly AgentTool[]
   confirmDangerousOperation?: DangerousOperationConfirmation
-  mutatingToolNames?: readonly string[]
-  dangerousToolNames?: readonly string[]
 }
 
 export interface AgentPromptOptions {
@@ -172,12 +175,12 @@ export function createProjectSessionAgentFactory(
       const configuredLlm: ResolvedLlmConfig = { ...normalizedLlm, apiKey }
       const baseTools = options.tools ?? (await loadTools())
       const tools = [...baseTools, ...(options.additionalTools ?? [])]
+      const toolPolicies = createToolPolicyRegistry(tools)
       const model = createDynamicPiModel(configuredLlm)
       const permissionHook = createDangerousOperationHook({
         projectId: options.projectId,
         sessionId: options.sessionId,
-        mutatingToolNames: options.mutatingToolNames,
-        dangerousToolNames: options.dangerousToolNames,
+        toolPolicies,
         confirm: options.confirmDangerousOperation,
       })
       const agentOptions: AgentOptions = {
@@ -185,7 +188,7 @@ export function createProjectSessionAgentFactory(
           systemPrompt: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
           model,
           messages: options.initialMessages ?? [],
-          tools: configureToolExecution(tools, options.mutatingToolNames),
+          tools: configureToolExecution(tools, toolPolicies),
         },
         streamFn: createRetryingStreamFn(
           runtime.streamSimple,

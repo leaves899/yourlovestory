@@ -353,21 +353,6 @@ export class AssistantService {
       initialMessages,
       additionalTools,
       confirmDangerousOperation: confirm,
-      dangerousToolNames: [
-        'fragment_manager',
-        'crush_manager',
-        'outline_manager',
-        'narrative_manager',
-        'creative_task',
-      ],
-      mutatingToolNames: [
-        'day_writer',
-        'fragment_manager',
-        'crush_manager',
-        'outline_manager',
-        'narrative_manager',
-        'creative_task',
-      ],
       systemPrompt: systemPrompt ?? '你是本地长篇创作助手。只依据当前项目和会话上下文工作，不补造未提供的事实。亲密内容默认关闭，只有项目明确启用时才可处理。写作输出避免破折号和过度省略号。',
     })
     const runtime: RuntimeSession = {
