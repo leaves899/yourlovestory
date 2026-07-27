@@ -78,6 +78,7 @@ export interface TaskManagerOptions {
   now?: () => string
   createAbortController?: () => AbortController
   resolveLlmConfig?: (projectId: string, input: LlmConfigInput) => LlmConfigInput
+  validateChapterGeneration?: (input: StartChapterGenerationInput) => void
 }
 
 function errorMessage(error: unknown): string {
@@ -143,6 +144,12 @@ function optionalNumber(value: JsonValue | undefined): number | undefined {
 
 function optionalBoolean(value: JsonValue | undefined): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined
+}
+
+function resultChapterId(result: JsonObject | undefined): string | undefined {
+  return typeof result?.chapter_id === 'string' && result.chapter_id.trim()
+    ? result.chapter_id
+    : undefined
 }
 
 function inputFromTask(task: Task): StartTaskInput {
@@ -224,6 +231,14 @@ export class TaskManager {
   }
 
   public startChapterGeneration(input: StartChapterGenerationInput): TaskHandle {
+    const conflicting = this.options.store.listByProject(input.projectId).find((task) =>
+      task.task_type === 'chapter-generation' &&
+      (task.status === 'pending' || task.status === 'running'),
+    )
+    if (conflicting) {
+      throw new Error(`Chapter generation task is already running: ${conflicting.id}`)
+    }
+    this.options.validateChapterGeneration?.(input)
     return this.start({
       projectId: input.projectId,
       sessionId: input.sessionId,
@@ -403,6 +418,7 @@ export class TaskManager {
         return this.finishCancelledWithResult(taskId, result.result)
       }
       const completed = this.options.store.update(taskId, {
+        chapter_id: resultChapterId(result.result),
         status: 'completed',
         stage: 'completed',
         progress: 1,

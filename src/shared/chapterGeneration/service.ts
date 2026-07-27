@@ -12,6 +12,7 @@ import type {
 import {
   emptyChapterGenerationCheckpoint,
   emptyFactCheckReport,
+  hasBlockingFactCheckFinding,
   type Chapter,
   type ChapterGenerationCallbacks,
   type ChapterGenerationCheckpoint,
@@ -81,6 +82,7 @@ function parseFinding(value: JsonValue): FactCheckFinding | null {
     evidence: value.evidence,
     status,
     severity,
+    suggestion: typeof value.suggestion === 'string' ? value.suggestion : undefined,
   }
 }
 
@@ -107,6 +109,7 @@ function factCheckToJson(report: FactCheckReport): JsonObject {
       status: finding.status,
       severity: finding.severity,
       evidence: finding.evidence,
+      suggestion: finding.suggestion ?? null,
     })),
   }
 }
@@ -244,7 +247,7 @@ function factCheckPrompt(
     `关键事件：${preparation.chapter_outline.key_events.join('；')}`,
     `正文：\n${body}`,
     existing ? `已有事实核查输出片段，请从其后继续，不要重复：\n${existing}` : '',
-    '严格输出 JSON：{"passed":true或false,"summary":"摘要","findings":[{"claim":"事实","status":"supported|unclear|contradicted","severity":"info|warning|error","evidence":"依据"}]}。',
+    '严格输出 JSON：{"passed":true或false,"summary":"摘要","findings":[{"claim":"事实","status":"supported|unclear|contradicted","severity":"info|warning|error","evidence":"依据","suggestion":"可执行的修改建议，可省略"}]}。',
   ].filter((line) => line.length > 0).join('\n')
 }
 
@@ -279,6 +282,11 @@ export class ChapterGenerationService {
     const version = this.getVersion(projectId, versionId)
     if (version.status !== 'review') {
       throw new ChapterVersionStatusTransitionError(version.id, version.status, 'approved')
+    }
+    if (hasBlockingFactCheckFinding(version.fact_check.findings)) {
+      throw new ChapterGenerationBoundaryError(
+        `Chapter version has blocking fact-check errors: ${version.id}`,
+      )
     }
     const chapter = this.requireChapter(projectId, version.chapter_id)
     const approved = this.options.versions.setStatus(version.id, 'approved', 'review')

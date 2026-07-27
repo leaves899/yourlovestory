@@ -89,16 +89,16 @@ function WorkbenchLibraryPage({ mode }: { mode: LibraryMode }) {
           <CardBody>
             <VStack align="stretch" spacing={4}>
               <Text fontWeight="bold">新增{info.title === '故事素材库' ? '素材' : info.title.slice(0, -1)}</Text>
-              <FormControl><FormLabel>{info.first}</FormLabel><Input value={form.first} onChange={(event) => setForm({ ...form, first: event.target.value })} /></FormControl>
+              <FormControl><FormLabel>{info.first}</FormLabel><Input value={form.first} onChange={(event) => setForm({ ...form, first: event.target.value })} data-testid={`library-${mode}-first-input`} /></FormControl>
               <FormControl><FormLabel>{info.second}</FormLabel><Input value={form.second} onChange={(event) => setForm({ ...form, second: event.target.value })} /></FormControl>
               <FormControl><FormLabel>{info.third}</FormLabel><Textarea value={form.third} onChange={(event) => setForm({ ...form, third: event.target.value })} minH="150px" /></FormControl>
-              <Button colorScheme="cinnabar" isLoading={store.saving} onClick={() => void submit()}>保存到项目</Button>
+              <Button colorScheme="cinnabar" isLoading={store.saving} isDisabled={store.saving} onClick={() => void submit()}>保存到项目</Button>
             </VStack>
           </CardBody>
         </Card>
         <Card>
           <CardBody>
-            {items.length === 0 ? <WorkbenchEmpty title="这里还没有内容" description="先新增一条记录，之后它就能被大纲和 Agent 选择为上下文。" /> : <VStack align="stretch" spacing={3}>{items.map((item) => <LibraryItem key={item.id} mode={mode} item={item as unknown as Record<string, unknown>} onDelete={() => void removeItem(mode, item.id, store)} />)}</VStack>}
+            {items.length === 0 ? <WorkbenchEmpty title="这里还没有内容" description="先新增一条记录，之后它就能被大纲和 Agent 选择为上下文。" actionLabel={`新增${info.title}`} onAction={() => document.querySelector<HTMLInputElement>(`[data-testid="library-${mode}-first-input"]`)?.focus()} secondaryActionLabel="返回黄金路径" onSecondaryAction={() => { window.location.hash = '#/workbench/first-chapter' }} /> : <VStack align="stretch" spacing={3}>{items.map((item) => <LibraryItem key={item.id} mode={mode} item={item as unknown as Record<string, unknown>} onDelete={() => void removeItem(mode, item.id, store)} />)}</VStack>}
           </CardBody>
         </Card>
       </SimpleGrid>

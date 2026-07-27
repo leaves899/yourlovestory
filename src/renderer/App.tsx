@@ -21,6 +21,8 @@ const WorkbenchLibraryPage = lazy(() => import('./pages/WorkbenchLibraryPage'))
 const WorkbenchRelationsPage = lazy(() => import('./pages/WorkbenchRelationsPage'))
 const WorkbenchOutlinePage = lazy(() => import('./pages/WorkbenchOutlinePage'))
 const WorkbenchWritePage = lazy(() => import('./pages/WorkbenchWritePage'))
+const FirstChapterWizardPage = lazy(() => import('./pages/FirstChapterWizardPage'))
+const WorkbenchReviewPage = lazy(() => import('./pages/WorkbenchReviewPage'))
 const WorkbenchNarrativePage = lazy(() => import('./pages/WorkbenchNarrativePage'))
 const WorkbenchAssistantPage = lazy(() => import('./pages/WorkbenchAssistantPage'))
 const WorkbenchSessionsPage = lazy(() => import('./pages/WorkbenchSessionsPage'))
@@ -72,6 +74,8 @@ function AppRoutes() {
         <Route path="relations" element={<WorkbenchRelationsPage />} />
         <Route path="outline" element={<WorkbenchOutlinePage />} />
         <Route path="write" element={<WorkbenchWritePage />} />
+        <Route path="first-chapter" element={<FirstChapterWizardPage />} />
+        <Route path="review" element={<WorkbenchReviewPage />} />
         <Route path="memory" element={<WorkbenchNarrativePage section="memory" />} />
         <Route path="foreshadow" element={<WorkbenchNarrativePage section="foreshadow" />} />
         <Route path="graph" element={<WorkbenchNarrativePage section="graph" />} />

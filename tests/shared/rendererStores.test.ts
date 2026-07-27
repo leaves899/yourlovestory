@@ -75,7 +75,11 @@ jest.mock('../../src/renderer/services/taskService', () => ({
   default: mockTaskService,
 }))
 
-import { useTaskStore } from '@/renderer/stores/taskStore'
+import {
+  taskChapterId,
+  useTaskStore,
+  versionsForChapterOutline,
+} from '@/renderer/stores/taskStore'
 import { useWorkbenchStore } from '@/renderer/stores/workbenchStore'
 
 const projectOne = {
@@ -103,8 +107,79 @@ beforeEach(() => {
   jest.clearAllMocks()
   setProjectDefaults()
   useWorkbenchStore.setState({ projects: [], currentProject: null, config: null, initialized: false, dirty: false, pendingProjectId: null, error: null })
-  useTaskStore.setState({ projectId: null, activeTaskId: null, stream: '', logs: [], subscribed: false, error: null })
+  useTaskStore.setState({
+    projectId: null,
+    tasks: [],
+    recoverableTasks: [],
+    versions: [],
+    activeTaskId: null,
+    stream: '',
+    logs: [],
+    loading: false,
+    busy: false,
+    subscribed: false,
+    error: null,
+  })
   mockTaskHandlers.current = null
+})
+
+test('任务加载会按完成任务的 chapter_id 拉取章节版本', async () => {
+  const completedTask = {
+    id: 'task-1',
+    project_id: projectOne.id,
+    chapter_id: 'chapter-1',
+    parent_task_id: null,
+    task_type: 'chapter-generation',
+    status: 'completed' as const,
+    stage: 'review',
+    progress: 1,
+    input: {
+      request: {
+        chapter_outline_id: 'chapter-outline-1',
+      },
+    },
+    checkpoint: null,
+    result: { chapter_id: 'chapter-1' },
+    error_message: null,
+    cancel_requested: false,
+    started_at: '2026-01-01T00:00:00.000Z',
+    finished_at: '2026-01-01T00:01:00.000Z',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:01:00.000Z',
+  }
+  const version = {
+    id: 'version-1',
+    chapter_id: 'chapter-1',
+    task_id: completedTask.id,
+    version_number: 1,
+    content: '第一章正文',
+    summary: '第一章摘要',
+    fact_check: { passed: true, summary: '通过', findings: [] },
+    status: 'review' as const,
+    is_current: false,
+    created_at: '2026-01-01T00:01:00.000Z',
+    reviewed_at: '2026-01-01T00:01:00.000Z',
+    confirmed_at: null,
+  }
+  mockTaskService.list.mockResolvedValue([completedTask])
+  mockTaskService.listRecoverable.mockResolvedValue([])
+  mockTaskService.listVersions.mockResolvedValue([version])
+
+  await useTaskStore.getState().load(projectOne.id)
+
+  expect(mockTaskService.listVersions).toHaveBeenCalledWith(projectOne.id, 'chapter-1')
+  expect(useTaskStore.getState().versions).toEqual([version])
+  expect(taskChapterId({ ...completedTask, chapter_id: null })).toBe('chapter-1')
+  expect(versionsForChapterOutline(
+    [completedTask],
+    [version],
+    'chapter-outline-1',
+  )).toEqual([version])
+  expect(versionsForChapterOutline(
+    [completedTask],
+    [version],
+    'chapter-outline-2',
+  )).toEqual([])
 })
 
 test('工作台 store 在未保存时阻止项目切换，并支持确认恢复', async () => {

@@ -32,7 +32,7 @@ function WorkbenchHomePage() {
   const tasks = useTaskStore((state) => state.tasks)
 
   if (initialized && !currentProject) {
-    return <Navigate to="/workbench/projects" replace />
+    return <Navigate to="/workbench/first-chapter" replace />
   }
 
   if (!currentProject) {

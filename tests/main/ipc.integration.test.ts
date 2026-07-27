@@ -32,11 +32,13 @@ jest.mock('electron', () => ({
 }))
 
 import { setupIPC } from '../../src/main/ipc'
+import { initializeDatabase } from '../../src/main/database'
 import {
   CredentialService,
   type SafeStorageAdapter,
 } from '../../src/main/security/credentialService'
 import { LlmCredentialController } from '../../src/main/security/llmCredentialController'
+import { WorkbenchService } from '../../src/main/workbench'
 import type { Fragment } from '../../src/shared/fragment/models'
 
 async function invoke<T>(channel: string, params?: unknown): Promise<T> {
@@ -112,6 +114,50 @@ describe('主进程 IPC 集成', () => {
     await expect(invoke('task:get', { taskId: 'missing-task' })).rejects.toThrow(
       'TaskManager is not initialized',
     )
+  })
+
+  test('章节确认 IPC 不能绕过错误级事实核查门禁', async () => {
+    const databaseRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'yourcrush-ipc-fact-check-'))
+    const database = initializeDatabase(databaseRoot)
+    try {
+      const workbench = new WorkbenchService(database)
+      const project = workbench.createProject({
+        slug: 'ipc-fact-check-boundary',
+        name: 'IPC Fact Check Boundary',
+      })
+      const chapter = workbench.chapters.create({
+        project_id: project.id,
+        chapter_number: 1,
+        title: 'Blocked Chapter',
+      })
+      const version = workbench.chapterVersions.create({
+        chapter_id: chapter.id,
+        content: '正文包含与设定冲突的事实。',
+        summary: '存在阻塞事实。',
+        fact_check: {
+          passed: false,
+          summary: '发现阻塞错误',
+          findings: [{
+            claim: '角色在本章出现',
+            status: 'contradicted',
+            severity: 'error',
+            evidence: '角色此前已经死亡',
+            suggestion: '修订正文后重新执行事实核查',
+          }],
+        },
+      })
+      setupIPC({ chapterGenerationService: workbench.chapterGeneration })
+
+      await expect(invoke('chapterGeneration:version:confirm', {
+        project_id: project.id,
+        version_id: version.id,
+      })).rejects.toThrow('blocking fact-check errors')
+      expect(workbench.chapterVersions.getById(version.id)?.status).toBe('review')
+      expect(workbench.chapters.getById(chapter.id)?.status).toBe('planned')
+    } finally {
+      database.close()
+      fs.rmSync(databaseRoot, { recursive: true, force: true })
+    }
   })
 
   test('凭据 IPC 仅返回状态且不存在读取明文通道', async () => {

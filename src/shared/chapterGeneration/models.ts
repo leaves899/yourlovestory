@@ -59,12 +59,19 @@ export interface FactCheckFinding {
   status: FactCheckFindingStatus
   severity: FactCheckSeverity
   evidence: string
+  suggestion?: string
 }
 
 export interface FactCheckReport {
   passed: boolean
   summary: string
   findings: FactCheckFinding[]
+}
+
+export function hasBlockingFactCheckFinding(
+  findings: readonly FactCheckFinding[],
+): boolean {
+  return findings.some((finding) => finding.severity === 'error')
 }
 
 export interface ChapterVersion {

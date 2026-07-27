@@ -100,6 +100,54 @@ describe('narrative workbench', () => {
     expect(result.proposals.length).toBeGreaterThan(0)
   })
 
+  test('reuses memory proposals for the same source version', async () => {
+    const { projectId, chapterId } = createChapter(workbench)
+    const version = workbench.chapterVersions.create({
+      chapter_id: chapterId,
+      content: 'A first event happened.',
+      summary: 'First event.',
+      fact_check: { passed: true, summary: 'Supported.', findings: [] },
+    })
+    const first = await workbench.narrative.extractMemoryProposals(projectId, chapterId, {
+      source_version_id: version.id,
+    })
+    const second = await workbench.narrative.extractMemoryProposals(projectId, chapterId, {
+      source_version_id: version.id,
+    })
+
+    expect(second.proposals.map((proposal) => proposal.id).sort()).toEqual(
+      first.proposals.map((proposal) => proposal.id).sort(),
+    )
+    expect(workbench.narrative.listMemoryProposals(projectId)).toHaveLength(first.proposals.length)
+  })
+
+  test('coalesces concurrent memory extraction for the same source version', async () => {
+    const { projectId, chapterId } = createChapter(workbench)
+    const version = workbench.chapterVersions.create({
+      chapter_id: chapterId,
+      content: 'A first event happened.',
+      summary: 'First event.',
+      fact_check: { passed: true, summary: 'Supported.', findings: [] },
+    })
+    const generator = new FixedGenerator(JSON.stringify([{
+      memory_type: 'event',
+      title: 'First event',
+      content: 'A first event happened.',
+      confidence: 0.9,
+      evidence: ['chapter'],
+    }]))
+    const options = { source_version_id: version.id, generator }
+    const [first, second] = await Promise.all([
+      workbench.narrative.extractMemoryProposals(projectId, chapterId, options),
+      workbench.narrative.extractMemoryProposals(projectId, chapterId, options),
+    ])
+
+    expect(generator.requests).toHaveLength(1)
+    expect(second.proposals.map((proposal) => proposal.id)).toEqual(
+      first.proposals.map((proposal) => proposal.id),
+    )
+  })
+
   test('persists foreshadow suggestions and enforces the state machine', async () => {
     const { projectId, chapterId } = createChapter(workbench)
     const result = await workbench.narrative.suggestForeshadows(projectId, chapterId, {
@@ -118,6 +166,35 @@ describe('narrative workbench', () => {
       workbench.narrative.transitionForeshadow(projectId, suggestion.id, 'paid_off'),
     ).toThrow('Invalid Foreshadow status transition')
     expect(workbench.narrative.listForeshadowEvents(projectId, suggestion.id)).toHaveLength(2)
+  })
+
+  test('reuses foreshadow proposals for the same chapter', async () => {
+    const { projectId, chapterId } = createChapter(workbench)
+    const first = await workbench.narrative.suggestForeshadows(projectId, chapterId)
+    const second = await workbench.narrative.suggestForeshadows(projectId, chapterId)
+
+    expect(second.suggestions.map((item) => item.id)).toEqual(
+      first.suggestions.map((item) => item.id),
+    )
+  })
+
+  test('coalesces concurrent foreshadow suggestions for the same chapter', async () => {
+    const { projectId, chapterId } = createChapter(workbench)
+    const generator = new FixedGenerator(JSON.stringify([{
+      title: 'Question',
+      description: 'The unresolved question returns.',
+      importance: 3,
+      evidence: 'ending',
+    }]))
+    const [first, second] = await Promise.all([
+      workbench.narrative.suggestForeshadows(projectId, chapterId, { generator }),
+      workbench.narrative.suggestForeshadows(projectId, chapterId, { generator }),
+    ])
+
+    expect(generator.requests).toHaveLength(1)
+    expect(second.suggestions.map((item) => item.id)).toEqual(
+      first.suggestions.map((item) => item.id),
+    )
   })
 
   test('toggles skills and creates a revision with a block diff', async () => {

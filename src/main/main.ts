@@ -12,6 +12,7 @@ import {
   TaskManager,
 } from './tasks'
 import { createWorkbenchService, type WorkbenchService } from './workbench'
+import { assertChapterGenerationPreflight } from './workbench/firstChapterPreflight'
 import {
   AssistantService,
   createWebContentsAssistantEventSink,
@@ -187,6 +188,8 @@ app.whenReady().then(() => {
     },
     resolveLlmConfig: (projectId, input) =>
       llmCredentialController.runtimeConfig(projectId, input),
+    validateChapterGeneration: (input) =>
+      assertChapterGenerationPreflight(workbenchService!, input),
   })
   assistantService = new AssistantService({
     store: new ChatRepository(database),

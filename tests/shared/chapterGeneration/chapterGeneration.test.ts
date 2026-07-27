@@ -7,6 +7,7 @@ import {
 } from '@/main/database'
 import { WorkbenchService } from '@/main/workbench'
 import {
+  ChapterGenerationBoundaryError,
   ChapterVersionStatusTransitionError,
   VersionConflictError,
 } from '@/shared/novelProject'
@@ -28,6 +29,7 @@ function factCheck(passed: boolean): FactCheckReport {
         status: passed ? 'supported' : 'unclear',
         severity: passed ? 'info' : 'warning',
         evidence: passed ? '章节关键事件可在大纲中找到' : '需要人工核对',
+        suggestion: passed ? '保持当前表述' : '对照大纲修订相关段落',
       },
     ],
   }
@@ -148,6 +150,69 @@ describe('chapter generation repositories and domain service', () => {
     )
   })
 
+  test('loads legacy fact-check findings without a suggestion field', () => {
+    const { workbench, projectId } = createWorkbench(database)
+    const chapter = workbench.chapters.create({
+      project_id: projectId,
+      chapter_number: 1,
+      title: 'Legacy Chapter',
+    })
+    const version = workbench.chapterVersions.create({
+      chapter_id: chapter.id,
+      content: '旧正文',
+      summary: '旧摘要',
+      fact_check: {
+        passed: true,
+        summary: '旧格式核查',
+        findings: [{
+          claim: '旧事实',
+          status: 'supported',
+          severity: 'info',
+          evidence: '旧证据',
+        }],
+      },
+    })
+
+    expect(workbench.chapterVersions.getById(version.id)?.fact_check.findings[0]).toEqual({
+      claim: '旧事实',
+      status: 'supported',
+      severity: 'info',
+      evidence: '旧证据',
+      suggestion: undefined,
+    })
+  })
+
+  test('rejects confirmation when fact check contains an error finding', () => {
+    const { workbench, projectId } = createWorkbench(database)
+    const chapter = workbench.chapters.create({
+      project_id: projectId,
+      chapter_number: 1,
+      title: 'Blocked Chapter',
+    })
+    const version = workbench.chapterVersions.create({
+      chapter_id: chapter.id,
+      content: '正文包含与设定冲突的事实。',
+      summary: '存在阻塞事实。',
+      fact_check: {
+        passed: false,
+        summary: '发现阻塞错误',
+        findings: [{
+          claim: '角色在本章出现',
+          status: 'contradicted',
+          severity: 'error',
+          evidence: '角色此前已经死亡',
+          suggestion: '修订正文后重新执行事实核查',
+        }],
+      },
+    })
+
+    expect(() => workbench.chapterGeneration.confirmVersion(projectId, version.id)).toThrow(
+      ChapterGenerationBoundaryError,
+    )
+    expect(workbench.chapterVersions.getById(version.id)?.status).toBe('review')
+    expect(workbench.chapters.getById(chapter.id)?.status).toBe('planned')
+  })
+
   test('requires confirmed volume and chapter outlines before body generation', () => {
     const { workbench, projectId, chapterOutlineId } = createWorkbench(database, false)
     const volume = workbench.volumes.listByProject(projectId)[0]
@@ -188,6 +253,7 @@ describe('chapter generation repositories and domain service', () => {
     expect(result.version?.status).toBe('review')
     expect(result.version?.content).toBe('正文第一段正文第二段')
     expect(result.version?.fact_check.passed).toBe(true)
+    expect(result.version?.fact_check.findings[0].suggestion).toBe('保持当前表述')
     expect(stages).toEqual(['body', 'summary', 'fact_check', 'saving', 'review'])
     expect(chunks).toContain('正文第一段')
     expect(checkpoints).toContain('review')
