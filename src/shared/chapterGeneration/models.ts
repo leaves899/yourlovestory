@@ -59,6 +59,7 @@ export interface FactCheckFinding {
   status: FactCheckFindingStatus
   severity: FactCheckSeverity
   evidence: string
+  suggestion?: string
 }
 
 export interface FactCheckReport {

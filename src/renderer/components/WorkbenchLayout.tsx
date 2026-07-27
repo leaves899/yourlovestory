@@ -33,6 +33,7 @@ import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAssistantStore } from '../stores/assistantStore'
 import { useTaskStore } from '../stores/taskStore'
 import { useWorkbenchStore } from '../stores/workbenchStore'
+import { FirstChapterProgress } from './FirstChapterProgress'
 
 interface NavigationItem {
   to: string
@@ -63,6 +64,7 @@ const navigationGroups: Array<{ label: string; items: NavigationItem[] }> = [
     items: [
       { to: '/workbench/outline', label: '卷章大纲', icon: FaListOl },
       { to: '/workbench/write', label: '章节写作', icon: FaFeatherAlt },
+      { to: '/workbench/review', label: '章节审阅', icon: FaBookOpen },
       { to: '/workbench/revisions', label: '章节修订', icon: FaMagic },
     ],
   },
@@ -229,6 +231,8 @@ function WorkbenchLayout() {
             <Button size="xs" variant="outline" onClick={() => void initialize()}>重试</Button>
           </Alert>
         )}
+
+        <FirstChapterProgress />
 
         {loading && !currentProject && (
           <Flex minH="60vh" align="center" justify="center">

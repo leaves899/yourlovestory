@@ -70,8 +70,18 @@ export interface TaskService {
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return typeof error === 'string' ? error : '任务请求失败'
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  const translations: Array<[RegExp, string]> = [
+    [/Project must be active/i, '当前项目不是进行中状态，请先在项目管理中恢复项目。'],
+    [/Volume outline must be confirmed or locked/i, '卷大纲必须先确认或锁定，请前往卷章大纲处理。'],
+    [/Chapter outline must be confirmed or locked/i, '章大纲必须先确认或锁定，请前往卷章大纲处理。'],
+    [/credential/i, '模型凭据不可用，请前往项目配置安全保存并测试凭据。'],
+    [/endpoint|base url|url security/i, '模型接口地址不安全或无效，请在项目配置中使用 HTTPS 或本机回环地址。'],
+    [/already running|conflict/i, '已有互斥任务正在运行，请等待完成或取消后重试。'],
+  ]
+  return translations.find(([pattern]) => pattern.test(message))?.[1]
+    ?? message
+    ?? '任务请求失败'
 }
 
 async function requireSuccess<T>(request: () => Promise<{ success: boolean; data?: T; errors?: string[] }>): Promise<T> {
