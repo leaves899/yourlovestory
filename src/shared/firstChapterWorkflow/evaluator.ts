@@ -1,4 +1,5 @@
 import type { ChapterOutline, Character, Relation, Volume, VolumeOutline } from '../novelProject'
+import { hasBlockingFactCheckFinding } from '../chapterGeneration'
 import type {
   FirstChapterStepId,
   FirstChapterWorkflowInput,
@@ -229,9 +230,9 @@ export function evaluateFirstChapterWorkflow(
   const completedStepCount = steps.filter((step) => step.completed).length
   const hasBlockingError = checks.some((item) => item.blocking)
   const reviewVersion = input.chapterVersions.find((version) => version.status === 'review')
-  const reviewHasBlockingFinding = reviewVersion?.fact_check.findings.some(
-    (finding) => finding.severity === 'error',
-  ) ?? false
+  const reviewHasBlockingFinding = reviewVersion
+    ? hasBlockingFactCheckFinding(reviewVersion.fact_check.findings)
+    : false
 
   return {
     steps,

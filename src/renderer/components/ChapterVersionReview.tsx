@@ -10,7 +10,10 @@ import {
   Stack,
   Text,
 } from '@chakra-ui/react'
-import type { ChapterVersion } from '../../shared/chapterGeneration'
+import {
+  hasBlockingFactCheckFinding,
+  type ChapterVersion,
+} from '../../shared/chapterGeneration'
 import { statusColor } from './WorkbenchPrimitives'
 
 interface ChapterVersionReviewProps {
@@ -28,9 +31,7 @@ export function ChapterVersionReview({
   onReject,
   onRevise,
 }: ChapterVersionReviewProps) {
-  const hasBlockingFinding = version.fact_check.findings.some(
-    (finding) => finding.severity === 'error',
-  )
+  const hasBlockingFinding = hasBlockingFactCheckFinding(version.fact_check.findings)
   return (
     <Card variant="outline" data-testid={`chapter-version-${version.id}`}>
       <CardHeader>

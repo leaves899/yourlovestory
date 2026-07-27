@@ -12,6 +12,7 @@ import type {
 import {
   emptyChapterGenerationCheckpoint,
   emptyFactCheckReport,
+  hasBlockingFactCheckFinding,
   type Chapter,
   type ChapterGenerationCallbacks,
   type ChapterGenerationCheckpoint,
@@ -281,6 +282,11 @@ export class ChapterGenerationService {
     const version = this.getVersion(projectId, versionId)
     if (version.status !== 'review') {
       throw new ChapterVersionStatusTransitionError(version.id, version.status, 'approved')
+    }
+    if (hasBlockingFactCheckFinding(version.fact_check.findings)) {
+      throw new ChapterGenerationBoundaryError(
+        `Chapter version has blocking fact-check errors: ${version.id}`,
+      )
     }
     const chapter = this.requireChapter(projectId, version.chapter_id)
     const approved = this.options.versions.setStatus(version.id, 'approved', 'review')

@@ -7,6 +7,7 @@ import {
 } from '@/main/database'
 import { WorkbenchService } from '@/main/workbench'
 import {
+  ChapterGenerationBoundaryError,
   ChapterVersionStatusTransitionError,
   VersionConflictError,
 } from '@/shared/novelProject'
@@ -179,6 +180,37 @@ describe('chapter generation repositories and domain service', () => {
       evidence: '旧证据',
       suggestion: undefined,
     })
+  })
+
+  test('rejects confirmation when fact check contains an error finding', () => {
+    const { workbench, projectId } = createWorkbench(database)
+    const chapter = workbench.chapters.create({
+      project_id: projectId,
+      chapter_number: 1,
+      title: 'Blocked Chapter',
+    })
+    const version = workbench.chapterVersions.create({
+      chapter_id: chapter.id,
+      content: '正文包含与设定冲突的事实。',
+      summary: '存在阻塞事实。',
+      fact_check: {
+        passed: false,
+        summary: '发现阻塞错误',
+        findings: [{
+          claim: '角色在本章出现',
+          status: 'contradicted',
+          severity: 'error',
+          evidence: '角色此前已经死亡',
+          suggestion: '修订正文后重新执行事实核查',
+        }],
+      },
+    })
+
+    expect(() => workbench.chapterGeneration.confirmVersion(projectId, version.id)).toThrow(
+      ChapterGenerationBoundaryError,
+    )
+    expect(workbench.chapterVersions.getById(version.id)?.status).toBe('review')
+    expect(workbench.chapters.getById(chapter.id)?.status).toBe('planned')
   })
 
   test('requires confirmed volume and chapter outlines before body generation', () => {

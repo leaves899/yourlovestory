@@ -78,6 +78,7 @@ function errorMessage(error: unknown): string {
     [/credential/i, '模型凭据不可用，请前往项目配置安全保存并测试凭据。'],
     [/endpoint|base url|url security/i, '模型接口地址不安全或无效，请在项目配置中使用 HTTPS 或本机回环地址。'],
     [/already running|conflict/i, '已有互斥任务正在运行，请等待完成或取消后重试。'],
+    [/blocking fact-check errors/i, '章节仍有错误级事实核查结果，请先修订正文或拒绝该版本。'],
   ]
   return translations.find(([pattern]) => pattern.test(message))?.[1]
     ?? message
