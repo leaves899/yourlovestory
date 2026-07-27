@@ -9,6 +9,7 @@ import { useWorkbenchStore } from '../stores/workbenchStore'
 
 interface WorkflowOptions {
   endpointValid?: boolean
+  targetChapterOutlineId?: string
 }
 
 export function useFirstChapterWorkflow(
@@ -21,20 +22,30 @@ export function useFirstChapterWorkflow(
 
   useEffect(() => {
     const projectId = workbench.currentProject?.id
+    let cancelled = false
     if (!projectId) {
       setCredentialConfigured(false)
       return
     }
+    setCredentialConfigured(false)
     void Promise.all([
       window.electronAPI.getLlmCredentialStatus({ scope: 'project', projectId }),
       window.electronAPI.getLlmCredentialStatus({ scope: 'app' }),
     ])
-      .then((responses) => setCredentialConfigured(
-        responses.some((response) => response.success && response.data?.configured === true),
-      ))
-      .catch(() => setCredentialConfigured(false))
+      .then((responses) => {
+        if (cancelled) return
+        setCredentialConfigured(
+          responses.some((response) => response.success && response.data?.configured === true),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setCredentialConfigured(false)
+      })
     if (taskState.projectId !== projectId) void taskState.load(projectId)
     if (narrative.projectId !== projectId) void narrative.load(projectId)
+    return () => {
+      cancelled = true
+    }
   }, [
     narrative,
     taskState,
@@ -42,6 +53,7 @@ export function useFirstChapterWorkflow(
   ])
 
   return useMemo(() => evaluateFirstChapterWorkflow({
+    targetChapterOutlineId: options.targetChapterOutlineId,
     project: workbench.currentProject,
     config: workbench.config,
     characters: workbench.characters,
@@ -62,11 +74,14 @@ export function useFirstChapterWorkflow(
     factCheckFindings: taskState.versions.flatMap((version) => version.fact_check.findings),
     memoryProposalCount: narrative.proposals.length,
     foreshadowProposalCount: narrative.foreshadows.filter((item) => item.status === 'suggested').length,
+    narrativeProposalFailures: narrative.proposalFailures,
   }), [
     credentialConfigured,
     narrative.foreshadows,
     narrative.proposals,
+    narrative.proposalFailures,
     options.endpointValid,
+    options.targetChapterOutlineId,
     taskState.tasks,
     taskState.versions,
     workbench.chapterOutlines,

@@ -193,4 +193,37 @@ describe('TaskManager', () => {
       'llm:project:replacement',
     ])
   })
+
+  test('rejects a second chapter generation while one is running', async () => {
+    let finish!: (result: AgentRunResult) => void
+    const agentCompletion = new Promise<AgentRunResult>((resolve) => {
+      finish = resolve
+    })
+    const manager = new TaskManager({
+      store: new TaskRepository(database),
+      agentFactory: {
+        create: async (input) => ({
+          projectId,
+          sessionId: input.sessionId,
+          prompt: async () => agentCompletion,
+          abort: jest.fn(),
+          dispose: jest.fn(),
+        }),
+      },
+      events: { publish: () => undefined },
+    })
+    const input = {
+      projectId,
+      sessionId: 'chapter-session',
+      chapterOutlineId: 'outline-1',
+      llm: { baseUrl: 'https://example.invalid/v1', model: 'test-model' },
+    }
+    const first = manager.startChapterGeneration(input)
+
+    expect(() => manager.startChapterGeneration(input)).toThrow(
+      'Chapter generation task is already running',
+    )
+    finish(successfulResult())
+    await first.completion
+  })
 })

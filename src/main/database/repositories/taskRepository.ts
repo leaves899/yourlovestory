@@ -40,6 +40,7 @@ export interface CreateTaskInput {
 }
 
 export interface UpdateTaskInput {
+  chapter_id?: string | null
   status?: TaskStatus
   stage?: string
   progress?: number
@@ -161,6 +162,7 @@ export class TaskRepository implements TaskStore {
     const current = this.getById(id)
     if (!current) return null
     const next = {
+      chapter_id: input.chapter_id === undefined ? current.chapter_id : input.chapter_id,
       status: input.status ?? current.status,
       stage: input.stage ?? current.stage,
       progress: input.progress ?? current.progress,
@@ -174,11 +176,12 @@ export class TaskRepository implements TaskStore {
     this.database
       .prepare(
         `UPDATE tasks
-         SET status = ?, stage = ?, progress = ?, checkpoint_json = ?, result_json = ?,
+         SET chapter_id = ?, status = ?, stage = ?, progress = ?, checkpoint_json = ?, result_json = ?,
              error_message = ?, cancel_requested = ?, started_at = ?, finished_at = ?, updated_at = ?
          WHERE id = ?`,
       )
       .run(
+        next.chapter_id,
         next.status,
         next.stage,
         next.progress,

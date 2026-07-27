@@ -184,6 +184,7 @@ describe('chapter generation task pipeline', () => {
     expect(completed.result).toEqual(
       expect.objectContaining({ review_required: true, fact_check_passed: true }),
     )
+    expect(completed.chapter_id).toBe(completed.result?.chapter_id)
     expect(workbench.chapterVersions.listByChapter(workbench.chapters.listByProject(outline.projectId)[0].id)).toHaveLength(1)
     expect(events.some((event) => event.type === 'task:checkpoint')).toBe(true)
     expect(events.some((event) => event.type === 'task:review')).toBe(true)

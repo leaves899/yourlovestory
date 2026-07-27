@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   AlertIcon,
@@ -44,20 +44,30 @@ function WorkbenchReviewPage() {
   const loadTasks = useTaskStore((state) => state.load)
   const loadVersions = useTaskStore((state) => state.loadVersions)
   const narrativeLoad = useNarrativeStore((state) => state.load)
+  const proposalFailures = useNarrativeStore((state) => state.proposalFailures)
+  const setProposalFailures = useNarrativeStore((state) => state.setProposalFailures)
   const workflow = useFirstChapterWorkflow()
   const [chapterId, setChapterId] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [busyAction, setBusyAction] = useState<'confirm' | 'reject' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [proposalStatus, setProposalStatus] = useState<ProposalStatus>(initialProposalStatus)
+  const proposalOperationRef = useRef(false)
+  const reviewOperationRef = useRef(false)
 
   const availableChapterIds = useMemo(() => [...new Set(
     tasks
-      .filter((task) => task.task_type === 'chapter-generation' && task.chapter_id)
-      .map((task) => task.chapter_id as string),
+      .filter((task) => task.task_type === 'chapter-generation')
+      .map((task) => {
+        if (task.chapter_id) return task.chapter_id
+        return typeof task.result?.chapter_id === 'string' ? task.result.chapter_id : null
+      })
+      .filter((id): id is string => id !== null),
   )], [tasks])
 
   useEffect(() => {
     if (!currentProject) return
+    setChapterId('')
+    setProposalStatus(initialProposalStatus)
     void loadTasks(currentProject.id)
   }, [currentProject, loadTasks])
 
@@ -70,58 +80,87 @@ function WorkbenchReviewPage() {
 
   const generateProposals = async (version: ChapterVersion): Promise<void> => {
     if (!currentProject) return
+    const projectId = currentProject.id
+    if (proposalOperationRef.current) return
+    proposalOperationRef.current = true
     setProposalStatus((current) => ({ ...current, memory: 'running', foreshadow: 'running' }))
-    const [memory, foreshadow] = await Promise.allSettled([
-      narrativeService.extractMemories(
-        currentProject.id,
-        version.chapter_id,
-        undefined,
-        version.id,
-      ),
-      narrativeService.suggestForeshadows(currentProject.id, version.chapter_id),
-    ])
-    setProposalStatus({
-      memory: memory.status === 'fulfilled' ? 'success' : 'failed',
-      foreshadow: foreshadow.status === 'fulfilled' ? 'success' : 'failed',
-      memoryCount: memory.status === 'fulfilled' ? memory.value.proposals.length : 0,
-      foreshadowCount: foreshadow.status === 'fulfilled' ? foreshadow.value.suggestions.length : 0,
-    })
-    await narrativeLoad(currentProject.id)
+    setError(null)
+    try {
+      const [memory, foreshadow] = await Promise.allSettled([
+        narrativeService.extractMemories(
+          projectId,
+          version.chapter_id,
+          undefined,
+          version.id,
+        ),
+        narrativeService.suggestForeshadows(projectId, version.chapter_id),
+      ])
+      if (useWorkbenchStore.getState().currentProject?.id !== projectId) return
+      const failures: Array<'memory' | 'foreshadow'> = []
+      if (memory.status === 'rejected') failures.push('memory')
+      if (foreshadow.status === 'rejected') failures.push('foreshadow')
+      setProposalFailures(failures)
+      setProposalStatus({
+        memory: memory.status === 'fulfilled' ? 'success' : 'failed',
+        foreshadow: foreshadow.status === 'fulfilled' ? 'success' : 'failed',
+        memoryCount: memory.status === 'fulfilled' ? memory.value.proposals.length : 0,
+        foreshadowCount: foreshadow.status === 'fulfilled' ? foreshadow.value.suggestions.length : 0,
+      })
+      await narrativeLoad(projectId)
+    } finally {
+      proposalOperationRef.current = false
+    }
   }
 
   const confirm = async (version: ChapterVersion): Promise<void> => {
-    if (!currentProject || busy) return
-    setBusy(true)
+    if (!currentProject || reviewOperationRef.current) return
+    reviewOperationRef.current = true
+    const projectId = currentProject.id
+    setBusyAction('confirm')
     setError(null)
     try {
-      await taskService.confirmVersion(currentProject.id, version.id)
-      await loadVersions(currentProject.id, version.chapter_id)
+      await taskService.confirmVersion(projectId, version.id)
+      if (useWorkbenchStore.getState().currentProject?.id !== projectId) return
+      await loadVersions(projectId, version.chapter_id)
       await generateProposals(version)
     } catch (confirmError) {
       setError(confirmError instanceof Error ? confirmError.message : String(confirmError))
     } finally {
-      setBusy(false)
+      reviewOperationRef.current = false
+      setBusyAction(null)
     }
   }
 
   const reject = async (version: ChapterVersion): Promise<void> => {
-    if (!currentProject || busy) return
-    setBusy(true)
+    if (!currentProject || reviewOperationRef.current) return
+    reviewOperationRef.current = true
+    const projectId = currentProject.id
+    setBusyAction('reject')
     setError(null)
     try {
-      await taskService.rejectVersion(currentProject.id, version.id)
-      await loadVersions(currentProject.id, version.chapter_id)
+      await taskService.rejectVersion(projectId, version.id)
+      if (useWorkbenchStore.getState().currentProject?.id !== projectId) return
+      await loadVersions(projectId, version.chapter_id)
     } catch (rejectError) {
       setError(rejectError instanceof Error ? rejectError.message : String(rejectError))
     } finally {
-      setBusy(false)
+      reviewOperationRef.current = false
+      setBusyAction(null)
     }
   }
 
   const retryProposals = async (): Promise<void> => {
     const approved = versions.find((version) => version.status === 'approved')
-    if (approved) await generateProposals(approved)
+    if (!approved || proposalOperationRef.current) return
+    try {
+      await generateProposals(approved)
+    } catch (proposalError) {
+      setError(proposalError instanceof Error ? proposalError.message : String(proposalError))
+    }
   }
+
+  const proposalRunning = proposalStatus.memory === 'running' || proposalStatus.foreshadow === 'running'
+  const proposalFailed = proposalFailures.length > 0
 
   if (!currentProject) {
     return (
@@ -131,6 +170,8 @@ function WorkbenchReviewPage() {
           description="先创建或选择项目，生成章节版本后即可在这里审阅。"
           actionLabel="返回黄金路径"
           onAction={() => navigate('/workbench/first-chapter')}
+          secondaryActionLabel="普通项目管理"
+          onSecondaryAction={() => navigate('/workbench/projects')}
         />
       </WorkbenchPage>
     )
@@ -152,25 +193,42 @@ function WorkbenchReviewPage() {
             description="章节生成完成后，review 版本会出现在这里。"
             actionLabel="前往章节生成"
             onAction={() => navigate('/workbench/write')}
+            secondaryActionLabel="返回黄金路径"
+            onSecondaryAction={() => navigate('/workbench/first-chapter')}
           />
         ) : versions.map((version) => (
-          <ChapterVersionReview key={version.id} version={version} busy={busy} onConfirm={(item) => void confirm(item)} onReject={(item) => void reject(item)} />
+          <ChapterVersionReview
+            key={version.id}
+            version={version}
+            busyAction={busyAction}
+            onConfirm={(item) => void confirm(item)}
+            onReject={(item) => void reject(item)}
+            onRevise={() => navigate('/workbench/revisions')}
+          />
         ))}
 
-        {(proposalStatus.memory !== 'idle' || proposalStatus.foreshadow !== 'idle') && (
+        {(proposalStatus.memory !== 'idle' || proposalStatus.foreshadow !== 'idle' || proposalFailed) && (
           <Card data-testid="narrative-proposal-status">
             <CardBody>
               <Stack spacing={3}>
-                <Alert status={proposalStatus.memory === 'failed' || proposalStatus.foreshadow === 'failed' ? 'warning' : 'success'}>
+                <Alert status={proposalRunning ? 'info' : proposalFailed ? 'warning' : 'success'}>
                   <AlertIcon />
                   <Text>
-                    章节已确认。记忆提案 {proposalStatus.memoryCount} 条，伏笔提案 {proposalStatus.foreshadowCount} 条。
-                    任何提案失败都不会撤销章节确认。
+                    {proposalRunning
+                      ? '章节已确认，正在生成记忆与伏笔提案。'
+                      : `章节已确认。记忆提案 ${proposalStatus.memoryCount} 条，伏笔提案 ${proposalStatus.foreshadowCount} 条。任何提案失败都不会撤销章节确认。`}
                   </Text>
                 </Alert>
                 <HStack flexWrap="wrap">
-                  {(proposalStatus.memory === 'failed' || proposalStatus.foreshadow === 'failed') && (
-                    <Button onClick={() => void retryProposals()} data-testid="retry-narrative-proposals">重新生成提案</Button>
+                  {(proposalFailed || proposalRunning) && (
+                    <Button
+                      onClick={() => void retryProposals()}
+                      isLoading={proposalRunning}
+                      isDisabled={proposalRunning}
+                      data-testid="retry-narrative-proposals"
+                    >
+                      重新生成提案
+                    </Button>
                   )}
                   <Button variant="outline" onClick={() => navigate('/workbench/memory')}>前往叙事记忆</Button>
                   <Button variant="outline" onClick={() => navigate('/workbench/foreshadow')}>前往伏笔管理</Button>

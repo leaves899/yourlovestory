@@ -339,6 +339,8 @@ async function completeToReview(page: import('@playwright/test').Page): Promise<
   await page.getByTestId('wizard-go-write').click()
 
   await expect(page.getByTestId('start-chapter-generation')).toBeEnabled()
+  await expect(page.getByTestId('workflow-check-genre-missing')).toContainText('警告')
+  await expect(page.getByTestId('workflow-check-materials-missing')).toContainText('建议')
   await page.getByTestId('start-chapter-generation').click()
   await page.goto('/#/workbench/review')
 

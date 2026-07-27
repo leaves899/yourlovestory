@@ -68,6 +68,17 @@ function WorkbenchProjectsPage() {
     await updateProject({ name: nextName.trim() })
   }
 
+  const restore = async (projectId: string): Promise<void> => {
+    setFormError(null)
+    try {
+      const selected = await selectProject(projectId)
+      if (!selected) return
+      await useWorkbenchStore.getState().updateProject({ status: 'active' })
+    } catch (restoreError) {
+      setFormError(restoreError instanceof Error ? restoreError.message : String(restoreError))
+    }
+  }
+
   return (
     <WorkbenchPage eyebrow="PROJECTS" title="项目与配置" description="项目是选择、任务、上下文和删除保护的边界。每个项目独立维护自己的设定与故事素材。">
       <WorkbenchError message={error ?? formError} />
@@ -86,7 +97,42 @@ function WorkbenchProjectsPage() {
         <Card>
           <CardHeader><HStack justify="space-between"><Text fontWeight="bold">已有项目</Text><Badge colorScheme="bamboo">{projects.length}</Badge></HStack></CardHeader>
           <CardBody>
-            {projects.length === 0 ? <WorkbenchEmpty title="还没有项目" description="创建第一个项目后，卷章大纲和写作任务才会有明确的上下文。" /> : <VStack align="stretch" spacing={3}>{projects.map((project) => <Card key={project.id} variant="outline"><CardBody><HStack align="flex-start" justify="space-between" gap={4}><Stack spacing={1} minW={0}><HStack><Text fontWeight="bold" noOfLines={1}>{project.name}</Text>{project.id === currentProject?.id && <Badge colorScheme="cinnabar">当前</Badge>}<Badge colorScheme={project.status === 'active' ? 'green' : 'gray'}>{project.status === 'active' ? '进行中' : '已归档'}</Badge></HStack><Text fontSize="sm" color="ink.600">{project.slug}</Text><Text fontSize="sm" color="ink.600" noOfLines={2}>{project.description || '暂无简介'}</Text><Text fontSize="xs" color="ink.500">更新时间：{formatDate(project.updated_at)}</Text></Stack><HStack flexShrink={0}><Button size="sm" variant={project.id === currentProject?.id ? 'solid' : 'outline'} colorScheme={project.id === currentProject?.id ? 'cinnabar' : 'ink'} leftIcon={project.id === currentProject?.id ? <FaCheck /> : undefined} onClick={() => void selectProject(project.id)}>{project.id === currentProject?.id ? '当前项目' : '切换'}</Button><Button size="sm" variant="ghost" colorScheme="red" leftIcon={<FaTrash />} isDisabled={project.id === currentProject?.id} onClick={() => void remove(project.id)} aria-label={`删除${project.name}`}>删除</Button></HStack></HStack></CardBody></Card>)}</VStack>}
+            {projects.length === 0 ? (
+              <WorkbenchEmpty
+                title="还没有项目"
+                description="创建第一个项目后，卷章大纲和写作任务才会有明确的上下文。"
+                actionLabel="使用左侧表单创建"
+                onAction={() => document.querySelector<HTMLInputElement>('[data-testid="project-name-input"]')?.focus()}
+                secondaryActionLabel="返回黄金路径"
+                onSecondaryAction={() => { window.location.hash = '#/workbench/first-chapter' }}
+              />
+            ) : (
+              <VStack align="stretch" spacing={3} data-testid="project-list">
+                {projects.map((project) => (
+                  <Card key={project.id} variant="outline" data-testid={`project-card-${project.id}`}>
+                    <CardBody>
+                      <HStack align="flex-start" justify="space-between" gap={4}>
+                        <Stack spacing={1} minW={0}>
+                          <HStack><Text fontWeight="bold" noOfLines={1}>{project.name}</Text>{project.id === currentProject?.id && <Badge colorScheme="cinnabar">当前</Badge>}<Badge colorScheme={project.status === 'active' ? 'green' : 'gray'}>{project.status === 'active' ? '进行中' : '已归档'}</Badge></HStack>
+                          <Text fontSize="sm" color="ink.600">{project.slug}</Text>
+                          <Text fontSize="sm" color="ink.600" noOfLines={2}>{project.description || '暂无简介'}</Text>
+                          <Text fontSize="xs" color="ink.500">更新时间：{formatDate(project.updated_at)}</Text>
+                        </Stack>
+                        <HStack flexShrink={0}>
+                          {project.status !== 'active' && (
+                            <Button size="sm" colorScheme="cinnabar" isLoading={saving} isDisabled={saving} onClick={() => void restore(project.id)}>
+                              恢复为进行中
+                            </Button>
+                          )}
+                          <Button size="sm" variant={project.id === currentProject?.id ? 'solid' : 'outline'} colorScheme={project.id === currentProject?.id ? 'cinnabar' : 'ink'} leftIcon={project.id === currentProject?.id ? <FaCheck /> : undefined} onClick={() => void selectProject(project.id)}>{project.id === currentProject?.id ? '当前项目' : '切换'}</Button>
+                          <Button size="sm" variant="ghost" colorScheme="red" leftIcon={<FaTrash />} isDisabled={project.id === currentProject?.id} onClick={() => void remove(project.id)} aria-label={`删除${project.name}`}>删除</Button>
+                        </HStack>
+                      </HStack>
+                    </CardBody>
+                  </Card>
+                ))}
+              </VStack>
+            )}
           </CardBody>
         </Card>
       </SimpleGrid>

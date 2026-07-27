@@ -316,6 +316,8 @@ function buildPolishPrompt(
 
 export class NarrativeWorkbenchService {
   private readonly now: () => string
+  private readonly memoryProposalRuns = new Map<string, Promise<MemoryExtractionResult>>()
+  private readonly foreshadowRuns = new Map<string, Promise<ForeshadowSuggestionResult>>()
 
   public constructor(private readonly options: NarrativeWorkbenchServiceOptions) {
     this.now = options.now ?? (() => new Date().toISOString())
@@ -335,6 +337,24 @@ export class NarrativeWorkbenchService {
     projectId: string,
     chapterId: string,
     options: MemoryExtractionOptions = {},
+  ): Promise<MemoryExtractionResult> {
+    const key = `${projectId}:${chapterId}:${options.source_version_id ?? 'chapter'}`
+    const running = this.memoryProposalRuns.get(key)
+    if (running) return running
+    const operation = this.extractMemoryProposalsOnce(projectId, chapterId, options)
+      .finally(() => {
+        if (this.memoryProposalRuns.get(key) === operation) {
+          this.memoryProposalRuns.delete(key)
+        }
+      })
+    this.memoryProposalRuns.set(key, operation)
+    return operation
+  }
+
+  private async extractMemoryProposalsOnce(
+    projectId: string,
+    chapterId: string,
+    options: MemoryExtractionOptions,
   ): Promise<MemoryExtractionResult> {
     const chapter = this.requireChapter(projectId, chapterId)
     const existing = this.options.stores.memories
@@ -419,6 +439,24 @@ export class NarrativeWorkbenchService {
     projectId: string,
     chapterId: string,
     options: ForeshadowSuggestionOptions = {},
+  ): Promise<ForeshadowSuggestionResult> {
+    const key = `${projectId}:${chapterId}`
+    const running = this.foreshadowRuns.get(key)
+    if (running) return running
+    const operation = this.suggestForeshadowsOnce(projectId, chapterId, options)
+      .finally(() => {
+        if (this.foreshadowRuns.get(key) === operation) {
+          this.foreshadowRuns.delete(key)
+        }
+      })
+    this.foreshadowRuns.set(key, operation)
+    return operation
+  }
+
+  private async suggestForeshadowsOnce(
+    projectId: string,
+    chapterId: string,
+    options: ForeshadowSuggestionOptions,
   ): Promise<ForeshadowSuggestionResult> {
     const chapter = this.requireChapter(projectId, chapterId)
     const existing = this.options.stores.foreshadows

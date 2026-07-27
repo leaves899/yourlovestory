@@ -149,6 +149,38 @@ describe('chapter generation repositories and domain service', () => {
     )
   })
 
+  test('loads legacy fact-check findings without a suggestion field', () => {
+    const { workbench, projectId } = createWorkbench(database)
+    const chapter = workbench.chapters.create({
+      project_id: projectId,
+      chapter_number: 1,
+      title: 'Legacy Chapter',
+    })
+    const version = workbench.chapterVersions.create({
+      chapter_id: chapter.id,
+      content: '旧正文',
+      summary: '旧摘要',
+      fact_check: {
+        passed: true,
+        summary: '旧格式核查',
+        findings: [{
+          claim: '旧事实',
+          status: 'supported',
+          severity: 'info',
+          evidence: '旧证据',
+        }],
+      },
+    })
+
+    expect(workbench.chapterVersions.getById(version.id)?.fact_check.findings[0]).toEqual({
+      claim: '旧事实',
+      status: 'supported',
+      severity: 'info',
+      evidence: '旧证据',
+      suggestion: undefined,
+    })
+  })
+
   test('requires confirmed volume and chapter outlines before body generation', () => {
     const { workbench, projectId, chapterOutlineId } = createWorkbench(database, false)
     const volume = workbench.volumes.listByProject(projectId)[0]

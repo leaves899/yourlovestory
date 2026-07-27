@@ -134,14 +134,23 @@ function WorkbenchOutlinePage() {
               {store.volumes.map((volume) => <Button key={volume.id} variant={volume.id === selectedVolumeId ? 'solid' : 'ghost'} colorScheme={volume.id === selectedVolumeId ? 'cinnabar' : 'ink'} justifyContent="flex-start" onClick={() => setSelectedVolumeId(volume.id)}><Stack align="flex-start" spacing={0}><Text>卷 {volume.volume_number} · {volume.title}</Text><Text fontSize="xs" opacity={0.72}>{volume.status}</Text></Stack></Button>)}
               {store.volumes.length === 0 && <Text color="ink.500" fontSize="sm">还没有卷。</Text>}
               <Divider my={2} />
-              <FormControl><FormLabel fontSize="sm">新卷标题</FormLabel><Input size="sm" value={volumeTitle} onChange={(event) => setVolumeTitle(event.target.value)} /></FormControl>
+              <FormControl><FormLabel fontSize="sm">新卷标题</FormLabel><Input size="sm" value={volumeTitle} onChange={(event) => setVolumeTitle(event.target.value)} data-testid="new-volume-title" /></FormControl>
               <FormControl><FormLabel fontSize="sm">卷简介</FormLabel><Textarea size="sm" value={volumeSynopsis} onChange={(event) => setVolumeSynopsis(event.target.value)} /></FormControl>
-              <Button size="sm" leftIcon={<FaPlus />} colorScheme="cinnabar" onClick={() => void createVolume()}>新增卷</Button>
+              <Button size="sm" leftIcon={<FaPlus />} colorScheme="cinnabar" isLoading={store.saving} isDisabled={store.saving} onClick={() => void createVolume()}>新增卷</Button>
             </VStack>
           </CardBody>
         </Card>
 
-        {!selectedVolume ? <WorkbenchEmpty title="选择或新增一卷" description="卷是章节和卷大纲的父级边界。" /> : <Stack spacing={5}>
+        {!selectedVolume ? (
+          <WorkbenchEmpty
+            title="选择或新增一卷"
+            description="卷是章节和卷大纲的父级边界。"
+            actionLabel="填写新卷"
+            onAction={() => document.querySelector<HTMLInputElement>('[data-testid="new-volume-title"]')?.focus()}
+            secondaryActionLabel="返回黄金路径"
+            onSecondaryAction={() => { window.location.hash = '#/workbench/first-chapter' }}
+          />
+        ) : <Stack spacing={5}>
           <Card>
             <CardHeader><HStack justify="space-between"><Text fontWeight="bold">卷大纲 · {selectedVolume.title}</Text>{selectedOutline && <Badge colorScheme={statusColor(selectedOutline.status)}>{outlineStatusLabel(selectedOutline.status)}</Badge>}</HStack></CardHeader>
             <CardBody>
@@ -153,7 +162,7 @@ function WorkbenchOutlinePage() {
                 <FormControl><FormLabel>卷简介</FormLabel><Textarea value={outlineDraft.synopsis} isDisabled={selectedOutline?.status === 'locked'} onChange={(event) => { setOutlineDraft({ ...outlineDraft, synopsis: event.target.value }); store.markDirty() }} /></FormControl>
                 <FormControl><FormLabel>主要冲突</FormLabel><Textarea value={outlineDraft.conflict} isDisabled={selectedOutline?.status === 'locked'} onChange={(event) => { setOutlineDraft({ ...outlineDraft, conflict: event.target.value }); store.markDirty() }} /></FormControl>
                 <FormControl><FormLabel>结尾</FormLabel><Textarea value={outlineDraft.ending} isDisabled={selectedOutline?.status === 'locked'} onChange={(event) => { setOutlineDraft({ ...outlineDraft, ending: event.target.value }); store.markDirty() }} /></FormControl>
-                <HStack flexWrap="wrap"><Button leftIcon={<FaSave />} colorScheme="cinnabar" isDisabled={selectedOutline?.status === 'locked'} isLoading={store.saving} onClick={() => void saveVolume()}>保存卷大纲</Button>{selectedOutline?.status === 'draft' && <Button onClick={() => void store.confirmVolumeOutline(selectedOutline.id)}>确认</Button>}{selectedOutline?.status === 'confirmed' && <Button leftIcon={<FaLock />} onClick={() => void store.lockVolumeOutline(selectedOutline.id)}>锁定</Button>}{selectedOutline?.status === 'locked' && <Button leftIcon={<FaUnlock />} variant="outline" onClick={() => void store.unlockVolumeOutline(selectedOutline.id)}>解锁</Button>}</HStack>
+                <HStack flexWrap="wrap"><Button leftIcon={<FaSave />} colorScheme="cinnabar" isDisabled={selectedOutline?.status === 'locked' || store.saving} isLoading={store.saving} onClick={() => void saveVolume()}>保存卷大纲</Button>{selectedOutline?.status === 'draft' && <Button isLoading={store.saving} isDisabled={store.saving} onClick={() => void store.confirmVolumeOutline(selectedOutline.id)}>确认</Button>}{selectedOutline?.status === 'confirmed' && <Button leftIcon={<FaLock />} isLoading={store.saving} isDisabled={store.saving} onClick={() => void store.lockVolumeOutline(selectedOutline.id)}>锁定</Button>}{selectedOutline?.status === 'locked' && <Button leftIcon={<FaUnlock />} variant="outline" isLoading={store.saving} isDisabled={store.saving} onClick={() => void store.unlockVolumeOutline(selectedOutline.id)}>解锁</Button>}</HStack>
               </Stack>
             </CardBody>
           </Card>
@@ -166,7 +175,7 @@ function WorkbenchOutlinePage() {
                   <FormControl><FormLabel fontSize="sm">章节标题</FormLabel><Input value={chapterTitle} onChange={(event) => setChapterTitle(event.target.value)} /></FormControl>
                   <FormControl><FormLabel fontSize="sm">章节摘要</FormLabel><Input value={chapterSummary} onChange={(event) => setChapterSummary(event.target.value)} /></FormControl>
                 </SimpleGrid>
-                <Button alignSelf="flex-start" size="sm" leftIcon={<FaPlus />} onClick={() => void createChapter()}>新增章节草稿</Button>
+                <Button alignSelf="flex-start" size="sm" leftIcon={<FaPlus />} isLoading={store.saving} isDisabled={store.saving} onClick={() => void createChapter()}>新增章节草稿</Button>
                 {selectedChapters.length === 0 ? <Text color="ink.500">还没有章节大纲。</Text> : <VStack align="stretch" spacing={3}>{selectedChapters.map((chapter) => <ChapterOutlineCard key={chapter.id} chapter={chapter} store={store} />)}</VStack>}
               </Stack>
             </CardBody>
@@ -185,7 +194,7 @@ function ChapterOutlineCard({ chapter, store }: { chapter: ReturnType<typeof use
     const summary = window.prompt('章节摘要', chapter.summary) ?? chapter.summary
     await store.updateChapterOutline(chapter.id, { title: title.trim(), summary })
   }
-  return <Card variant="outline"><CardBody><HStack align="flex-start" justify="space-between" gap={4}><Stack spacing={1}><HStack><Text fontWeight="bold">第 {chapter.chapter_number} 章 · {chapter.title}</Text><Badge colorScheme={statusColor(chapter.status)}>{outlineStatusLabel(chapter.status)}</Badge></HStack><Text color="ink.600" fontSize="sm">{chapter.summary || '暂无摘要'}</Text><Text fontSize="xs" color="ink.500">目的：{chapter.purpose || '未设置'} · 结尾钩子：{chapter.ending_hook || '未设置'}</Text></Stack><HStack flexShrink={0}><Button size="sm" variant="outline" onClick={() => void edit()} isDisabled={chapter.status === 'locked'}>编辑</Button>{chapter.status === 'draft' && <Button size="sm" onClick={() => void store.confirmChapterOutline(chapter.id)}>确认</Button>}{chapter.status === 'confirmed' && <Button size="sm" leftIcon={<FaLock />} onClick={() => void store.lockChapterOutline(chapter.id)}>锁定</Button>}{chapter.status === 'locked' && <Button size="sm" leftIcon={<FaUnlock />} variant="outline" onClick={() => void store.unlockChapterOutline(chapter.id)}>解锁</Button>}</HStack></HStack></CardBody></Card>
+  return <Card variant="outline"><CardBody><HStack align="flex-start" justify="space-between" gap={4}><Stack spacing={1}><HStack><Text fontWeight="bold">第 {chapter.chapter_number} 章 · {chapter.title}</Text><Badge colorScheme={statusColor(chapter.status)}>{outlineStatusLabel(chapter.status)}</Badge></HStack><Text color="ink.600" fontSize="sm">{chapter.summary || '暂无摘要'}</Text><Text fontSize="xs" color="ink.500">目的：{chapter.purpose || '未设置'} · 结尾钩子：{chapter.ending_hook || '未设置'}</Text></Stack><HStack flexShrink={0}><Button size="sm" variant="outline" onClick={() => void edit()} isDisabled={chapter.status === 'locked' || store.saving}>编辑</Button>{chapter.status === 'draft' && <Button size="sm" isLoading={store.saving} isDisabled={store.saving} onClick={() => void store.confirmChapterOutline(chapter.id)}>确认</Button>}{chapter.status === 'confirmed' && <Button size="sm" leftIcon={<FaLock />} isLoading={store.saving} isDisabled={store.saving} onClick={() => void store.lockChapterOutline(chapter.id)}>锁定</Button>}{chapter.status === 'locked' && <Button size="sm" leftIcon={<FaUnlock />} variant="outline" isLoading={store.saving} isDisabled={store.saving} onClick={() => void store.unlockChapterOutline(chapter.id)}>解锁</Button>}</HStack></HStack></CardBody></Card>
 }
 
 export default WorkbenchOutlinePage

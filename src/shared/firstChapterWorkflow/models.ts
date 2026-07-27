@@ -56,6 +56,7 @@ export interface FirstChapterWorkflowSnapshot {
 }
 
 export interface FirstChapterWorkflowInput {
+  targetChapterOutlineId?: string
   project: Project | null
   config: ProjectConfig | null
   characters: Character[]

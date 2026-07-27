@@ -15,17 +15,22 @@ import { statusColor } from './WorkbenchPrimitives'
 
 interface ChapterVersionReviewProps {
   version: ChapterVersion
-  busy?: boolean
+  busyAction?: 'confirm' | 'reject' | null
   onConfirm: (version: ChapterVersion) => void
   onReject: (version: ChapterVersion) => void
+  onRevise: (version: ChapterVersion) => void
 }
 
 export function ChapterVersionReview({
   version,
-  busy = false,
+  busyAction = null,
   onConfirm,
   onReject,
+  onRevise,
 }: ChapterVersionReviewProps) {
+  const hasBlockingFinding = version.fact_check.findings.some(
+    (finding) => finding.severity === 'error',
+  )
   return (
     <Card variant="outline" data-testid={`chapter-version-${version.id}`}>
       <CardHeader>
@@ -36,8 +41,25 @@ export function ChapterVersionReview({
           </HStack>
           {version.status === 'review' && (
             <HStack>
-              <Button size="sm" variant="outline" onClick={() => onReject(version)} isDisabled={busy}>拒绝版本</Button>
-              <Button size="sm" colorScheme="cinnabar" onClick={() => onConfirm(version)} isLoading={busy} data-testid="confirm-chapter-version">确认版本</Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onReject(version)}
+                isLoading={busyAction === 'reject'}
+                isDisabled={busyAction !== null}
+              >
+                拒绝版本
+              </Button>
+              <Button
+                size="sm"
+                colorScheme="cinnabar"
+                onClick={() => onConfirm(version)}
+                isLoading={busyAction === 'confirm'}
+                isDisabled={hasBlockingFinding || busyAction !== null}
+                data-testid="confirm-chapter-version"
+              >
+                确认版本
+              </Button>
             </HStack>
           )}
         </HStack>
@@ -59,6 +81,15 @@ export function ChapterVersionReview({
               <Text fontSize="sm">{version.fact_check.summary}</Text>
             </Stack>
           </Alert>
+          {hasBlockingFinding && (
+            <Alert status="error" data-testid="fact-check-blocks-confirmation">
+              <AlertIcon />
+              <Text flex={1}>存在错误级事实核查结果，请先修订正文或拒绝此版本。</Text>
+              <Button size="sm" variant="outline" onClick={() => onRevise(version)}>
+                返回章节修订
+              </Button>
+            </Alert>
+          )}
           <Stack spacing={3} data-testid="fact-check-findings">
             {version.fact_check.findings.length === 0 && <Text color="ink.600">没有事实核查 finding。</Text>}
             {version.fact_check.findings.map((finding, index) => (

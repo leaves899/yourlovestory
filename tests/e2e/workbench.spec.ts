@@ -136,12 +136,12 @@ test.describe('长篇创作工作台', () => {
 
   test('可以创建项目并保护当前项目删除', async ({ page }) => {
     await expect(page.getByTestId('workbench-shell')).toBeVisible()
-    await expect(page.getByText('第一部小说', { exact: true }).nth(1)).toBeVisible()
+    await expect(page.getByTestId('project-list').getByText('第一部小说', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: '删除第一部小说' })).toBeDisabled()
     await page.getByTestId('project-name-input').fill('新长篇')
     await page.getByTestId('project-slug-input').fill('new-novel')
     await page.getByTestId('create-project-button').click()
-    await expect(page.getByText('新长篇', { exact: true }).nth(1)).toBeVisible()
+    await expect(page.getByTestId('project-list').getByText('新长篇', { exact: true })).toBeVisible()
     await expect(page.getByTestId('workbench-project-switcher')).toHaveValue('project-3')
   })
 

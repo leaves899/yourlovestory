@@ -68,16 +68,30 @@ interface WorkbenchEmptyProps {
   description: string
   actionLabel?: string
   onAction?: () => void
+  secondaryActionLabel?: string
+  onSecondaryAction?: () => void
 }
 
-export function WorkbenchEmpty({ title, description, actionLabel, onAction }: WorkbenchEmptyProps) {
+export function WorkbenchEmpty({
+  title,
+  description,
+  actionLabel,
+  onAction,
+  secondaryActionLabel,
+  onSecondaryAction,
+}: WorkbenchEmptyProps) {
   return (
     <Card>
       <CardBody py={12}>
         <VStack spacing={3} textAlign="center">
           <Text fontWeight="bold" fontSize="lg">{title}</Text>
           <Text color="ink.600" maxW="520px">{description}</Text>
-          {actionLabel && onAction && <Button size="sm" colorScheme="cinnabar" onClick={onAction}>{actionLabel}</Button>}
+          <Flex gap={2} wrap="wrap" justify="center">
+            {actionLabel && onAction && <Button size="sm" colorScheme="cinnabar" onClick={onAction}>{actionLabel}</Button>}
+            {secondaryActionLabel && onSecondaryAction && (
+              <Button size="sm" variant="outline" onClick={onSecondaryAction}>{secondaryActionLabel}</Button>
+            )}
+          </Flex>
         </VStack>
       </CardBody>
     </Card>

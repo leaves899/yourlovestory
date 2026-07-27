@@ -57,9 +57,19 @@ function FirstChapterWizardPage() {
     ? store.volumeOutlines.find((outline) => outline.volume_id === firstVolume.id) ?? null
     : null
   const firstChapterOutline = useMemo(
-    () => [...store.chapterOutlines].sort((left, right) => left.chapter_number - right.chapter_number)[0] ?? null,
-    [store.chapterOutlines],
+    () => firstVolume
+      ? [...store.chapterOutlines]
+        .filter((outline) => outline.volume_id === firstVolume.id)
+        .sort((left, right) =>
+          left.chapter_number - right.chapter_number || left.sort_order - right.sort_order,
+        )[0] ?? null
+      : null,
+    [firstVolume, store.chapterOutlines],
   )
+  const needsInitialDraft = store.worldviewEntries.length === 0 ||
+    !firstVolume ||
+    !firstVolumeOutline ||
+    !firstChapterOutline
 
   const createProject = async (): Promise<void> => {
     if (!projectName.trim() || !slug.trim() || !concept.trim()) {
@@ -87,20 +97,41 @@ function FirstChapterWizardPage() {
     }
     setLocalError(null)
     try {
-      const protagonist = await store.createCharacter({
-        name: protagonistName.trim(),
-        role: 'protagonist',
-      })
-      const coreCharacter = await store.createCharacter({
-        name: coreCharacterName.trim(),
-        role: 'core',
-      })
-      await store.createRelation({
-        source: { type: 'character', id: protagonist.id },
-        target: { type: 'character', id: coreCharacter.id },
-        relation_type: relationType.trim(),
-        description: relationDescription.trim(),
-      })
+      const protagonist = store.characters.find((character) =>
+        character.name === protagonistName.trim() &&
+        ['protagonist', '主角', '主人公'].includes(character.role.trim()),
+      ) ?? await store.createCharacter({
+          name: protagonistName.trim(),
+          role: 'protagonist',
+        })
+      const coreCharacter = store.characters.find((character) =>
+        character.id !== protagonist.id && character.name === coreCharacterName.trim(),
+      ) ?? await store.createCharacter({
+          name: coreCharacterName.trim(),
+          role: 'core',
+        })
+      const relationExists = store.relations.some((relation) =>
+        relation.source_entity_type === 'character' &&
+        relation.target_entity_type === 'character' &&
+        (
+          (
+            relation.source_entity_id === protagonist.id &&
+            relation.target_entity_id === coreCharacter.id
+          ) ||
+          (
+            relation.source_entity_id === coreCharacter.id &&
+            relation.target_entity_id === protagonist.id
+          )
+        ),
+      )
+      if (!relationExists) {
+        await store.createRelation({
+          source: { type: 'character', id: protagonist.id },
+          target: { type: 'character', id: coreCharacter.id },
+          relation_type: relationType.trim(),
+          description: relationDescription.trim(),
+        })
+      }
     } catch (error) {
       setLocalError(error instanceof Error ? error.message : String(error))
     }
@@ -218,7 +249,7 @@ function FirstChapterWizardPage() {
                 <FormControl><FormLabel>语气（可选）</FormLabel><Input value={tone} onChange={(event) => setTone(event.target.value)} /></FormControl>
               </SimpleGrid>
               <HStack mt={4}>
-                <Button colorScheme="cinnabar" onClick={() => void createProject()} isLoading={store.saving} data-testid="wizard-create-project">创建并继续</Button>
+                <Button colorScheme="cinnabar" onClick={() => void createProject()} isLoading={store.saving} isDisabled={store.saving} data-testid="wizard-create-project">创建并继续</Button>
                 <Button variant="outline" onClick={() => navigate('/workbench/projects')}>普通项目管理</Button>
               </HStack>
             </CardBody>
@@ -239,7 +270,7 @@ function FirstChapterWizardPage() {
                   <FormControl><FormLabel>题材（可选）</FormLabel><Input value={genre} onChange={(event) => setGenre(event.target.value)} /></FormControl>
                   <FormControl><FormLabel>语气（可选）</FormLabel><Input value={tone} onChange={(event) => setTone(event.target.value)} /></FormControl>
                 </SimpleGrid>
-                <Button alignSelf="flex-start" colorScheme="cinnabar" onClick={() => void saveExistingConcept()} isLoading={store.saving} data-testid="wizard-save-existing-concept">保存并继续</Button>
+                <Button alignSelf="flex-start" colorScheme="cinnabar" onClick={() => void saveExistingConcept()} isLoading={store.saving} isDisabled={store.saving} data-testid="wizard-save-existing-concept">保存并继续</Button>
               </Stack>
             </CardBody>
           </Card>
@@ -255,17 +286,17 @@ function FirstChapterWizardPage() {
                 <FormControl isRequired><FormLabel>关系类型</FormLabel><Input value={relationType} onChange={(event) => setRelationType(event.target.value)} data-testid="wizard-relation-type" /></FormControl>
                 <FormControl><FormLabel>关系描述</FormLabel><Input value={relationDescription} onChange={(event) => setRelationDescription(event.target.value)} /></FormControl>
               </SimpleGrid>
-              <Button mt={4} colorScheme="cinnabar" onClick={() => void createCharactersAndRelation()} isLoading={store.saving} data-testid="wizard-create-characters">创建角色和关系</Button>
+              <Button mt={4} colorScheme="cinnabar" onClick={() => void createCharactersAndRelation()} isLoading={store.saving} isDisabled={store.saving} data-testid="wizard-create-characters">创建角色和关系</Button>
             </CardBody>
           </Card>
         )}
 
-        {store.currentProject && snapshot.steps.find((step) => step.id === 'relationship')?.completed && !firstChapterOutline && (
+        {store.currentProject && snapshot.steps.find((step) => step.id === 'relationship')?.completed && needsInitialDraft && (
           <Card data-testid="wizard-draft-step">
             <CardHeader><Text fontWeight="bold">3. 世界观与初始结构草案</Text></CardHeader>
             <CardBody>
               <Alert status="info"><AlertIcon />此操作创建本地可编辑脚手架，不会调用模型，也不会自动确认大纲。</Alert>
-              <Button mt={4} colorScheme="cinnabar" onClick={() => void createInitialDraft()} isLoading={store.saving} data-testid="wizard-create-draft">生成初始草案</Button>
+              <Button mt={4} colorScheme="cinnabar" onClick={() => void createInitialDraft()} isLoading={store.saving} isDisabled={store.saving} data-testid="wizard-create-draft">生成初始草案</Button>
             </CardBody>
           </Card>
         )}
@@ -278,11 +309,11 @@ function FirstChapterWizardPage() {
                 <Text>第一卷：{firstVolumeOutline?.summary || '待补充'}，状态：{firstVolumeOutline?.status ?? '缺少卷纲'}</Text>
                 <Text>第一章：{firstChapterOutline.title}，状态：{firstChapterOutline.status}</Text>
                 <HStack flexWrap="wrap">
-                  <Button variant="outline" onClick={() => navigate('/workbench/outline')}>编辑大纲</Button>
-                  {firstVolumeOutline?.status === 'draft' && <Button onClick={() => void store.confirmVolumeOutline(firstVolumeOutline.id)} data-testid="wizard-confirm-volume">确认第一卷</Button>}
-                  {firstVolumeOutline?.status === 'confirmed' && <Button onClick={() => void store.lockVolumeOutline(firstVolumeOutline.id)}>锁定第一卷</Button>}
-                  {firstChapterOutline.status === 'draft' && <Button onClick={() => void store.confirmChapterOutline(firstChapterOutline.id)} data-testid="wizard-confirm-chapter">确认第一章</Button>}
-                  {firstChapterOutline.status === 'confirmed' && <Button onClick={() => void store.lockChapterOutline(firstChapterOutline.id)}>锁定第一章</Button>}
+                  <Button variant="outline" onClick={() => navigate('/workbench/outline')} isDisabled={store.saving}>编辑大纲</Button>
+                  {firstVolumeOutline?.status === 'draft' && <Button onClick={() => void store.confirmVolumeOutline(firstVolumeOutline.id)} isLoading={store.saving} isDisabled={store.saving} data-testid="wizard-confirm-volume">确认第一卷</Button>}
+                  {firstVolumeOutline?.status === 'confirmed' && <Button onClick={() => void store.lockVolumeOutline(firstVolumeOutline.id)} isLoading={store.saving} isDisabled={store.saving}>锁定第一卷</Button>}
+                  {firstChapterOutline.status === 'draft' && <Button onClick={() => void store.confirmChapterOutline(firstChapterOutline.id)} isLoading={store.saving} isDisabled={store.saving} data-testid="wizard-confirm-chapter">确认第一章</Button>}
+                  {firstChapterOutline.status === 'confirmed' && <Button onClick={() => void store.lockChapterOutline(firstChapterOutline.id)} isLoading={store.saving} isDisabled={store.saving}>锁定第一章</Button>}
                 </HStack>
               </Stack>
             </CardBody>

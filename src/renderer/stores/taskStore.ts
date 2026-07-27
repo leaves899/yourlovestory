@@ -68,12 +68,27 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   subscribed: false,
 
   load: async (projectId) => {
-    set({ projectId, loading: true, error: null })
+    const projectChanged = get().projectId !== projectId
+    set({
+      projectId,
+      loading: true,
+      error: null,
+      ...(projectChanged ? {
+        tasks: [],
+        recoverableTasks: [],
+        versions: [],
+        activeTaskId: null,
+        stream: '',
+        logs: [],
+        busy: false,
+      } : {}),
+    })
     try {
       const [tasks, recoverableTasks] = await Promise.all([
         taskService.list(projectId),
         taskService.listRecoverable(projectId),
       ])
+      if (get().projectId !== projectId) return
       const active = tasks.find((task) => task.status === 'running' || task.status === 'pending')
       set({
         tasks,
@@ -82,6 +97,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
         loading: false,
       })
     } catch (error) {
+      if (get().projectId !== projectId) return
       set({ loading: false, error: readError(error) })
     }
   },
@@ -158,11 +174,13 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     set({ busy: true, error: null, stream: '', logs: ['正在提交章节生成任务'] })
     try {
       const taskId = await taskService.startChapterGeneration(input)
+      if (get().projectId !== input.projectId) return taskId
       set({ activeTaskId: taskId })
       const projectId = get().projectId
       if (projectId) void get().load(projectId)
       return taskId
     } catch (error) {
+      if (get().projectId !== input.projectId) throw error
       set({ busy: false, error: readError(error) })
       throw error
     }
@@ -209,8 +227,10 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   loadVersions: async (projectId, chapterId) => {
     try {
       const versions = await taskService.listVersions(projectId, chapterId)
+      if (get().projectId !== projectId) return
       set({ versions, error: null })
     } catch (error) {
+      if (get().projectId !== projectId) return
       set({ error: readError(error) })
     }
   },

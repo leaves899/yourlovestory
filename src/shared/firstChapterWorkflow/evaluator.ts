@@ -33,7 +33,15 @@ function nonBlank(value: string | null | undefined): boolean {
   return Boolean(value?.trim())
 }
 
-function firstVolume(volumes: Volume[]): Volume | null {
+function firstVolume(
+  volumes: Volume[],
+  chapterOutlines: ChapterOutline[],
+  targetChapterOutlineId?: string,
+): Volume | null {
+  const target = targetChapterOutlineId
+    ? chapterOutlines.find((outline) => outline.id === targetChapterOutlineId)
+    : null
+  if (target) return volumes.find((volume) => volume.id === target.volume_id) ?? null
   return [...volumes].sort((left, right) =>
     left.volume_number - right.volume_number || left.sort_order - right.sort_order,
   )[0] ?? null
@@ -47,7 +55,17 @@ function volumeOutlineFor(
   return outlines.find((outline) => outline.volume_id === volume.id) ?? null
 }
 
-function firstChapter(outlines: ChapterOutline[], volume: Volume | null): ChapterOutline | null {
+function firstChapter(
+  outlines: ChapterOutline[],
+  volume: Volume | null,
+  targetChapterOutlineId?: string,
+): ChapterOutline | null {
+  if (targetChapterOutlineId) {
+    return outlines.find((outline) =>
+      outline.id === targetChapterOutlineId &&
+      (!volume || outline.volume_id === volume.id),
+    ) ?? null
+  }
   const candidates = volume
     ? outlines.filter((outline) => outline.volume_id === volume.id)
     : outlines
@@ -60,13 +78,25 @@ function protagonistOf(characters: Character[]): Character | null {
   return characters.find((character) => PROTAGONIST_ROLES.has(character.role.trim())) ?? null
 }
 
-function hasCoreRelation(protagonist: Character | null, relations: Relation[]): boolean {
+function hasCoreRelation(
+  protagonist: Character | null,
+  characters: Character[],
+  relations: Relation[],
+): boolean {
   if (!protagonist) return false
-  return relations.some((relation) =>
-    relation.source_entity_type === 'character' &&
-    relation.target_entity_type === 'character' &&
-    (relation.source_entity_id === protagonist.id || relation.target_entity_id === protagonist.id),
-  )
+  const characterIds = new Set(characters.map((character) => character.id))
+  return relations.some((relation) => {
+    if (
+      relation.source_entity_type !== 'character' ||
+      relation.target_entity_type !== 'character'
+    ) return false
+    const otherId = relation.source_entity_id === protagonist.id
+      ? relation.target_entity_id
+      : relation.target_entity_id === protagonist.id
+        ? relation.source_entity_id
+        : null
+    return otherId !== null && otherId !== protagonist.id && characterIds.has(otherId)
+  })
 }
 
 function check(
@@ -104,7 +134,7 @@ function collectBlockingChecks(
   if (input.project.status !== 'active') checks.push(check('project-inactive', 'error', '项目未启用', '归档项目不能启动章节生成，请先恢复为进行中。', '管理项目', '/workbench/projects'))
   if (!nonBlank(input.project.description)) checks.push(check('concept-missing', 'error', '缺少故事概念', '用一句话说明主角、目标和核心阻力。', '补充概念', '/workbench/first-chapter'))
   if (!protagonist) checks.push(check('protagonist-missing', 'error', '缺少主角', '创建角色并将角色值设为 protagonist 或主角。', '创建主角', '/workbench/first-chapter'))
-  if (!hasCoreRelation(protagonist, input.relations)) checks.push(check('core-relation-missing', 'error', '缺少主角的核心关系', '为主角与至少一名核心角色建立关系。', '建立关系', '/workbench/first-chapter'))
+  if (!hasCoreRelation(protagonist, input.characters, input.relations)) checks.push(check('core-relation-missing', 'error', '缺少主角的核心关系', '为主角与至少一名核心角色建立关系。', '建立关系', '/workbench/first-chapter'))
   if (input.worldviewEntries.length === 0) checks.push(check('worldview-missing', 'error', '缺少世界观条目', '创建一条可编辑的世界观草案。', '补充世界观', '/workbench/first-chapter'))
   if (!volume) checks.push(check('volume-missing', 'error', '缺少第一卷', '创建第一卷后才能组织章纲。', '创建第一卷草案', '/workbench/first-chapter', 'create-first-volume'))
   if (volume && !volumeOutline) checks.push(check('volume-outline-missing', 'error', '缺少第一卷大纲', '为第一卷创建可编辑的大纲草案。', '创建卷纲草案', '/workbench/first-chapter', 'create-first-volume'))
@@ -157,7 +187,7 @@ function completedSteps(
     project: Boolean(input.project),
     concept: Boolean(input.project && nonBlank(input.project.description)),
     characters: Boolean(protagonist && input.characters.some((character) => character.id !== protagonist.id)),
-    relationship: hasCoreRelation(protagonist, input.relations),
+    relationship: hasCoreRelation(protagonist, input.characters, input.relations),
     worldview: input.worldviewEntries.length > 0,
     'volume-outline': Boolean(volume && volumeOutline && volumeOutline.status !== 'draft'),
     'chapter-outline': Boolean(chapterOutline && chapterOutline.status !== 'draft'),
@@ -173,9 +203,17 @@ export function evaluateFirstChapterWorkflow(
   input: FirstChapterWorkflowInput,
 ): FirstChapterWorkflowSnapshot {
   const protagonist = protagonistOf(input.characters)
-  const volume = firstVolume(input.volumes)
+  const volume = firstVolume(
+    input.volumes,
+    input.chapterOutlines,
+    input.targetChapterOutlineId,
+  )
   const volumeOutline = volumeOutlineFor(volume, input.volumeOutlines)
-  const chapterOutline = firstChapter(input.chapterOutlines, volume)
+  const chapterOutline = firstChapter(
+    input.chapterOutlines,
+    volume,
+    input.targetChapterOutlineId,
+  )
   const checks = [
     ...collectBlockingChecks(input, protagonist, volume, volumeOutline, chapterOutline),
     ...collectAdvisoryChecks(input, chapterOutline),
@@ -190,7 +228,10 @@ export function evaluateFirstChapterWorkflow(
   }))
   const completedStepCount = steps.filter((step) => step.completed).length
   const hasBlockingError = checks.some((item) => item.blocking)
-  const reviewVersion = input.chapterVersions.some((version) => version.status === 'review')
+  const reviewVersion = input.chapterVersions.find((version) => version.status === 'review')
+  const reviewHasBlockingFinding = reviewVersion?.fact_check.findings.some(
+    (finding) => finding.severity === 'error',
+  ) ?? false
 
   return {
     steps,
@@ -198,6 +239,10 @@ export function evaluateFirstChapterWorkflow(
     completedStepCount,
     totalStepCount: steps.length,
     canGenerate: !hasBlockingError,
-    canConfirmChapter: reviewVersion && Boolean(input.project?.status === 'active'),
+    canConfirmChapter: Boolean(
+      reviewVersion &&
+      input.project?.status === 'active' &&
+      !reviewHasBlockingFinding,
+    ),
   }
 }

@@ -190,26 +190,32 @@ export class ChapterVersionRepository {
     const timestamp = now()
     const update = this.database.transaction(() => {
       if (status === 'approved') {
-        this.database
-          .prepare(
-            'UPDATE chapter_versions SET is_current = 0 WHERE chapter_id = ?',
-          )
-          .run(current.chapter_id)
-        this.database
+        const approved = this.database
           .prepare(
             `UPDATE chapter_versions
              SET status = 'approved', is_current = 1, reviewed_at = ?, confirmed_at = ?
              WHERE id = ? AND status = 'review'`,
           )
           .run(timestamp, timestamp, id)
-      } else if (status === 'rejected') {
+        if (approved.changes !== 1) {
+          throw new ChapterVersionStatusTransitionError(id, current.status, status)
+        }
         this.database
+          .prepare(
+            'UPDATE chapter_versions SET is_current = 0 WHERE chapter_id = ? AND id <> ?',
+          )
+          .run(current.chapter_id, id)
+      } else if (status === 'rejected') {
+        const rejected = this.database
           .prepare(
             `UPDATE chapter_versions
              SET status = 'rejected', reviewed_at = ?
              WHERE id = ? AND status = 'review'`,
           )
           .run(timestamp, id)
+        if (rejected.changes !== 1) {
+          throw new ChapterVersionStatusTransitionError(id, current.status, status)
+        }
       } else {
         throw new ChapterVersionStatusTransitionError(id, current.status, status)
       }

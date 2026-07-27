@@ -16,7 +16,12 @@ function alertStatus(check: WorkflowCheck): 'error' | 'warning' | 'info' {
   return 'info'
 }
 
-export function WorkflowCheckList({ checks }: { checks: WorkflowCheck[] }) {
+interface WorkflowCheckListProps {
+  checks: WorkflowCheck[]
+  onAction?: (check: WorkflowCheck) => boolean
+}
+
+export function WorkflowCheckList({ checks, onAction }: WorkflowCheckListProps) {
   const navigate = useNavigate()
 
   if (checks.length === 0) {
@@ -44,7 +49,10 @@ export function WorkflowCheckList({ checks }: { checks: WorkflowCheck[] }) {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => navigate(check.actionRoute!)}
+              onClick={() => {
+                if (onAction?.(check)) return
+                navigate(check.actionRoute!)
+              }}
               data-testid={`workflow-action-${check.id}`}
             >
               {check.actionLabel}

@@ -57,7 +57,9 @@ describe('first chapter workflow evaluator', () => {
   test('blocks without a protagonist', () => expectBlocked({ ...baseInput(), characters: [] }, 'protagonist-missing'))
   test('blocks without a core relationship', () => expectBlocked({ ...baseInput(), relations: [] }, 'core-relation-missing'))
   test('blocks without worldview', () => expectBlocked({ ...baseInput(), worldviewEntries: [] }, 'worldview-missing'))
+  test('blocks without a volume', () => expectBlocked({ ...baseInput(), volumes: [] }, 'volume-missing'))
   test('blocks without a volume outline', () => expectBlocked({ ...baseInput(), volumeOutlines: [] }, 'volume-outline-missing'))
+  test('blocks without a chapter outline', () => expectBlocked({ ...baseInput(), chapterOutlines: [] }, 'chapter-outline-missing'))
   test('blocks with a draft volume outline', () => expectBlocked({ ...baseInput(), volumeOutlines: [{ ...baseInput().volumeOutlines[0], status: 'draft' }] }, 'volume-outline-draft'))
   test('blocks with a draft chapter outline', () => expectBlocked({ ...baseInput(), chapterOutlines: [{ ...baseInput().chapterOutlines[0], status: 'draft' }] }, 'chapter-outline-draft'))
 
@@ -96,5 +98,76 @@ describe('first chapter workflow evaluator', () => {
     const errors = snapshot.checks.filter((item) => item.blocking)
     expect(errors.length).toBeGreaterThan(0)
     expect(errors.every((item) => item.actionRoute?.startsWith('/workbench/'))).toBe(true)
+  })
+
+  test('rejects a self relation that does not connect another character', () => {
+    const input = baseInput()
+    const protagonist = input.characters[0]
+    expectBlocked({
+      ...input,
+      relations: [{
+        ...input.relations[0],
+        source_entity_id: protagonist.id,
+        target_entity_id: protagonist.id,
+      }],
+    }, 'core-relation-missing')
+  })
+
+  test('evaluates the selected chapter and its volume', () => {
+    const input = baseInput()
+    const secondVolume: Volume = {
+      ...input.volumes[0],
+      id: 'volume-2',
+      volume_number: 2,
+    }
+    const secondVolumeOutline: VolumeOutline = {
+      ...input.volumeOutlines[0],
+      id: 'volume-outline-2',
+      volume_id: secondVolume.id,
+    }
+    const secondChapter: ChapterOutline = {
+      ...input.chapterOutlines[0],
+      id: 'chapter-outline-2',
+      volume_id: secondVolume.id,
+      status: 'draft',
+    }
+    expectBlocked({
+      ...input,
+      targetChapterOutlineId: secondChapter.id,
+      volumes: [...input.volumes, secondVolume],
+      volumeOutlines: [...input.volumeOutlines, secondVolumeOutline],
+      chapterOutlines: [...input.chapterOutlines, secondChapter],
+    }, 'chapter-outline-draft')
+  })
+
+  test('blocks confirmation when a review version has an error finding', () => {
+    const input = baseInput()
+    const snapshot = evaluateFirstChapterWorkflow({
+      ...input,
+      chapterVersions: [{
+        id: 'version-1',
+        chapter_id: 'chapter-1',
+        task_id: null,
+        version_number: 1,
+        content: '正文',
+        summary: '摘要',
+        fact_check: {
+          passed: false,
+          summary: '存在错误',
+          findings: [{
+            claim: '错误事实',
+            status: 'contradicted',
+            severity: 'error',
+            evidence: '大纲',
+          }],
+        },
+        status: 'review',
+        is_current: false,
+        created_at: now,
+        reviewed_at: null,
+        confirmed_at: null,
+      }],
+    })
+    expect(snapshot.canConfirmChapter).toBe(false)
   })
 })

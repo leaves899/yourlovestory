@@ -24,7 +24,9 @@ interface NarrativeStoreState {
   loading: boolean
   saving: boolean
   error: string | null
+  proposalFailures: Array<'memory' | 'foreshadow'>
   load: (projectId: string) => Promise<void>
+  setProposalFailures: (failures: Array<'memory' | 'foreshadow'>) => void
   extractMemories: (chapterId: string, content?: string, sourceVersionId?: string | null) => Promise<void>
   approveProposal: (proposalId: string) => Promise<void>
   rejectProposal: (proposalId: string) => Promise<void>
@@ -55,9 +57,22 @@ export const useNarrativeStore = create<NarrativeStoreState>((set, get) => ({
   loading: false,
   saving: false,
   error: null,
+  proposalFailures: [],
 
   load: async (projectId) => {
-    set({ projectId, loading: true, error: null })
+    const projectChanged = get().projectId !== projectId
+    set({
+      projectId,
+      loading: true,
+      error: null,
+      ...(projectChanged ? {
+        memories: [],
+        proposals: [],
+        foreshadows: [],
+        skills: [],
+        proposalFailures: [],
+      } : {}),
+    })
     try {
       const [memories, proposals, foreshadows, skills] = await Promise.all([
         narrativeService.listMemories(projectId),
@@ -65,11 +80,15 @@ export const useNarrativeStore = create<NarrativeStoreState>((set, get) => ({
         narrativeService.listForeshadows(projectId),
         narrativeService.listSkills(projectId),
       ])
+      if (get().projectId !== projectId) return
       set({ memories, proposals, foreshadows, skills, loading: false })
     } catch (error) {
+      if (get().projectId !== projectId) return
       set({ loading: false, error: readError(error) })
     }
   },
+
+  setProposalFailures: (proposalFailures) => set({ proposalFailures }),
 
   extractMemories: async (chapterId, content, sourceVersionId) => {
     const projectId = get().projectId
