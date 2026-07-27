@@ -25,9 +25,12 @@ export function useFirstChapterWorkflow(
       setCredentialConfigured(false)
       return
     }
-    void window.electronAPI.getLlmCredentialStatus({ scope: 'project', projectId })
-      .then((response) => setCredentialConfigured(
-        response.success && response.data?.configured === true,
+    void Promise.all([
+      window.electronAPI.getLlmCredentialStatus({ scope: 'project', projectId }),
+      window.electronAPI.getLlmCredentialStatus({ scope: 'app' }),
+    ])
+      .then((responses) => setCredentialConfigured(
+        responses.some((response) => response.success && response.data?.configured === true),
       ))
       .catch(() => setCredentialConfigured(false))
     if (taskState.projectId !== projectId) void taskState.load(projectId)
