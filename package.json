@@ -1,6 +1,6 @@
 {
   "name": "yourcrush",
-  "version": "1.0.0",
+  "version": "0.2.0-alpha.1",
   "description": "基于 Pi Agent SDK 的恋爱日记 Electron 桌面应用",
   "main": "dist/main/main/main.js",
   "scripts": {
@@ -21,7 +21,10 @@
     "test": "npm run rebuild:node && jest",
     "test:watch": "npm run rebuild:node && jest --watch",
     "test:coverage": "npm run rebuild:node && jest --coverage",
+    "test:release": "node --test tests/release/version-check.test.mjs tests/release/checksums.test.mjs",
     "test:e2e": "npm run rebuild:native && npm run build:main && playwright test",
+    "check:version": "node scripts/check-version.mjs",
+    "release:checksums": "node scripts/generate-checksums.mjs",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix"
   },

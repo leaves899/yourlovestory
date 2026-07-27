@@ -1,0 +1,156 @@
+name: Release draft
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_OPTIONS: --max-old-space-size=4096
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Full quality gate
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - name: Enforce protected release branch
+        if: github.ref != 'refs/heads/master'
+        shell: bash
+        run: |
+          echo "::error::Release drafts may only be created from master."
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run check:version
+      - run: npm run test:release
+      - run: npm run lint
+      - run: npx tsc --noEmit -p tsconfig.json
+      - run: npx tsc --noEmit -p tsconfig.main.json
+      - run: npm test -- --runInBand
+      - run: npm run build
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run renderer E2E tests
+        run: xvfb-run --auto-servernum npm run test:e2e
+
+      - name: Read and gate package version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="v${VERSION}"
+          if [[ "$VERSION" != *-* ]]; then
+            echo "::error::Stable release is blocked until Issue #25 packaged smoke tests are implemented and wired into this workflow."
+            exit 1
+          fi
+          if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
+            TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+            if [[ "$TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+              echo "::error::$TAG already points to $TAG_COMMIT instead of release commit $GITHUB_SHA."
+              exit 1
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=true" >> "$GITHUB_OUTPUT"
+
+  package:
+    name: Package (${{ matrix.os }})
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            command: npm run package:win
+            artifact: windows
+          - os: macos-latest
+            command: npm run package:mac
+            artifact: macos
+          - os: ubuntu-latest
+            command: npm run package:linux
+            artifact: linux
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - run: npm ci
+      - run: ${{ matrix.command }}
+
+      - name: Record unsigned build status
+        shell: bash
+        run: |
+          echo "This workflow does not configure code signing or macOS notarization." > "release/SIGNING-STATUS-${{ matrix.artifact }}.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.artifact }}
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/*.dmg
+            release/*.AppImage
+            release/*.yml
+            release/SIGNING-STATUS-*.txt
+          if-no-files-found: error
+
+  draft-release:
+    name: Create draft prerelease
+    needs: [quality, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - run: npm run release:checksums -- release-artifacts
+
+      - name: Create draft GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.quality.outputs.tag }}
+        shell: bash
+        run: |
+          gh release create "$RELEASE_TAG" release-artifacts/* \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" \
+            --generate-notes \
+            --draft \
+            --prerelease
