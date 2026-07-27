@@ -3,7 +3,7 @@ import {
   isRecord,
   parseProjectIdParams,
   readString,
-  type IpcRegistrar,
+  type IpcRegistry,
 } from './shared'
 
 function parseSkillToggleParams(value: unknown): {
@@ -21,16 +21,16 @@ function parseSkillToggleParams(value: unknown): {
 }
 
 export function registerSkillIPC(
-  ipc: IpcRegistrar,
+  ipc: IpcRegistry,
   service?: NarrativeWorkbenchService,
 ): void {
-  ipc.handle('skill:list', async (_, params: unknown) => {
+  ipc.register('skill:list', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseProjectIdParams(params)
     return { success: true, data: service.listSkills(parsed.project_id) }
   })
 
-  ipc.handle('skill:toggle', async (_, params: unknown) => {
+  ipc.register('skill:toggle', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseSkillToggleParams(params)
     return {

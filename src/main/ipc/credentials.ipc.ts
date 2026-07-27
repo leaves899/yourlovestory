@@ -7,7 +7,7 @@ import {
   assertTrustedCredentialSender,
   isRecord,
   readString,
-  type IpcRegistrar,
+  type IpcRegistry,
 } from './shared'
 
 const UNAVAILABLE = {
@@ -20,59 +20,59 @@ const UNAVAILABLE = {
 }
 
 export function registerCredentialIPC(
-  ipc: IpcRegistrar,
+  ipc: IpcRegistry,
   controller?: LlmCredentialController,
 ): void {
-  ipc.handle('llmCredential:status', async (event, value: unknown) => {
+  ipc.register('llmCredential:status', async (_event, value: unknown) => {
     if (!controller) return UNAVAILABLE
-    try {
-      assertTrustedCredentialSender(event)
-      return controller.status(parseCredentialScope(value))
-    } catch (error: unknown) {
-      return toSafeControllerFailure(error)
-    }
+    return controller.status(parseCredentialScope(value))
+  }, {
+    authorize: (event) => {
+      if (controller) assertTrustedCredentialSender(event)
+    },
+    formatError: toSafeControllerFailure,
   })
 
-  ipc.handle('llmCredential:save', async (event, value: unknown) => {
+  ipc.register('llmCredential:save', async (_event, value: unknown) => {
     if (!controller || !isRecord(value)) return UNAVAILABLE
-    try {
-      assertTrustedCredentialSender(event)
-      return controller.save(
-        parseCredentialScope(value.target),
-        readString(value.secret, 'secret'),
-      )
-    } catch (error: unknown) {
-      return toSafeControllerFailure(error)
-    }
+    return controller.save(
+      parseCredentialScope(value.target),
+      readString(value.secret, 'secret'),
+    )
+  }, {
+    authorize: (event, value) => {
+      if (controller && isRecord(value)) assertTrustedCredentialSender(event)
+    },
+    formatError: toSafeControllerFailure,
   })
 
-  ipc.handle('llmCredential:delete', async (event, value: unknown) => {
+  ipc.register('llmCredential:delete', async (_event, value: unknown) => {
     if (!controller) return UNAVAILABLE
-    try {
-      assertTrustedCredentialSender(event)
-      return controller.delete(parseCredentialScope(value))
-    } catch (error: unknown) {
-      return toSafeControllerFailure(error)
-    }
+    return controller.delete(parseCredentialScope(value))
+  }, {
+    authorize: (event) => {
+      if (controller) assertTrustedCredentialSender(event)
+    },
+    formatError: toSafeControllerFailure,
   })
 
-  ipc.handle('llmCredential:test', async (event, value: unknown) => {
+  ipc.register('llmCredential:test', async (_event, value: unknown) => {
     if (!controller) return UNAVAILABLE
-    try {
-      assertTrustedCredentialSender(event)
-      return await controller.test(parseCredentialScope(value))
-    } catch (error: unknown) {
-      return toSafeControllerFailure(error)
-    }
+    return await controller.test(parseCredentialScope(value))
+  }, {
+    authorize: (event) => {
+      if (controller) assertTrustedCredentialSender(event)
+    },
+    formatError: toSafeControllerFailure,
   })
 
-  ipc.handle('llmCredential:deleteAll', async (event) => {
+  ipc.register('llmCredential:deleteAll', async () => {
     if (!controller) return UNAVAILABLE
-    try {
-      assertTrustedCredentialSender(event)
-      return controller.deleteAll()
-    } catch (error: unknown) {
-      return toSafeControllerFailure(error)
-    }
+    return controller.deleteAll()
+  }, {
+    authorize: (event) => {
+      if (controller) assertTrustedCredentialSender(event)
+    },
+    formatError: toSafeControllerFailure,
   })
 }

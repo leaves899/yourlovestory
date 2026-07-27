@@ -8,7 +8,7 @@ import {
   isRecord,
   parseProjectChapterParams,
   readString,
-  type IpcRegistrar,
+  type IpcRegistry,
 } from './shared'
 
 function parseVersionActionParams(
@@ -21,8 +21,20 @@ function parseVersionActionParams(
   }
 }
 
+function requireTaskManager(taskManager?: TaskManager): TaskManager {
+  if (!taskManager) throw new Error('TaskManager is not initialized')
+  return taskManager
+}
+
+function requireChapterGenerationService(
+  service?: ChapterGenerationService,
+): ChapterGenerationService {
+  if (!service) throw new Error('ChapterGenerationService is not initialized')
+  return service
+}
+
 export function registerChapterIPC(
-  ipc: IpcRegistrar,
+  ipc: IpcRegistry,
   dependencies: {
     taskManager?: TaskManager
     chapterGenerationService?: ChapterGenerationService
@@ -30,64 +42,94 @@ export function registerChapterIPC(
 ): void {
   const { taskManager, chapterGenerationService } = dependencies
 
-  ipc.handle('chapterGeneration:start', async (_, params: unknown) => {
-    if (!taskManager) throw new Error('TaskManager is not initialized')
-    const handle = taskManager.startChapterGeneration(parseChapterGenerationStartParams(params))
+  ipc.register('chapterGeneration:start', async (_, input: {
+    taskManager: TaskManager
+    params: ReturnType<typeof parseChapterGenerationStartParams>
+  }) => {
+    const handle = input.taskManager.startChapterGeneration(input.params)
     return { success: true, data: { taskId: handle.taskId } }
+  }, {
+    parse: (value) => ({
+      taskManager: requireTaskManager(taskManager),
+      params: parseChapterGenerationStartParams(value),
+    }),
   })
 
-  ipc.handle('chapterGeneration:versions', async (_, params: unknown) => {
-    if (!chapterGenerationService) {
-      throw new Error('ChapterGenerationService is not initialized')
-    }
-    const parsed = parseProjectChapterParams(params)
+  ipc.register('chapterGeneration:versions', async (_, input: {
+    service: ChapterGenerationService
+    params: ReturnType<typeof parseProjectChapterParams>
+  }) => {
     return {
       success: true,
-      data: chapterGenerationService.listVersions(parsed.projectId, parsed.chapterId),
+      data: input.service.listVersions(input.params.projectId, input.params.chapterId),
     }
+  }, {
+    parse: (value) => ({
+      service: requireChapterGenerationService(chapterGenerationService),
+      params: parseProjectChapterParams(value),
+    }),
   })
 
-  ipc.handle('chapterGeneration:version:get', async (_, params: unknown) => {
-    if (!chapterGenerationService) {
-      throw new Error('ChapterGenerationService is not initialized')
-    }
-    const parsed = parseVersionActionParams(params)
+  ipc.register('chapterGeneration:version:get', async (_, input: {
+    service: ChapterGenerationService
+    params: ReturnType<typeof parseVersionActionParams>
+  }) => {
     return {
       success: true,
-      data: chapterGenerationService.getVersion(parsed.projectId, parsed.versionId),
+      data: input.service.getVersion(input.params.projectId, input.params.versionId),
     }
+  }, {
+    parse: (value) => ({
+      service: requireChapterGenerationService(chapterGenerationService),
+      params: parseVersionActionParams(value),
+    }),
   })
 
-  ipc.handle('chapterGeneration:version:confirm', async (_, params: unknown) => {
-    if (!chapterGenerationService) {
-      throw new Error('ChapterGenerationService is not initialized')
-    }
-    const parsed = parseVersionActionParams(params)
+  ipc.register('chapterGeneration:version:confirm', async (_, input: {
+    service: ChapterGenerationService
+    params: ReturnType<typeof parseVersionActionParams>
+  }) => {
     return {
       success: true,
-      data: chapterGenerationService.confirmVersion(parsed.projectId, parsed.versionId),
+      data: input.service.confirmVersion(input.params.projectId, input.params.versionId),
     }
+  }, {
+    parse: (value) => ({
+      service: requireChapterGenerationService(chapterGenerationService),
+      params: parseVersionActionParams(value),
+    }),
   })
 
-  ipc.handle('chapterGeneration:version:reject', async (_, params: unknown) => {
-    if (!chapterGenerationService) {
-      throw new Error('ChapterGenerationService is not initialized')
-    }
-    const parsed = parseVersionActionParams(params)
+  ipc.register('chapterGeneration:version:reject', async (_, input: {
+    service: ChapterGenerationService
+    params: ReturnType<typeof parseVersionActionParams>
+  }) => {
     return {
       success: true,
-      data: chapterGenerationService.rejectVersion(parsed.projectId, parsed.versionId),
+      data: input.service.rejectVersion(input.params.projectId, input.params.versionId),
     }
+  }, {
+    parse: (value) => ({
+      service: requireChapterGenerationService(chapterGenerationService),
+      params: parseVersionActionParams(value),
+    }),
   })
 }
 
 export function registerChapterPolishIPC(
-  ipc: IpcRegistrar,
+  ipc: IpcRegistry,
   taskManager?: TaskManager,
 ): void {
-  ipc.handle('chapterPolish:start', async (_, params: unknown) => {
-    if (!taskManager) throw new Error('TaskManager is not initialized')
-    const handle = taskManager.startChapterPolish(parseChapterPolishStartParams(params))
+  ipc.register('chapterPolish:start', async (_, input: {
+    taskManager: TaskManager
+    params: ReturnType<typeof parseChapterPolishStartParams>
+  }) => {
+    const handle = input.taskManager.startChapterPolish(input.params)
     return { success: true, data: { taskId: handle.taskId } }
+  }, {
+    parse: (value) => ({
+      taskManager: requireTaskManager(taskManager),
+      params: parseChapterPolishStartParams(value),
+    }),
   })
 }

@@ -1,7 +1,7 @@
 import type { LlmConfigInput } from '../../agent/llm'
 import type { JsonObject } from '../database'
 import type { StartTaskInput, TaskManager } from '../tasks'
-import { isRecord, readString, type IpcRegistrar } from './shared'
+import { isRecord, readString, type IpcRegistry } from './shared'
 
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
@@ -67,49 +67,105 @@ function parseTaskStartInput(value: unknown): StartTaskInput {
   }
 }
 
-export function registerTaskIPC(ipc: IpcRegistrar, taskManager?: TaskManager): void {
-  ipc.handle('task:run', async (_, params: unknown) => {
-    if (!taskManager) throw new Error('TaskManager is not initialized')
-    const handle = taskManager.start(parseTaskStartInput(params))
+function requireTaskManager(taskManager?: TaskManager): TaskManager {
+  if (!taskManager) throw new Error('TaskManager is not initialized')
+  return taskManager
+}
+
+function parseTaskId(
+  value: unknown,
+  inputName: string,
+): string {
+  if (!isRecord(value)) throw new Error(`${inputName} input is required`)
+  return readString(value.taskId, 'taskId')
+}
+
+function parseProjectId(
+  value: unknown,
+  inputName: string,
+): string {
+  if (!isRecord(value)) throw new Error(`${inputName} input is required`)
+  return readString(value.projectId, 'projectId')
+}
+
+export function registerTaskIPC(ipc: IpcRegistry, taskManager?: TaskManager): void {
+  ipc.register('task:run', async (_, input: {
+    taskManager: TaskManager
+    params: StartTaskInput
+  }) => {
+    const handle = input.taskManager.start(input.params)
     return { success: true, data: { taskId: handle.taskId } }
+  }, {
+    parse: (value) => ({
+      taskManager: requireTaskManager(taskManager),
+      params: parseTaskStartInput(value),
+    }),
   })
 
-  ipc.handle('task:cancel', async (_, params: unknown) => {
-    if (!taskManager) throw new Error('TaskManager is not initialized')
-    if (!isRecord(params)) throw new Error('task cancel input is required')
-    const taskId = readString(params.taskId, 'taskId')
-    return { success: taskManager.cancel(taskId) }
+  ipc.register('task:cancel', async (_, input: {
+    taskManager: TaskManager
+    taskId: string
+  }) => {
+    return { success: input.taskManager.cancel(input.taskId) }
+  }, {
+    parse: (value) => ({
+      taskManager: requireTaskManager(taskManager),
+      taskId: parseTaskId(value, 'task cancel'),
+    }),
   })
 
-  ipc.handle('task:get', async (_, params: unknown) => {
-    if (!taskManager) throw new Error('TaskManager is not initialized')
-    if (!isRecord(params)) throw new Error('task get input is required')
-    const taskId = readString(params.taskId, 'taskId')
-    return { success: true, data: taskManager.get(taskId) }
+  ipc.register('task:get', async (_, input: {
+    taskManager: TaskManager
+    taskId: string
+  }) => {
+    return { success: true, data: input.taskManager.get(input.taskId) }
+  }, {
+    parse: (value) => ({
+      taskManager: requireTaskManager(taskManager),
+      taskId: parseTaskId(value, 'task get'),
+    }),
   })
 
-  ipc.handle('task:list', async (_, params: unknown) => {
-    if (!taskManager) throw new Error('TaskManager is not initialized')
-    if (!isRecord(params)) throw new Error('task list input is required')
-    const projectId = readString(params.projectId, 'projectId')
-    return { success: true, data: taskManager.listByProject(projectId) }
+  ipc.register('task:list', async (_, input: {
+    taskManager: TaskManager
+    projectId: string
+  }) => {
+    return { success: true, data: input.taskManager.listByProject(input.projectId) }
+  }, {
+    parse: (value) => ({
+      taskManager: requireTaskManager(taskManager),
+      projectId: parseProjectId(value, 'task list'),
+    }),
   })
 
-  ipc.handle('task:resume', async (_, params: unknown) => {
-    if (!taskManager) throw new Error('TaskManager is not initialized')
-    if (!isRecord(params)) throw new Error('task resume input is required')
-    const taskId = readString(params.taskId, 'taskId')
-    const handle = taskManager.resume(taskId)
+  ipc.register('task:resume', async (_, input: {
+    taskManager: TaskManager
+    taskId: string
+  }) => {
+    const handle = input.taskManager.resume(input.taskId)
     return {
       success: handle !== null,
       ...(handle ? { data: { taskId: handle.taskId } } : {}),
     }
+  }, {
+    parse: (value) => ({
+      taskManager: requireTaskManager(taskManager),
+      taskId: parseTaskId(value, 'task resume'),
+    }),
   })
 
-  ipc.handle('task:recoverable', async (_, params: unknown) => {
-    if (!taskManager) throw new Error('TaskManager is not initialized')
-    if (!isRecord(params)) throw new Error('task recoverable input is required')
-    const projectId = readString(params.projectId, 'projectId')
-    return { success: true, data: taskManager.listRecoverable(projectId) }
+  ipc.register('task:recoverable', async (_, input: {
+    taskManager: TaskManager
+    projectId: string
+  }) => {
+    return {
+      success: true,
+      data: input.taskManager.listRecoverable(input.projectId),
+    }
+  }, {
+    parse: (value) => ({
+      taskManager: requireTaskManager(taskManager),
+      projectId: parseProjectId(value, 'task recoverable'),
+    }),
   })
 }

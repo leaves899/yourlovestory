@@ -7,13 +7,13 @@ import {
   managerUpdateFragment,
 } from '../../shared/fragment/manager'
 import { getCurrentDate } from '../../shared/fragment/utils'
-import type { IpcRegistrar } from './shared'
+import type { IpcRegistry } from './shared'
 
 export function registerFragmentIPC(
-  ipc: IpcRegistrar,
+  ipc: IpcRegistry,
   userDataPath: string,
 ): void {
-  ipc.handle('fragment:record', async (_, params) => {
+  ipc.register('fragment:record', async (_, params) => {
     const { date, slug, ...fragmentData } = params
     const result = managerRecordFragment(userDataPath, slug, fragmentData, date)
     if (result.fragment) {
@@ -22,12 +22,12 @@ export function registerFragmentIPC(
     return { success: false, errors: [result.error] }
   })
 
-  ipc.handle('fragment:list', async (_, params) => ({
+  ipc.register('fragment:list', async (_, params) => ({
     success: true,
     data: getFragmentsByDate(userDataPath, params.slug, params.date ?? getCurrentDate()),
   }))
 
-  ipc.handle('fragment:get', async (_, params) => {
+  ipc.register('fragment:get', async (_, params) => {
     const fragment = getFragment(userDataPath, params.fragment_id)
     return fragment
       ? { success: true, data: fragment }
@@ -37,7 +37,7 @@ export function registerFragmentIPC(
         }
   })
 
-  ipc.handle('fragment:update', async (_, params) => {
+  ipc.register('fragment:update', async (_, params) => {
     const { fragment_id, slug: _slug, expected_version, ...updates } = params
     const result = managerUpdateFragment(userDataPath, fragment_id, updates, expected_version)
     if (result.fragment) {
@@ -46,11 +46,11 @@ export function registerFragmentIPC(
     return { success: false, errors: [result.error] }
   })
 
-  ipc.handle('fragment:delete', async (_, params) =>
+  ipc.register('fragment:delete', async (_, params) =>
     managerDeleteFragment(userDataPath, params.fragment_id, params.expected_version)
   )
 
-  ipc.handle('fragment:integrate', async (_, params) => ({
+  ipc.register('fragment:integrate', async (_, params) => ({
     success: true,
     data: {
       prompt: managerIntegrateFragments(

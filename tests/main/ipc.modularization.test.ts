@@ -12,6 +12,9 @@ const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'yourcrush-ipc-module
 jest.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: IpcHandler): void => {
+      if (handlers.has(channel)) {
+        throw new Error(`IPC handler is already registered: ${channel}`)
+      }
       handlers.set(channel, handler)
     },
   },
@@ -100,15 +103,22 @@ async function invoke<T>(channel: string, params?: unknown, event: unknown = {})
 describe('modular IPC registration', () => {
   beforeEach(() => {
     handlers.clear()
-    setupIPC()
   })
 
   afterAll(() => {
     fs.rmSync(userDataPath, { recursive: true, force: true })
   })
 
-  it('registers the complete legacy channel contract exactly once', () => {
+  it('registers the complete legacy channel contract exactly once', async () => {
+    const audit = jest.fn()
+    setupIPC({ audit })
+
     expect([...handlers.keys()].sort()).toEqual(EXPECTED_CHANNELS)
+    await invoke('app:info')
+    expect(audit.mock.calls.map(([event]) => event)).toEqual([
+      { channel: 'app:info', outcome: 'started' },
+      { channel: 'app:info', outcome: 'succeeded' },
+    ])
   })
 
   it('preserves project and chapter identifier validation', async () => {
@@ -132,11 +142,12 @@ describe('modular IPC registration', () => {
   })
 
   it('rejects invalid credential input and untrusted senders before controller access', async () => {
+    const audit = jest.fn()
     const controller = {
       save: jest.fn(),
       status: jest.fn(),
     } as unknown as LlmCredentialController
-    setupIPC({ credentialController: controller })
+    setupIPC({ credentialController: controller, audit })
     const trustedEvent = {
       senderFrame: { url: 'file:///app/index.html' },
     }
@@ -165,10 +176,23 @@ describe('modular IPC registration', () => {
     })
     expect(controller.save).not.toHaveBeenCalled()
     expect(controller.status).not.toHaveBeenCalled()
+    expect(audit.mock.calls.map(([event]) => event)).toEqual([
+      { channel: 'llmCredential:save', outcome: 'started' },
+      { channel: 'llmCredential:save', outcome: 'failed' },
+      { channel: 'llmCredential:status', outcome: 'started' },
+      { channel: 'llmCredential:status', outcome: 'failed' },
+    ])
   })
 
   it('filters credential fields and sanitizes sensitive controller failures', async () => {
     const secret = 'sk-test-secret-do-not-expose-123456'
+    const controller = {
+      status: jest.fn(() => {
+        throw new Error(`Authorization: Bearer ${secret}`)
+      }),
+    } as unknown as LlmCredentialController
+    setupIPC({ credentialController: controller })
+
     const updated = await invoke<{ success: boolean }>('settings:update', {
       provider: 'openai',
       apiKey: secret,
@@ -182,13 +206,11 @@ describe('modular IPC registration', () => {
       provider: 'openai',
       nested: { visible: true },
     })
+    await expect(invoke('settings:update', null)).resolves.toMatchObject({
+      success: false,
+      errors: ['settings must be an object'],
+    })
 
-    const controller = {
-      status: jest.fn(() => {
-        throw new Error(`Authorization: Bearer ${secret}`)
-      }),
-    } as unknown as LlmCredentialController
-    setupIPC({ credentialController: controller })
     const failure = await invoke<Record<string, unknown>>(
       'llmCredential:status',
       { scope: 'app' },

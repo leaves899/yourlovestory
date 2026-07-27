@@ -3,7 +3,7 @@ import {
   isRecord,
   parseProjectIdParams,
   readString,
-  type IpcRegistrar,
+  type IpcRegistry,
 } from './shared'
 
 function parseProposalActionParams(
@@ -41,22 +41,22 @@ function parseMemoryExtractionParams(value: unknown): {
 }
 
 export function registerMemoryIPC(
-  ipc: IpcRegistrar,
+  ipc: IpcRegistry,
   service?: NarrativeWorkbenchService,
 ): void {
-  ipc.handle('narrativeMemory:list', async (_, params: unknown) => {
+  ipc.register('narrativeMemory:list', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseProjectIdParams(params)
     return { success: true, data: service.listMemories(parsed.project_id) }
   })
 
-  ipc.handle('narrativeMemory:proposals', async (_, params: unknown) => {
+  ipc.register('narrativeMemory:proposals', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseProjectIdParams(params)
     return { success: true, data: service.listMemoryProposals(parsed.project_id) }
   })
 
-  ipc.handle('narrativeMemory:extract', async (_, params: unknown) => {
+  ipc.register('narrativeMemory:extract', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseMemoryExtractionParams(params)
     return {
@@ -69,7 +69,7 @@ export function registerMemoryIPC(
     }
   })
 
-  ipc.handle('narrativeMemory:approve', async (_, params: unknown) => {
+  ipc.register('narrativeMemory:approve', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseProposalActionParams(params)
     return {
@@ -78,7 +78,7 @@ export function registerMemoryIPC(
     }
   })
 
-  ipc.handle('narrativeMemory:reject', async (_, params: unknown) => {
+  ipc.register('narrativeMemory:reject', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseProposalActionParams(params)
     return {

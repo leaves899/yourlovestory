@@ -5,10 +5,10 @@ import {
   listCrushes,
   updateCrush,
 } from '../../shared/crush/crushStore'
-import type { IpcRegistrar } from './shared'
+import type { IpcRegistry } from './shared'
 
 export function registerCrushIPC(
-  ipc: IpcRegistrar,
+  ipc: IpcRegistry,
   dependencies: {
     userDataPath: string
     getAppPath: () => string
@@ -16,11 +16,11 @@ export function registerCrushIPC(
 ): void {
   const { userDataPath, getAppPath } = dependencies
 
-  ipc.handle('crush:create', async (_, params) =>
+  ipc.register('crush:create', async (_, params) =>
     createCrush(userDataPath, params, getAppPath())
   )
-  ipc.handle('crush:list', async () => listCrushes(userDataPath))
-  ipc.handle('crush:get', async (_, params) => getCrush(userDataPath, params.slug))
-  ipc.handle('crush:update', async (_, params) => updateCrush(userDataPath, params))
-  ipc.handle('crush:delete', async (_, params) => deleteCrush(userDataPath, params.slug))
+  ipc.register('crush:list', async () => listCrushes(userDataPath))
+  ipc.register('crush:get', async (_, params) => getCrush(userDataPath, params.slug))
+  ipc.register('crush:update', async (_, params) => updateCrush(userDataPath, params))
+  ipc.register('crush:delete', async (_, params) => deleteCrush(userDataPath, params.slug))
 }

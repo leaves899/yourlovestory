@@ -6,7 +6,7 @@ import {
   isRecord,
   parseProjectIdParams,
   readString,
-  type IpcRegistrar,
+  type IpcRegistry,
 } from './shared'
 
 function parseForeshadowEventParams(
@@ -73,16 +73,16 @@ function parseForeshadowTransitionParams(value: unknown): {
 }
 
 export function registerForeshadowIPC(
-  ipc: IpcRegistrar,
+  ipc: IpcRegistry,
   service?: NarrativeWorkbenchService,
 ): void {
-  ipc.handle('foreshadow:list', async (_, params: unknown) => {
+  ipc.register('foreshadow:list', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseProjectIdParams(params)
     return { success: true, data: service.listForeshadows(parsed.project_id) }
   })
 
-  ipc.handle('foreshadow:events', async (_, params: unknown) => {
+  ipc.register('foreshadow:events', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseForeshadowEventParams(params)
     return {
@@ -91,7 +91,7 @@ export function registerForeshadowIPC(
     }
   })
 
-  ipc.handle('foreshadow:suggest', async (_, params: unknown) => {
+  ipc.register('foreshadow:suggest', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseForeshadowSuggestionParams(params)
     return {
@@ -108,7 +108,7 @@ export function registerForeshadowIPC(
     }
   })
 
-  ipc.handle('foreshadow:transition', async (_, params: unknown) => {
+  ipc.register('foreshadow:transition', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseForeshadowTransitionParams(params)
     return {

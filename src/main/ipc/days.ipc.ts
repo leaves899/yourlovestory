@@ -8,10 +8,10 @@ import {
 import { getSettings } from '../../shared/persistence/settingsStore'
 import type { CredentialService } from '../security/credentialService'
 import { credentialBindingForProvider } from '../security/llmCredentials'
-import type { IpcRegistrar } from './shared'
+import type { IpcRegistry } from './shared'
 
 export function registerDayIPC(
-  ipc: IpcRegistrar,
+  ipc: IpcRegistry,
   dependencies: {
     userDataPath: string
     credentialService?: CredentialService
@@ -19,7 +19,7 @@ export function registerDayIPC(
 ): void {
   const { userDataPath, credentialService } = dependencies
 
-  ipc.handle('day:generate', async (_, params) =>
+  ipc.register('day:generate', async (_, params) =>
     generateDay(userDataPath, params, {
       getCredential: async (credentialId) => {
         if (!credentialService) {
@@ -43,8 +43,8 @@ export function registerDayIPC(
     })
   )
 
-  ipc.handle('day:list', async (_, params) => listDays(userDataPath, params))
-  ipc.handle('day:get', async (_, params) => getDay(userDataPath, params))
-  ipc.handle('day:update', async (_, params) => updateDay(userDataPath, params))
-  ipc.handle('day:delete', async (_, params) => deleteDay(userDataPath, params))
+  ipc.register('day:list', async (_, params) => listDays(userDataPath, params))
+  ipc.register('day:get', async (_, params) => getDay(userDataPath, params))
+  ipc.register('day:update', async (_, params) => updateDay(userDataPath, params))
+  ipc.register('day:delete', async (_, params) => deleteDay(userDataPath, params))
 }

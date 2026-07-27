@@ -1,20 +1,20 @@
 import type { App } from 'electron'
-import type { IpcRegistrar } from './shared'
+import type { IpcRegistry } from './shared'
 
-export function registerAppIPC(ipc: IpcRegistrar, app: App): void {
-  ipc.handle('app:info', async () => ({
+export function registerAppIPC(ipc: IpcRegistry, app: App): void {
+  ipc.register('app:info', async () => ({
     name: app.getName(),
     version: app.getVersion(),
     platform: process.platform,
     arch: process.arch,
   }))
 
-  ipc.handle('app:checkUpdate', async () => ({
+  ipc.register('app:checkUpdate', async () => ({
     hasUpdate: false,
     version: app.getVersion(),
   }))
 
-  ipc.handle('app:quit', async () => {
+  ipc.register('app:quit', async () => {
     app.quit()
   })
 }

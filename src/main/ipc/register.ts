@@ -22,6 +22,7 @@ import { registerRevisionIPC } from './revisions.ipc'
 import { registerSettingsIPC } from './settings.ipc'
 import { registerSkillIPC } from './skills.ipc'
 import { registerTaskIPC } from './tasks.ipc'
+import { createIpcRegistry, type IpcAuditSink } from './shared'
 
 export interface IpcSetupOptions {
   taskManager?: TaskManager
@@ -32,10 +33,12 @@ export interface IpcSetupOptions {
   credentialService?: CredentialService
   database?: SqliteDatabase
   credentialController?: LlmCredentialController
+  audit?: IpcAuditSink
 }
 
 export function setupIPC(options: IpcSetupOptions = {}): void {
   const userDataPath = app.getPath('userData')
+  const ipc = createIpcRegistry(ipcMain, options.audit)
   const narrativeWorkbenchService = options.narrativeWorkbenchService
     ?? options.workbenchService?.narrative
 
@@ -63,30 +66,30 @@ export function setupIPC(options: IpcSetupOptions = {}): void {
       : undefined,
   )
 
-  registerTaskIPC(ipcMain, options.taskManager)
-  registerChapterIPC(ipcMain, {
+  registerTaskIPC(ipc, options.taskManager)
+  registerChapterIPC(ipc, {
     taskManager: options.taskManager,
     chapterGenerationService: options.chapterGenerationService,
   })
-  registerMemoryIPC(ipcMain, narrativeWorkbenchService)
-  registerForeshadowIPC(ipcMain, narrativeWorkbenchService)
-  registerSkillIPC(ipcMain, narrativeWorkbenchService)
-  registerRevisionIPC(ipcMain, narrativeWorkbenchService)
-  registerChapterPolishIPC(ipcMain, options.taskManager)
-  registerDayIPC(ipcMain, {
+  registerMemoryIPC(ipc, narrativeWorkbenchService)
+  registerForeshadowIPC(ipc, narrativeWorkbenchService)
+  registerSkillIPC(ipc, narrativeWorkbenchService)
+  registerRevisionIPC(ipc, narrativeWorkbenchService)
+  registerChapterPolishIPC(ipc, options.taskManager)
+  registerDayIPC(ipc, {
     userDataPath,
     credentialService: options.credentialService,
   })
-  registerFragmentIPC(ipcMain, userDataPath)
-  registerCrushIPC(ipcMain, {
+  registerFragmentIPC(ipc, userDataPath)
+  registerCrushIPC(ipc, {
     userDataPath,
     getAppPath: () => app.getAppPath(),
   })
-  registerRelationshipIPC(ipcMain, userDataPath)
-  registerSettingsIPC(ipcMain, {
+  registerRelationshipIPC(ipc, userDataPath)
+  registerSettingsIPC(ipc, {
     userDataPath,
     credentialService: options.credentialService,
   })
-  registerCredentialIPC(ipcMain, credentialController)
-  registerAppIPC(ipcMain, app)
+  registerCredentialIPC(ipc, credentialController)
+  registerAppIPC(ipc, app)
 }

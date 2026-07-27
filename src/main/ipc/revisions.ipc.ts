@@ -3,7 +3,7 @@ import {
   isRecord,
   parseProjectChapterParams,
   readString,
-  type IpcRegistrar,
+  type IpcRegistry,
 } from './shared'
 
 function parseRevisionActionParams(
@@ -44,10 +44,10 @@ function parseVersionDiffParams(value: unknown): {
 }
 
 export function registerRevisionIPC(
-  ipc: IpcRegistrar,
+  ipc: IpcRegistry,
   service?: NarrativeWorkbenchService,
 ): void {
-  ipc.handle('chapter:blocks', async (_, params: unknown) => {
+  ipc.register('chapter:blocks', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseProjectChapterParams(params)
     return {
@@ -56,7 +56,7 @@ export function registerRevisionIPC(
     }
   })
 
-  ipc.handle('chapter:revisions', async (_, params: unknown) => {
+  ipc.register('chapter:revisions', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseProjectChapterParams(params)
     return {
@@ -65,7 +65,7 @@ export function registerRevisionIPC(
     }
   })
 
-  ipc.handle('chapter:revision:get', async (_, params: unknown) => {
+  ipc.register('chapter:revision:get', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseRevisionActionParams(params)
     return {
@@ -74,7 +74,7 @@ export function registerRevisionIPC(
     }
   })
 
-  ipc.handle('chapter:revision:apply', async (_, params: unknown) => {
+  ipc.register('chapter:revision:apply', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseRevisionActionParams(params)
     return {
@@ -83,7 +83,7 @@ export function registerRevisionIPC(
     }
   })
 
-  ipc.handle('chapter:diff:revisions', async (_, params: unknown) => {
+  ipc.register('chapter:diff:revisions', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseRevisionDiffParams(params)
     return {
@@ -96,7 +96,7 @@ export function registerRevisionIPC(
     }
   })
 
-  ipc.handle('chapter:diff:versions', async (_, params: unknown) => {
+  ipc.register('chapter:diff:versions', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseVersionDiffParams(params)
     return {
