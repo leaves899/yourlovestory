@@ -106,6 +106,22 @@ function FirstChapterWizardPage() {
     }
   }
 
+  const saveExistingConcept = async (): Promise<void> => {
+    if (!store.currentProject || !concept.trim()) {
+      setLocalError('请先填写一句话故事概念。')
+      return
+    }
+    setLocalError(null)
+    try {
+      await store.updateProject({ description: concept.trim() })
+      if (genre.trim() || tone.trim()) {
+        await store.saveConfig({ genre: genre.trim(), tone: tone.trim() })
+      }
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const createInitialDraft = async (): Promise<void> => {
     const project = store.currentProject
     if (!project) return
@@ -209,7 +225,27 @@ function FirstChapterWizardPage() {
           </Card>
         )}
 
-        {store.currentProject && !snapshot.steps.find((step) => step.id === 'relationship')?.completed && (
+        {store.currentProject && !store.currentProject.description.trim() && (
+          <Card data-testid="wizard-existing-concept-step">
+            <CardHeader><Text fontWeight="bold">1. 补充现有项目的故事概念</Text></CardHeader>
+            <CardBody>
+              <Stack spacing={4}>
+                <Alert status="info"><AlertIcon />继续使用「{store.currentProject.name}」，不会清空或重建已有数据。</Alert>
+                <FormControl isRequired>
+                  <FormLabel>一句话故事概念</FormLabel>
+                  <Textarea value={concept} onChange={(event) => setConcept(event.target.value)} data-testid="wizard-existing-concept" />
+                </FormControl>
+                <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+                  <FormControl><FormLabel>题材（可选）</FormLabel><Input value={genre} onChange={(event) => setGenre(event.target.value)} /></FormControl>
+                  <FormControl><FormLabel>语气（可选）</FormLabel><Input value={tone} onChange={(event) => setTone(event.target.value)} /></FormControl>
+                </SimpleGrid>
+                <Button alignSelf="flex-start" colorScheme="cinnabar" onClick={() => void saveExistingConcept()} isLoading={store.saving} data-testid="wizard-save-existing-concept">保存并继续</Button>
+              </Stack>
+            </CardBody>
+          </Card>
+        )}
+
+        {store.currentProject && Boolean(store.currentProject.description.trim()) && !snapshot.steps.find((step) => step.id === 'relationship')?.completed && (
           <Card data-testid="wizard-character-step">
             <CardHeader><Text fontWeight="bold">2. 主角和核心关系</Text></CardHeader>
             <CardBody>
