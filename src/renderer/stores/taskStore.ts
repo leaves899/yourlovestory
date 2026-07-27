@@ -49,9 +49,44 @@ interface TaskStoreState {
   clearOutput: () => void
 }
 
+let loadSequence = 0
+
 function readError(error: unknown): string {
   if (error instanceof Error) return error.message
   return typeof error === 'string' ? error : '任务操作失败'
+}
+
+export function taskChapterId(task: TaskView): string | null {
+  if (task.chapter_id?.trim()) return task.chapter_id
+  const resultChapterId = task.result?.chapter_id
+  return typeof resultChapterId === 'string' && resultChapterId.trim()
+    ? resultChapterId
+    : null
+}
+
+function taskChapterOutlineId(task: TaskView): string | null {
+  const request = task.input.request
+  if (typeof request !== 'object' || request === null || Array.isArray(request)) return null
+  const outlineId = (request as Record<string, unknown>).chapter_outline_id
+  return typeof outlineId === 'string' && outlineId.trim() ? outlineId : null
+}
+
+export function versionsForChapterOutline(
+  tasks: TaskView[],
+  versions: ChapterVersion[],
+  chapterOutlineId: string | undefined,
+): ChapterVersion[] {
+  if (!chapterOutlineId) return versions
+  const generationTasks = tasks.filter((task) => task.task_type === 'chapter-generation')
+  const hasOutlineMetadata = generationTasks.some((task) => taskChapterOutlineId(task) !== null)
+  if (!hasOutlineMetadata) return versions
+  const chapterIds = new Set(
+    generationTasks
+      .filter((task) => taskChapterOutlineId(task) === chapterOutlineId)
+      .map(taskChapterId)
+      .filter((id): id is string => id !== null),
+  )
+  return versions.filter((version) => chapterIds.has(version.chapter_id))
 }
 
 export const useTaskStore = create<TaskStoreState>((set, get) => ({
@@ -68,6 +103,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   subscribed: false,
 
   load: async (projectId) => {
+    const requestSequence = ++loadSequence
     const projectChanged = get().projectId !== projectId
     set({
       projectId,
@@ -88,16 +124,27 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
         taskService.list(projectId),
         taskService.listRecoverable(projectId),
       ])
-      if (get().projectId !== projectId) return
+      if (get().projectId !== projectId || requestSequence !== loadSequence) return
+      const chapterIds = [...new Set(
+        tasks
+          .filter((task) => task.task_type === 'chapter-generation')
+          .map(taskChapterId)
+          .filter((id): id is string => id !== null),
+      )]
+      const versionLists = await Promise.all(
+        chapterIds.map((chapterId) => taskService.listVersions(projectId, chapterId)),
+      )
+      if (get().projectId !== projectId || requestSequence !== loadSequence) return
       const active = tasks.find((task) => task.status === 'running' || task.status === 'pending')
       set({
         tasks,
         recoverableTasks,
+        versions: versionLists.flat(),
         activeTaskId: active?.id ?? get().activeTaskId,
         loading: false,
       })
     } catch (error) {
-      if (get().projectId !== projectId) return
+      if (get().projectId !== projectId || requestSequence !== loadSequence) return
       set({ loading: false, error: readError(error) })
     }
   },

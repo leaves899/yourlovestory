@@ -190,7 +190,11 @@ async function injectFirstChapterMock(page: import('@playwright/test').Page): Pr
           status: 'completed',
           stage: 'review',
           progress: 1,
-          input: {},
+          input: {
+            request: {
+              chapter_outline_id: 'chapter-outline-1',
+            },
+          },
           checkpoint: null,
           result: {},
           error_message: null,
@@ -342,7 +346,9 @@ async function completeToReview(page: import('@playwright/test').Page): Promise<
   await expect(page.getByTestId('workflow-check-genre-missing')).toContainText('警告')
   await expect(page.getByTestId('workflow-check-materials-missing')).toContainText('建议')
   await page.getByTestId('start-chapter-generation').click()
-  await page.goto('/#/workbench/review')
+  await expect(page.getByTestId('first-chapter-progress')).toContainText('审阅并确认')
+  await page.getByTestId('first-chapter-next-action').click()
+  await expect(page).toHaveURL(/\/workbench\/review/)
 
   await expect(page.getByTestId('review-chapter-content')).toContainText('主角收到一封改变旅程的来信')
   await expect(page.getByText('保持当前表述')).toBeVisible()

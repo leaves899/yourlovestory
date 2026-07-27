@@ -39,7 +39,16 @@ export function FirstChapterProgress() {
               </Text>
             </Stack>
             <HStack>
-              {current && <Button size="sm" colorScheme="cinnabar" onClick={() => navigate(current.actionRoute)}>下一步</Button>}
+              {current && (
+                <Button
+                  size="sm"
+                  colorScheme="cinnabar"
+                  onClick={() => navigate(current.actionRoute)}
+                  data-testid="first-chapter-next-action"
+                >
+                  下一步
+                </Button>
+              )}
               <Button size="sm" variant="outline" onClick={() => navigate('/workbench/first-chapter')}>返回黄金路径</Button>
             </HStack>
           </HStack>

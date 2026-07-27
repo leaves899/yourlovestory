@@ -30,7 +30,7 @@ import {
 } from '../components/LlmEndpointSecurityNotice'
 import { createLlmConfig } from '../services/assistantService'
 import { useAssistantStore, type AssistantLlmForm } from '../stores/assistantStore'
-import { useTaskStore } from '../stores/taskStore'
+import { useTaskStore, versionsForChapterOutline } from '../stores/taskStore'
 import { useWorkbenchStore } from '../stores/workbenchStore'
 
 const defaultLlm: AssistantLlmForm = {
@@ -57,7 +57,6 @@ function WorkbenchWritePage() {
     startGeneration,
     cancel,
     resume,
-    loadVersions,
   } = useTaskStore()
   const [chapterId, setChapterId] = useState('')
   const [llm, setLlm] = useState<AssistantLlmForm>(defaultLlm)
@@ -71,6 +70,10 @@ function WorkbenchWritePage() {
   }, [assistantProjectId, currentProject, initializeAssistant, load])
 
   const selectedChapter = useMemo(() => chapterOutlines.find((chapter) => chapter.id === chapterId) ?? chapterOutlines[0] ?? null, [chapterId, chapterOutlines])
+  const selectedVersions = useMemo(
+    () => versionsForChapterOutline(tasks, versions, selectedChapter?.id),
+    [selectedChapter?.id, tasks, versions],
+  )
   const workflow = useFirstChapterWorkflow({
     endpointValid: endpointSecurity.valid,
     targetChapterOutlineId: selectedChapter?.id,
@@ -79,9 +82,8 @@ function WorkbenchWritePage() {
   useEffect(() => {
     if (selectedChapter) {
       setChapterId(selectedChapter.id)
-      if (currentProject) void loadVersions(currentProject.id, selectedChapter.id)
     }
-  }, [currentProject, loadVersions, selectedChapter])
+  }, [selectedChapter])
 
   const start = async (): Promise<void> => {
     if (!currentProject || !selectedChapter || busy || !workflow.canGenerate) return
@@ -163,13 +165,13 @@ function WorkbenchWritePage() {
         </SimpleGrid>
 
         <Card>
-          <CardHeader><HStack justify="space-between"><Text fontWeight="bold">待审核版本</Text><Badge>{versions.length}</Badge></HStack></CardHeader>
+          <CardHeader><HStack justify="space-between"><Text fontWeight="bold">待审核版本</Text><Badge>{selectedVersions.length}</Badge></HStack></CardHeader>
           <CardBody>
-            {versions.length === 0
+            {selectedVersions.length === 0
               ? <Text color="ink.500">生成完成后，章节版本会出现在这里。</Text>
               : (
                 <VStack align="stretch" spacing={3}>
-                  {versions.map((version) => (
+                  {selectedVersions.map((version) => (
                     <Card key={version.id} variant="outline">
                       <CardBody>
                         <HStack align="flex-start" justify="space-between" gap={4}>

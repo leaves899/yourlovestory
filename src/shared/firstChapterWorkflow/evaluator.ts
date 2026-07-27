@@ -33,7 +33,7 @@ function nonBlank(value: string | null | undefined): boolean {
   return Boolean(value?.trim())
 }
 
-function firstVolume(
+export function selectFirstChapterVolume(
   volumes: Volume[],
   chapterOutlines: ChapterOutline[],
   targetChapterOutlineId?: string,
@@ -55,7 +55,7 @@ function volumeOutlineFor(
   return outlines.find((outline) => outline.volume_id === volume.id) ?? null
 }
 
-function firstChapter(
+export function selectFirstChapterOutline(
   outlines: ChapterOutline[],
   volume: Volume | null,
   targetChapterOutlineId?: string,
@@ -203,13 +203,13 @@ export function evaluateFirstChapterWorkflow(
   input: FirstChapterWorkflowInput,
 ): FirstChapterWorkflowSnapshot {
   const protagonist = protagonistOf(input.characters)
-  const volume = firstVolume(
+  const volume = selectFirstChapterVolume(
     input.volumes,
     input.chapterOutlines,
     input.targetChapterOutlineId,
   )
   const volumeOutline = volumeOutlineFor(volume, input.volumeOutlines)
-  const chapterOutline = firstChapter(
+  const chapterOutline = selectFirstChapterOutline(
     input.chapterOutlines,
     volume,
     input.targetChapterOutlineId,

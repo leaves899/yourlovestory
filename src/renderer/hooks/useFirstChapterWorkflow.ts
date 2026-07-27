@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   evaluateFirstChapterWorkflow,
+  selectFirstChapterOutline,
+  selectFirstChapterVolume,
   type FirstChapterWorkflowSnapshot,
 } from '../../shared/firstChapterWorkflow'
 import { useNarrativeStore } from '../stores/narrativeStore'
-import { useTaskStore } from '../stores/taskStore'
+import { useTaskStore, versionsForChapterOutline } from '../stores/taskStore'
 import { useWorkbenchStore } from '../stores/workbenchStore'
 
 interface WorkflowOptions {
@@ -19,6 +21,21 @@ export function useFirstChapterWorkflow(
   const taskState = useTaskStore()
   const narrative = useNarrativeStore()
   const [credentialConfigured, setCredentialConfigured] = useState(false)
+  const workflowVolume = useMemo(() => selectFirstChapterVolume(
+    workbench.volumes,
+    workbench.chapterOutlines,
+    options.targetChapterOutlineId,
+  ), [options.targetChapterOutlineId, workbench.chapterOutlines, workbench.volumes])
+  const workflowChapterOutline = useMemo(() => selectFirstChapterOutline(
+    workbench.chapterOutlines,
+    workflowVolume,
+    options.targetChapterOutlineId,
+  ), [options.targetChapterOutlineId, workbench.chapterOutlines, workflowVolume])
+  const workflowVersions = useMemo(() => versionsForChapterOutline(
+    taskState.tasks,
+    taskState.versions,
+    workflowChapterOutline?.id,
+  ), [taskState.tasks, taskState.versions, workflowChapterOutline?.id])
 
   useEffect(() => {
     const projectId = workbench.currentProject?.id
@@ -64,14 +81,14 @@ export function useFirstChapterWorkflow(
     volumes: workbench.volumes,
     volumeOutlines: workbench.volumeOutlines,
     chapterOutlines: workbench.chapterOutlines,
-    chapterVersions: taskState.versions,
+    chapterVersions: workflowVersions,
     modelCredentialConfigured: credentialConfigured,
     modelEndpointValid: options.endpointValid ?? true,
     generationTaskRunning: taskState.tasks.some((task) =>
       task.task_type === 'chapter-generation' &&
       (task.status === 'pending' || task.status === 'running'),
     ),
-    factCheckFindings: taskState.versions.flatMap((version) => version.fact_check.findings),
+    factCheckFindings: workflowVersions.flatMap((version) => version.fact_check.findings),
     memoryProposalCount: narrative.proposals.length,
     foreshadowProposalCount: narrative.foreshadows.filter((item) => item.status === 'suggested').length,
     narrativeProposalFailures: narrative.proposalFailures,
@@ -83,7 +100,7 @@ export function useFirstChapterWorkflow(
     options.endpointValid,
     options.targetChapterOutlineId,
     taskState.tasks,
-    taskState.versions,
+    workflowVersions,
     workbench.chapterOutlines,
     workbench.characters,
     workbench.config,
