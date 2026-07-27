@@ -68,6 +68,7 @@ function toFactCheck(value: JsonObject): FactCheckReport {
       evidence: finding.evidence,
       status: finding.status as FactCheckFindingStatus,
       severity: finding.severity as FactCheckSeverity,
+      suggestion: typeof finding.suggestion === 'string' ? finding.suggestion : undefined,
     }
   })
   return { passed: value.passed, summary: value.summary, findings }
@@ -82,6 +83,7 @@ function toFactCheckJson(report: FactCheckReport): JsonObject {
       status: finding.status,
       severity: finding.severity,
       evidence: finding.evidence,
+      suggestion: finding.suggestion ?? null,
     })),
   }
 }

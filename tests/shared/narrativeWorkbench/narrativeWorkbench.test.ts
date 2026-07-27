@@ -100,6 +100,27 @@ describe('narrative workbench', () => {
     expect(result.proposals.length).toBeGreaterThan(0)
   })
 
+  test('reuses memory proposals for the same source version', async () => {
+    const { projectId, chapterId } = createChapter(workbench)
+    const version = workbench.chapterVersions.create({
+      chapter_id: chapterId,
+      content: 'A first event happened.',
+      summary: 'First event.',
+      fact_check: { passed: true, summary: 'Supported.', findings: [] },
+    })
+    const first = await workbench.narrative.extractMemoryProposals(projectId, chapterId, {
+      source_version_id: version.id,
+    })
+    const second = await workbench.narrative.extractMemoryProposals(projectId, chapterId, {
+      source_version_id: version.id,
+    })
+
+    expect(second.proposals.map((proposal) => proposal.id).sort()).toEqual(
+      first.proposals.map((proposal) => proposal.id).sort(),
+    )
+    expect(workbench.narrative.listMemoryProposals(projectId)).toHaveLength(first.proposals.length)
+  })
+
   test('persists foreshadow suggestions and enforces the state machine', async () => {
     const { projectId, chapterId } = createChapter(workbench)
     const result = await workbench.narrative.suggestForeshadows(projectId, chapterId, {
@@ -118,6 +139,16 @@ describe('narrative workbench', () => {
       workbench.narrative.transitionForeshadow(projectId, suggestion.id, 'paid_off'),
     ).toThrow('Invalid Foreshadow status transition')
     expect(workbench.narrative.listForeshadowEvents(projectId, suggestion.id)).toHaveLength(2)
+  })
+
+  test('reuses foreshadow proposals for the same chapter', async () => {
+    const { projectId, chapterId } = createChapter(workbench)
+    const first = await workbench.narrative.suggestForeshadows(projectId, chapterId)
+    const second = await workbench.narrative.suggestForeshadows(projectId, chapterId)
+
+    expect(second.suggestions.map((item) => item.id)).toEqual(
+      first.suggestions.map((item) => item.id),
+    )
   })
 
   test('toggles skills and creates a revision with a block diff', async () => {

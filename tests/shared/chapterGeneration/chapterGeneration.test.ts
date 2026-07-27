@@ -28,6 +28,7 @@ function factCheck(passed: boolean): FactCheckReport {
         status: passed ? 'supported' : 'unclear',
         severity: passed ? 'info' : 'warning',
         evidence: passed ? '章节关键事件可在大纲中找到' : '需要人工核对',
+        suggestion: passed ? '保持当前表述' : '对照大纲修订相关段落',
       },
     ],
   }
@@ -188,6 +189,7 @@ describe('chapter generation repositories and domain service', () => {
     expect(result.version?.status).toBe('review')
     expect(result.version?.content).toBe('正文第一段正文第二段')
     expect(result.version?.fact_check.passed).toBe(true)
+    expect(result.version?.fact_check.findings[0].suggestion).toBe('保持当前表述')
     expect(stages).toEqual(['body', 'summary', 'fact_check', 'saving', 'review'])
     expect(chunks).toContain('正文第一段')
     expect(checkpoints).toContain('review')

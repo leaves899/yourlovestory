@@ -337,6 +337,16 @@ export class NarrativeWorkbenchService {
     options: MemoryExtractionOptions = {},
   ): Promise<MemoryExtractionResult> {
     const chapter = this.requireChapter(projectId, chapterId)
+    const existing = this.options.stores.memories
+      .listProposalsByChapter(projectId, chapterId)
+      .filter((proposal) =>
+        options.source_version_id
+          ? proposal.source_version_id === options.source_version_id
+          : proposal.source_version_id === null,
+      )
+    if (existing.length > 0) {
+      return { proposals: existing, used_fallback: false, error: null }
+    }
     const content = options.content ?? chapter.content
     const signal = signalFrom(options)
     let parsed: ParsedMemoryProposal[] = []
@@ -411,6 +421,12 @@ export class NarrativeWorkbenchService {
     options: ForeshadowSuggestionOptions = {},
   ): Promise<ForeshadowSuggestionResult> {
     const chapter = this.requireChapter(projectId, chapterId)
+    const existing = this.options.stores.foreshadows
+      .listByProject(projectId)
+      .filter((item) => item.metadata.source_chapter_id === chapterId)
+    if (existing.length > 0) {
+      return { suggestions: existing, used_fallback: false, error: null }
+    }
     const content = options.content ?? chapter.content
     const endingHook = options.ending_hook ?? ''
     const signal = signalFrom(options)
