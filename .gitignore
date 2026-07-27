@@ -31,5 +31,9 @@ electron_out.txt
 # Build outputs
 dist/
 release/
+!docs/release/
+!docs/release/**
+!tests/release/
+!tests/release/**
 coverage/
 test-results/

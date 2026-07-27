@@ -6,7 +6,17 @@ yourcrush 将日常恋爱记录、碎片日记和长篇小说工作台放在同�
 
 项目当前仍在持续迭代中。旧的 Crush、Day 和 Fragment 功能继续保留，新功能集中在长篇创作工作台。
 
-[GitHub 仓库](https://github.com/leaves899/yourlovestory) | [项目文档](docs/) | [贡献指南](CONTRIBUTING.md) | [安全说明](SECURITY.md) | [MIT 许可证](LICENSE)
+[GitHub 仓库](https://github.com/leaves899/yourlovestory) | [项目文档](docs/) | [版本策略](docs/release/versioning.md) | [Changelog](CHANGELOG.md) | [发布流程](docs/release/release-process.md) | [安全说明](SECURITY.md) | [MIT 许可证](LICENSE)
+
+## 发布状态
+
+项目当前为 **Alpha**，尚未达到 Stable。应用版本只取自 `package.json.version`；
+`package-lock.json`、Git tag 和 Release metadata 由自动检查保持一致。Stable 发布仍受
+Issue #25 的三平台 packaged Electron smoke tests、签名和 macOS notarization 状态约束。
+
+当前 Alpha 只支持 `package.json` 指定的最新预发布版本，不承诺旧预发布版本的长期
+维护。下载构建产物时，应同时下载 `SHA256SUMS.txt`，按
+[发布流程中的验证说明](docs/release/release-process.md#产物验证)核对 SHA-256。
 
 ## 功能概览
 
@@ -135,6 +145,9 @@ Windows 下，`.runtime/` 是本项目独立的 Node.js 环境目录，不会提
 | npm run test:e2e | 运行 Playwright 测试 |
 | npm run lint | 运行 ESLint |
 | npm run lint:fix | 自动修复可修复的 ESLint 问题 |
+| npm run check:version | 校验 package、lockfile、安全策略、changelog 和 Git tag 版本 |
+| npm run test:release | 运行版本与校验和工具测试 |
+| npm run release:checksums -- \<directory\> | 为发布目录生成 `SHA256SUMS.txt` |
 | npx tsc --noEmit -p tsconfig.main.json | 检查主进程、shared 和 agent 类型 |
 | npx tsc --noEmit -p tsconfig.json | 检查 renderer 类型 |
 | npm run package:win | 构建 Windows 安装包 |
