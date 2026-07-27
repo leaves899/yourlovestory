@@ -25,9 +25,9 @@ test.describe('首次上手体验', () => {
   })
 
   test('新用户打开应用时默认进入长篇工作台', async ({ page }) => {
-    await expect(page).toHaveURL(/#\/workbench\/projects$/)
+    await expect(page).toHaveURL(/#\/workbench\/first-chapter$/)
     await expect(page.getByTestId('workbench-shell')).toBeVisible()
-    await expect(page.getByTestId('project-name-input')).toBeVisible()
+    await expect(page.getByTestId('wizard-project-name')).toBeVisible()
   })
 
   test('旧恋爱日记入口仍会进入 onboarding', async ({ page }) => {

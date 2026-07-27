@@ -11,7 +11,7 @@ test.describe('真实 Electron 主进程', () => {
   test.beforeAll(async () => {
     userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'yourcrush-electron-e2e-'))
     application = await electron.launch({
-      args: [path.resolve('.')],
+      args: ['--disable-gpu', path.resolve('.')],
       cwd: path.resolve('.'),
       env: {
         ...process.env,
@@ -40,7 +40,7 @@ test.describe('真实 Electron 主进程', () => {
   })
 
   test('preload、SQLite、项目、角色和模板资源形成真实闭环', async () => {
-    await expect(page).toHaveURL(/#\/workbench\/projects$/)
+    await expect(page).toHaveURL(/#\/workbench\/first-chapter$/)
     await expect(page.getByTestId('workbench-shell')).toBeVisible()
 
     const preloadReady = await page.evaluate(() => {
@@ -51,6 +51,7 @@ test.describe('真实 Electron 主进程', () => {
     })
     expect(preloadReady).toBe(true)
 
+    await page.goto('http://localhost:3000/#/workbench/projects')
     await page.getByTestId('project-name-input').fill('真实主进程项目')
     await page.getByTestId('project-slug-input').fill('real-electron-project')
     await page.getByTestId('create-project-button').click()
