@@ -1,4 +1,5 @@
 import type { LlmConfigInput } from '../../agent/llm'
+import { normalizeLlmBaseUrl } from '../../agent/llm/config'
 import type { JsonObject } from '../database'
 import type { StartTaskInput, TaskManager } from '../tasks'
 import { isRecord, readString, type IpcRegistry } from './shared'
@@ -32,7 +33,7 @@ function parseLlmConfig(value: unknown): LlmConfigInput {
   if (!isRecord(value)) throw new Error('llm config is required')
   return {
     provider: readOptionalString(value.provider),
-    baseUrl: readString(value.baseUrl, 'llm.baseUrl'),
+    baseUrl: normalizeLlmBaseUrl(readString(value.baseUrl, 'llm.baseUrl')),
     model: readString(value.model, 'llm.model'),
     contextBudget: readOptionalPositiveInteger(value.contextBudget),
     maxOutputTokens: readOptionalPositiveInteger(value.maxOutputTokens),

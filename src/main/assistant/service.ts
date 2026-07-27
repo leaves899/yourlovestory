@@ -6,6 +6,7 @@ import type {
   DangerousOperationRequest,
 } from '../../agent/permissions'
 import type { LlmConfigInput } from '../../agent/llm'
+import { normalizeLlmBaseUrl } from '../../agent/llm/config'
 import { sanitizeErrorMessage, sanitizeSensitiveData } from '../../shared/security/sanitizeSensitiveData'
 import {
   isJsonValue,
@@ -209,7 +210,11 @@ export class AssistantService {
     if (session.status !== 'active') throw new Error(`Chat session is archived: ${session.id}`)
     if (!input.prompt.trim()) throw new Error('prompt is required')
 
-    const runtime = await this.ensureRuntime(session, input.llm, input.systemPrompt)
+    const llm: LlmConfigInput = {
+      ...input.llm,
+      baseUrl: normalizeLlmBaseUrl(input.llm.baseUrl),
+    }
+    const runtime = await this.ensureRuntime(session, llm, input.systemPrompt)
     if (runtime.activeController) throw new Error(`Chat session is busy: ${session.id}`)
 
     const controller = new AbortController()

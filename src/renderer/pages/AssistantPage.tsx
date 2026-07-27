@@ -38,6 +38,10 @@ import {
 import type { AssistantEvent } from '../../main/assistant'
 import type { RendererChatMessage as ChatMessage, RendererChatSession as ChatSession } from '../types/assistant'
 import type { Project } from '../../shared/novelProject'
+import {
+  inspectLlmEndpoint,
+  LlmEndpointSecurityNotice,
+} from '../components/LlmEndpointSecurityNotice'
 
 interface LlmForm {
   baseUrl: string
@@ -101,6 +105,7 @@ function AssistantPage() {
     () => sessions.find((session) => session.id === sessionId) ?? null,
     [sessionId, sessions],
   )
+  const endpointSecurity = inspectLlmEndpoint(llm.baseUrl)
 
   const loadSession = useCallback(async (nextSessionId: string): Promise<void> => {
     const response = await window.electronAPI.getAssistantSession(nextSessionId)
@@ -269,6 +274,10 @@ function AssistantPage() {
 
   const sendPrompt = async (): Promise<void> => {
     if (!sessionId || !input.trim() || busy) return
+    if (!endpointSecurity.valid) {
+      setError(endpointSecurity.message)
+      return
+    }
     if (!llm.model.trim()) {
       setError('请先填写模型名称')
       return
@@ -445,7 +454,7 @@ function AssistantPage() {
             <Divider my={4} />
             <HStack align="flex-end">
               <Textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="告诉 Agent 你想构思、整理或修改什么。" resize="vertical" minH="92px" onKeyDown={(event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) void sendPrompt() }} />
-              <IconButton aria-label="发送提示" icon={<FaPaperPlane />} colorScheme="cinnabar" isDisabled={!input.trim() || busy} onClick={() => void sendPrompt()} />
+              <IconButton aria-label="发送提示" icon={<FaPaperPlane />} colorScheme="cinnabar" isDisabled={!input.trim() || busy || !endpointSecurity.valid} onClick={() => void sendPrompt()} />
             </HStack>
             <Text fontSize="xs" color="ink.500" mt={2}>Ctrl 或 Command 加 Enter 发送。涉及写入、确认或锁定的操作会先请求确认。</Text>
           </CardBody>
@@ -461,6 +470,7 @@ function AssistantPage() {
                 <FormLabel>兼容接口地址</FormLabel>
                 <Input value={llm.baseUrl} onChange={(event) => setLlm((current) => ({ ...current, baseUrl: event.target.value }))} />
               </FormControl>
+              <LlmEndpointSecurityNotice baseUrl={llm.baseUrl} />
               <FormControl>
                 <FormLabel>模型名称</FormLabel>
                 <Input value={llm.model} onChange={(event) => setLlm((current) => ({ ...current, model: event.target.value }))} placeholder="填写模型名称" />
