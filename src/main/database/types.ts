@@ -15,5 +15,6 @@ export interface SqliteDatabase {
   exec(source: string): void
   pragma(source: string, options?: { simple?: boolean }): unknown
   transaction<T>(callback: () => T): () => T
+  backup(filename: string): Promise<void>
   close(): void
 }

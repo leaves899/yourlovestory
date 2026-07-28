@@ -1,5 +1,7 @@
 export * from './database'
 export * from './json'
+export * from './lifecycle'
 export * from './migrations'
 export * from './repositories'
+export * from './restore'
 export * from './types'
