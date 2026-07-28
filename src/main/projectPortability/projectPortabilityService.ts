@@ -27,7 +27,6 @@ import {
 } from '../../shared/projectPortability'
 import {
   inspectPortableConfiguration,
-  normalizeConfigurationKey,
   sanitizePortableConfiguration,
 } from '../../shared/security/configCredentialSafety'
 import { normalizeModelEndpoint } from '../../shared/security/urlSecurity'
@@ -104,12 +103,23 @@ export interface BuiltProjectArchive {
 }
 
 function isJsonValue(value: unknown): value is JsonValue {
-  if (value === null) return true
-  if (typeof value === 'string' || typeof value === 'boolean') return true
-  if (typeof value === 'number') return Number.isFinite(value)
-  if (Array.isArray(value)) return value.every(isJsonValue)
-  if (typeof value !== 'object') return false
-  return Object.values(value).every(isJsonValue)
+  const pending: unknown[] = [value]
+  while (pending.length > 0) {
+    const current = pending.pop()
+    if (
+      current === null
+      || typeof current === 'string'
+      || typeof current === 'boolean'
+      || (typeof current === 'number' && Number.isFinite(current))
+    ) continue
+    if (Array.isArray(current)) {
+      for (const entry of current) pending.push(entry)
+      continue
+    }
+    if (typeof current !== 'object') return false
+    for (const entry of Object.values(current)) pending.push(entry)
+  }
+  return true
 }
 
 function parseJsonColumn(value: unknown): JsonValue {
@@ -439,42 +449,6 @@ export class ProjectPortabilityService {
     ).get(projectId)?.count ?? 0
   }
 
-  private normalizeConfigurationEndpoints(
-    value: JsonValue,
-    mode: 'export' | 'import',
-  ): JsonValue {
-    if (Array.isArray(value)) {
-      return value.map((entry) => this.normalizeConfigurationEndpoints(entry, mode))
-    }
-    if (value === null || typeof value !== 'object') return value
-    const normalized: Record<string, JsonValue> = {}
-    for (const [key, entry] of Object.entries(value)) {
-      const normalizedKey = normalizeConfigurationKey(key)
-      if (normalizedKey === 'llmbaseurl' || normalizedKey === 'baseurl') {
-        if (typeof entry !== 'string' || entry.length === 0) {
-          throw portabilityError(
-            mode === 'export' ? 'PROJECT_EXPORT_FAILED' : 'PROJECT_IMPORT_INVALID',
-          )
-        }
-        let endpoint: string
-        try {
-          endpoint = normalizeModelEndpoint(entry).normalized
-        } catch {
-          throw portabilityError(
-            mode === 'export' ? 'PROJECT_EXPORT_FAILED' : 'PROJECT_IMPORT_INVALID',
-          )
-        }
-        if (mode === 'import' && endpoint !== entry) {
-          throw portabilityError('PROJECT_IMPORT_INVALID')
-        }
-        normalized[key] = endpoint
-      } else {
-        normalized[key] = this.normalizeConfigurationEndpoints(entry, mode)
-      }
-    }
-    return normalized
-  }
-
   private normalizeLlmEndpoints(
     payload: ProjectArchivePayloadV1,
     mode: 'export' | 'import',
@@ -497,12 +471,7 @@ export class ProjectPortabilityService {
       if (mode === 'import' && normalized !== baseUrl) {
         throw portabilityError('PROJECT_IMPORT_INVALID')
       }
-      row.base_url = normalized
-    }
-    const settings = payload.project_configs[0]?.settings_json
-    if (settings !== undefined) {
-      payload.project_configs[0].settings_json =
-        this.normalizeConfigurationEndpoints(settings, mode)
+      if (mode === 'export') row.base_url = normalized
     }
   }
 
@@ -520,11 +489,15 @@ export class ProjectPortabilityService {
     let plaintextCredentials = 0
     let credentialReferences = 0
     const sanitizeConfig = (value: JsonValue): JsonValue => {
-      const sanitized = sanitizePortableConfiguration(value)
-      plaintextCredentials += sanitized.removedPlaintextCredentials
-      credentialReferences += sanitized.removedCredentialReferences
-      localUris += sanitized.removedLocalPaths
-      return sanitized.value
+      try {
+        const sanitized = sanitizePortableConfiguration(value)
+        plaintextCredentials += sanitized.removedPlaintextCredentials
+        credentialReferences += sanitized.removedCredentialReferences
+        localUris += sanitized.removedLocalPaths
+        return sanitized.value
+      } catch {
+        throw portabilityError('PROJECT_EXPORT_FAILED')
+      }
     }
     for (const config of payload.project_configs) {
       config.settings_json = sanitizeConfig(config.settings_json)
@@ -577,9 +550,12 @@ export class ProjectPortabilityService {
       payload.project_configs[0].settings_json,
       ...payload.project_skills.map((skill) => skill.config),
     ]) {
-      if (!inspectPortableConfiguration(value).safe) {
-        throw portabilityError('PROJECT_IMPORT_INVALID')
+      try {
+        if (inspectPortableConfiguration(value).safe) continue
+      } catch {
+        // All configuration walker failures map to the stable import contract below.
       }
+      throw portabilityError('PROJECT_IMPORT_INVALID')
     }
     this.normalizeLlmEndpoints(payload, 'import')
     const ids = new Map<ProjectArchiveCollection, Set<string>>()

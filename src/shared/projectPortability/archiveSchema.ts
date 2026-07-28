@@ -360,19 +360,38 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
   return actual.length === keys.length && actual.every((key) => keys.includes(key))
 }
 
-function isBoundedJson(value: unknown, depth = 0): boolean {
-  if (depth > 6) return false
-  if (value === null || typeof value === 'boolean') return true
-  if (typeof value === 'number') return Number.isFinite(value) && Math.abs(value) <= 1e15
-  if (typeof value === 'string') return value.length <= 2_000_000
-  if (Array.isArray(value)) {
-    return value.length <= 10_000 && value.every((item) => isBoundedJson(item, depth + 1))
+function isBoundedJson(value: unknown): boolean {
+  const pending: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }]
+  while (pending.length > 0) {
+    const current = pending.pop()
+    if (!current || current.depth > 6) return false
+    if (current.value === null || typeof current.value === 'boolean') continue
+    if (typeof current.value === 'number') {
+      if (!Number.isFinite(current.value) || Math.abs(current.value) > 1e15) return false
+      continue
+    }
+    if (typeof current.value === 'string') {
+      if (current.value.length > 2_000_000) return false
+      continue
+    }
+    if (Array.isArray(current.value)) {
+      if (current.value.length > 10_000) return false
+      for (const item of current.value) {
+        pending.push({ value: item, depth: current.depth + 1 })
+      }
+      continue
+    }
+    if (!isPlainRecord(current.value)) return false
+    const entries = Object.entries(current.value)
+    if (
+      entries.length > 2_000
+      || entries.some(([key]) => key.length < 1 || key.length > 128)
+    ) return false
+    for (const [, item] of entries) {
+      pending.push({ value: item, depth: current.depth + 1 })
+    }
   }
-  if (!isPlainRecord(value)) return false
-  const keys = Object.keys(value)
-  return keys.length <= 2_000
-    && keys.every((key) => key.length >= 1 && key.length <= 128)
-    && Object.values(value).every((item) => isBoundedJson(item, depth + 1))
+  return true
 }
 
 function isValidArchiveDate(value: unknown): value is string {
