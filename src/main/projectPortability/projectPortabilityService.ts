@@ -5,9 +5,12 @@ import {
   validateProjectArchive,
 } from '../../shared/projectPortability/archiveSchema'
 import {
+  canonicalizeProjectArchiveWarnings,
+  PROJECT_ARCHIVE_MAX_BYTES,
   PROJECT_ARCHIVE_FORMAT,
   PROJECT_ARCHIVE_VERSION,
   portabilityError,
+  projectArchiveWarningMessage,
   sha256,
   stableStringify,
   type ProjectArchiveCollection,
@@ -79,6 +82,7 @@ interface ProjectRow {
 export interface ProjectPortabilityServiceOptions {
   appVersion: string
   schemaVersion: number
+  archiveMaxBytes?: number
   faultInjection?: (stage: string) => void
 }
 
@@ -153,11 +157,21 @@ function nullableStringField(row: ProjectArchiveRecord, field: string): string |
   return value
 }
 
-function isLocalSourceUri(uri: string): boolean {
-  return /^[a-zA-Z]:[\\/]/.test(uri)
-    || uri.startsWith('/')
-    || uri.startsWith('\\\\')
-    || /^file:/i.test(uri)
+function portableSourceUri(uri: string): string | null {
+  try {
+    const parsed = new URL(uri)
+    if (
+      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+      || parsed.username.length > 0
+      || parsed.password.length > 0
+      || parsed.hostname.length === 0
+    ) return null
+    parsed.search = ''
+    parsed.hash = ''
+    return parsed.toString()
+  } catch {
+    return null
+  }
 }
 
 function normalizeSlug(value: string): string {
@@ -176,7 +190,7 @@ export class ProjectPortabilityService {
     private readonly options: ProjectPortabilityServiceOptions,
   ) {}
 
-  public buildArchive(projectId: string): BuiltProjectArchive {
+  public async buildArchive(projectId: string): Promise<BuiltProjectArchive> {
     const project = this.database
       .prepare<ProjectRow>('SELECT id, slug, name FROM projects WHERE id = ?')
       .get(projectId)
@@ -185,8 +199,16 @@ export class ProjectPortabilityService {
     const payload = this.readPayload(projectId)
     const warnings = this.sanitizeExternalLinks(payload)
     warnings.push(
-      { code: 'credentials-excluded', count: payload.llm_configs.length, message: '模型凭据未导出。' },
-      { code: 'runtime-history-excluded', count: 0, message: '任务、对话和运行历史未导出。' },
+      {
+        code: 'credentials-excluded',
+        count: payload.llm_configs.length,
+        message: projectArchiveWarningMessage('credentials-excluded', payload.llm_configs.length),
+      },
+      {
+        code: 'runtime-history-excluded',
+        count: 0,
+        message: projectArchiveWarningMessage('runtime-history-excluded', 0),
+      },
     )
     const payloadSha256 = sha256(stableStringify(payload))
     const archive: ProjectArchiveV1 = {
@@ -204,7 +226,15 @@ export class ProjectPortabilityService {
       },
       payload,
     }
+    await this.validateArchive(archive)
     const json = `${stableStringify(archive)}\n`
+    const archiveMaxBytes = Math.min(
+      this.options.archiveMaxBytes ?? PROJECT_ARCHIVE_MAX_BYTES,
+      PROJECT_ARCHIVE_MAX_BYTES,
+    )
+    if (Buffer.byteLength(json) > archiveMaxBytes) {
+      throw portabilityError('PROJECT_EXPORT_TOO_LARGE')
+    }
     return { archive, json, sha256: sha256(json), recordCounts: counts(payload) }
   }
 
@@ -216,11 +246,28 @@ export class ProjectPortabilityService {
       throw portabilityError('PROJECT_IMPORT_INVALID')
     }
     const archive = await validateProjectArchive(value)
+    await this.validateArchive(archive)
+    return archive
+  }
+
+  private async validateArchive(archive: ProjectArchiveV1): Promise<void> {
+    await validateProjectArchive(archive)
     if (sha256(stableStringify(archive.payload)) !== archive.manifest.payloadSha256) {
       throw portabilityError('PROJECT_IMPORT_CHECKSUM_MISMATCH')
     }
+    if (
+      archive.payload.projects.length !== 1
+      || archive.manifest.sourceProjectId !== archive.payload.projects[0].id
+      || archive.manifest.projectName !== archive.payload.projects[0].name
+    ) {
+      throw portabilityError('PROJECT_IMPORT_INVALID')
+    }
+    try {
+      archive.manifest.warnings = canonicalizeProjectArchiveWarnings(archive.manifest.warnings)
+    } catch {
+      throw portabilityError('PROJECT_IMPORT_INVALID')
+    }
     this.validateReferences(archive.payload)
-    return archive
   }
 
   public importArchive(archive: ProjectArchiveV1): ProjectImportResult {
@@ -369,9 +416,10 @@ export class ProjectPortabilityService {
     for (const material of payload.source_materials) {
       if (material.fragment_id !== null) fragmentLinks += 1
       material.fragment_id = null
-      if (typeof material.uri === 'string' && isLocalSourceUri(material.uri)) {
-        localUris += 1
-        material.uri = null
+      if (typeof material.uri === 'string') {
+        const portableUri = portableSourceUri(material.uri)
+        if (portableUri !== material.uri) localUris += 1
+        material.uri = portableUri
       }
     }
     for (const version of payload.chapter_versions) version.task_id = null
@@ -379,17 +427,17 @@ export class ProjectPortabilityService {
     if (crushLinks > 0) warnings.push({
       code: 'legacy-crush-links-removed',
       count: crushLinks,
-      message: `已断开 ${crushLinks} 个旧 Crush 关联。`,
+      message: projectArchiveWarningMessage('legacy-crush-links-removed', crushLinks),
     })
     if (fragmentLinks > 0) warnings.push({
       code: 'legacy-fragment-links-removed',
       count: fragmentLinks,
-      message: `已断开 ${fragmentLinks} 个旧 Fragment 关联。`,
+      message: projectArchiveWarningMessage('legacy-fragment-links-removed', fragmentLinks),
     })
     if (localUris > 0) warnings.push({
       code: 'local-source-path-omitted',
       count: localUris,
-      message: `已省略 ${localUris} 个本机素材路径，正文内容仍保留。`,
+      message: projectArchiveWarningMessage('local-source-path-omitted', localUris),
     })
     return warnings
   }
@@ -411,6 +459,75 @@ export class ProjectPortabilityService {
       }
       ids.set(table, set)
     }
+    const requireUnique = (
+      rows: readonly ProjectArchiveRecord[],
+      keyFor: (row: ProjectArchiveRecord) => string,
+    ): void => {
+      const seen = new Set<string>()
+      for (const row of rows) {
+        const key = keyFor(row)
+        if (seen.has(key)) throw portabilityError('PROJECT_IMPORT_CONFLICT')
+        seen.add(key)
+      }
+    }
+    const numberField = (row: ProjectArchiveRecord, field: string): number => {
+      const value = row[field]
+      if (typeof value !== 'number') throw portabilityError('PROJECT_IMPORT_INVALID')
+      return value
+    }
+    requireUnique(
+      payload.project_skills as unknown as ProjectArchiveRecord[],
+      (row) => stringField(row, 'skillName'),
+    )
+    requireUnique(payload.llm_configs, (row) => stringField(row, 'name'))
+    requireUnique(payload.volumes, (row) => String(numberField(row, 'volume_number')))
+    requireUnique(payload.volume_outlines, (row) => stringField(row, 'volume_id'))
+    requireUnique(
+      payload.chapter_outlines,
+      (row) => String(numberField(row, 'chapter_number')),
+    )
+    requireUnique(
+      payload.chapter_outlines,
+      (row) => `${stringField(row, 'volume_id')}:${numberField(row, 'sort_order')}`,
+    )
+    requireUnique(payload.chapters, (row) => String(numberField(row, 'chapter_number')))
+    requireUnique(
+      payload.chapter_revisions,
+      (row) => `${stringField(row, 'chapter_id')}:${numberField(row, 'revision_number')}`,
+    )
+    requireUnique(
+      payload.chapter_versions,
+      (row) => `${stringField(row, 'chapter_id')}:${numberField(row, 'version_number')}`,
+    )
+    for (const rows of [payload.chapter_revisions, payload.chapter_versions]) {
+      requireUnique(
+        rows.filter((row) => row.is_current === true),
+        (row) => stringField(row, 'chapter_id'),
+      )
+    }
+    const assertAcyclic = (
+      rows: readonly ProjectArchiveRecord[],
+      parentColumn: string,
+    ): void => {
+      const parents = new Map(
+        rows.map((row) => [
+          stringField(row, 'id'),
+          nullableStringField(row, parentColumn),
+        ]),
+      )
+      for (const start of parents.keys()) {
+        const path = new Set<string>()
+        let current: string | null = start
+        while (current !== null) {
+          if (path.has(current)) throw portabilityError('PROJECT_IMPORT_INVALID')
+          path.add(current)
+          current = parents.get(current) ?? null
+        }
+      }
+    }
+    assertAcyclic(payload.arcs, 'parent_arc_id')
+    assertAcyclic(payload.chapter_revisions, 'parent_revision_id')
+    assertAcyclic(payload.roadmap_items, 'parent_item_id')
     const requireRef = (
       table: ProjectArchiveCollection,
       row: ProjectArchiveRecord,
@@ -450,6 +567,13 @@ export class ProjectPortabilityService {
     for (const row of payload.chapter_revisions) {
       requireRef('chapter_revisions', row, 'chapter_id', 'chapters')
       requireRef('chapter_revisions', row, 'parent_revision_id', 'chapter_revisions', true)
+      const parentId = nullableStringField(row, 'parent_revision_id')
+      const parent = parentId === null
+        ? undefined
+        : payload.chapter_revisions.find((candidate) => candidate.id === parentId)
+      if (parent && parent.chapter_id !== row.chapter_id) {
+        throw portabilityError('PROJECT_IMPORT_INVALID')
+      }
     }
     for (const row of payload.chapter_versions) {
       requireRef('chapter_versions', row, 'chapter_id', 'chapters')
@@ -467,6 +591,14 @@ export class ProjectPortabilityService {
       for (const row of payload[table]) {
         requireRef(table, row, 'source_chapter_id', 'chapters', true)
         requireRef(table, row, 'source_version_id', 'chapter_versions', true)
+        const chapterId = nullableStringField(row, 'source_chapter_id')
+        const versionId = nullableStringField(row, 'source_version_id')
+        const version = versionId === null
+          ? undefined
+          : payload.chapter_versions.find((candidate) => candidate.id === versionId)
+        if (chapterId !== null && version && version.chapter_id !== chapterId) {
+          throw portabilityError('PROJECT_IMPORT_INVALID')
+        }
       }
     }
     for (const row of payload.roadmap_items) {
@@ -483,6 +615,14 @@ export class ProjectPortabilityService {
       }
       requireRef('relations', relation, 'source_entity_id', targetTable(sourceType))
       requireRef('relations', relation, 'target_entity_id', targetTable(targetType))
+      const sourceCharacterId = nullableStringField(relation, 'source_character_id')
+      const targetCharacterId = nullableStringField(relation, 'target_character_id')
+      if (
+        sourceCharacterId !== (sourceType === 'character' ? relation.source_entity_id : null)
+        || targetCharacterId !== (targetType === 'character' ? relation.target_entity_id : null)
+      ) {
+        throw portabilityError('PROJECT_IMPORT_INVALID')
+      }
     }
   }
 
@@ -540,7 +680,7 @@ export class ProjectPortabilityService {
     for (const row of result.source_materials) {
       row.fragment_id = null
       const uri = row.uri
-      if (typeof uri === 'string' && isLocalSourceUri(uri)) row.uri = null
+      if (typeof uri === 'string') row.uri = portableSourceUri(uri)
     }
     for (const row of result.characters) row.crush_slug = null
     optional(result.arcs, 'parent_arc_id', 'arcs')
