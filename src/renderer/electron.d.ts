@@ -107,6 +107,12 @@ import type {
   DatabaseStatus,
   RestoreExecutionResult,
 } from '../shared/backup/types'
+import type {
+  ProjectExportResult,
+  ProjectImportPreview,
+  ProjectImportResult,
+  ProjectPortabilityError,
+} from '../shared/projectPortability'
 
 interface ElectronAPI {
   // 日常写作
@@ -167,6 +173,25 @@ interface ElectronAPI {
   ) => Promise<{ success: boolean; data?: RestoreExecutionResult; error?: BackupError }>
   getDatabaseStatus: () => Promise<{ success: boolean; data?: DatabaseStatus; error?: BackupError }>
   onDatabaseStatusChanged: (listener: (status: DatabaseStatus) => void) => () => void
+  exportProject: (
+    projectId: string,
+  ) => Promise<{ success: boolean; data?: ProjectExportResult; error?: ProjectPortabilityError }>
+  inspectProjectImport: () => Promise<{
+    success: boolean
+    data?: { canceled: true } | { canceled: false; preview: ProjectImportPreview }
+    error?: ProjectPortabilityError
+  }>
+  commitProjectImport: (
+    importToken: string,
+    confirm: true,
+  ) => Promise<{ success: boolean; data?: ProjectImportResult; error?: ProjectPortabilityError }>
+  cancelProjectImport: (
+    importToken: string,
+  ) => Promise<{
+    success: boolean
+    data?: { canceled: true }
+    error?: ProjectPortabilityError
+  }>
 
   // 应用
   getAppInfo: () => Promise<any>

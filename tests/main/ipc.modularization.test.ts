@@ -33,6 +33,7 @@ import type { ChapterGenerationService } from '@/shared/chapterGeneration'
 import type { TaskManager } from '@/main/tasks'
 import type { LlmCredentialController } from '@/main/security/llmCredentialController'
 import type { DatabaseStatus } from '@/shared/backup/types'
+import type { ProjectPortabilityCoordinator } from '@/main/projectPortability'
 
 const EXPECTED_CHANNELS = [
   'app:checkUpdate',
@@ -85,6 +86,10 @@ const EXPECTED_CHANNELS = [
   'narrativeMemory:list',
   'narrativeMemory:proposals',
   'narrativeMemory:reject',
+  'projectPortability:cancelImport',
+  'projectPortability:commitImport',
+  'projectPortability:export',
+  'projectPortability:inspectImport',
   'relationship:advancePhase',
   'relationship:detectSignals',
   'relationship:progress',
@@ -286,6 +291,65 @@ describe('modular IPC registration', () => {
     })
     expect(restoreBackup).not.toHaveBeenCalled()
     expect(audit).toHaveBeenCalledWith({ channel: 'backup:restore', outcome: 'failed' })
+  })
+
+  it('rejects renderer paths, missing confirmation, untrusted senders, and recovery state', async () => {
+    const coordinator = {
+      commitImport: jest.fn(async () => ({ projectId: 'new-project' })),
+      cancelImport: jest.fn(async () => ({ canceled: true as const })),
+    } as unknown as ProjectPortabilityCoordinator
+    const trustedEvent = { senderFrame: { url: 'file:///app/index.html' } }
+    const readyStatus: DatabaseStatus = {
+      state: 'ready',
+      integrity: 'ok',
+      schemaVersion: 8,
+      message: null,
+      lastBackupAt: null,
+      backupAllowed: true,
+      backupEligibility: 'safe',
+      backupBlockedReason: null,
+    }
+    let status = readyStatus
+    setupIPC({
+      projectPortabilityCoordinator: coordinator,
+      getDatabaseStatus: () => status,
+    })
+
+    await expect(invoke('projectPortability:commitImport', {
+      importToken: 'opaque-token',
+      confirm: true,
+      path: 'C:\\renderer-controlled.json',
+    }, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'PROJECT_IMPORT_INVALID' },
+    })
+    await expect(invoke('projectPortability:commitImport', {
+      importToken: 'opaque-token',
+      confirm: false,
+    }, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'PROJECT_IMPORT_INVALID' },
+    })
+    await expect(invoke('projectPortability:cancelImport', {
+      importToken: 'opaque-token',
+    }, {
+      senderFrame: { url: 'https://untrusted.example/' },
+    })).resolves.toMatchObject({
+      success: false,
+      error: { code: 'PROJECT_IMPORT_INVALID' },
+    })
+    expect(coordinator.commitImport).not.toHaveBeenCalled()
+    expect(coordinator.cancelImport).not.toHaveBeenCalled()
+
+    status = { ...readyStatus, state: 'recovery-required' }
+    await expect(invoke('projectPortability:commitImport', {
+      importToken: 'opaque-token',
+      confirm: true,
+    }, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'DATABASE_RECOVERY_REQUIRED' },
+    })
+    expect(coordinator.commitImport).not.toHaveBeenCalled()
   })
 
   it('publishes live restore status and gates database-backed IPC after services close', async () => {

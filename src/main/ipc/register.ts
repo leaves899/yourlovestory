@@ -13,6 +13,7 @@ import type { CredentialService } from '../security/credentialService'
 import { LlmCredentialController } from '../security/llmCredentialController'
 import type { TaskManager } from '../tasks'
 import type { WorkbenchService } from '../workbench'
+import type { ProjectPortabilityCoordinator } from '../projectPortability'
 import { registerWorkbenchIPC } from '../workbench'
 import { registerAppIPC } from './app.ipc'
 import { registerBackupIPC } from './backup.ipc'
@@ -23,6 +24,7 @@ import { registerDayIPC } from './days.ipc'
 import { registerForeshadowIPC } from './foreshadow.ipc'
 import { registerFragmentIPC } from './fragments.ipc'
 import { registerMemoryIPC } from './memory.ipc'
+import { registerProjectPortabilityIPC } from './projectPortability.ipc'
 import { registerRelationshipIPC } from './relationships.ipc'
 import { registerRevisionIPC } from './revisions.ipc'
 import { registerSettingsIPC } from './settings.ipc'
@@ -47,6 +49,7 @@ export interface IpcSetupOptions {
   backupService?: BackupService
   getDatabaseStatus?: () => DatabaseStatus
   restoreBackup?: (id: string) => Promise<RestoreExecutionResult>
+  projectPortabilityCoordinator?: ProjectPortabilityCoordinator
 }
 
 export function setupIPC(options: IpcSetupOptions = {}): void {
@@ -137,4 +140,5 @@ export function setupIPC(options: IpcSetupOptions = {}): void {
     getStatus: getDatabaseStatus,
     restoreBackup: options.restoreBackup,
   })
+  registerProjectPortabilityIPC(ipc, options.projectPortabilityCoordinator)
 }

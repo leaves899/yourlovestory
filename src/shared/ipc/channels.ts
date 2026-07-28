@@ -42,6 +42,12 @@ export const IPC_CHANNELS = {
     checkUpdate: 'app:checkUpdate',
     quit: 'app:quit',
   },
+  projectPortability: {
+    export: 'projectPortability:export',
+    inspectImport: 'projectPortability:inspectImport',
+    commitImport: 'projectPortability:commitImport',
+    cancelImport: 'projectPortability:cancelImport',
+  },
   novelProject: {
     list: 'novelProject:list',
     current: 'novelProject:current',
@@ -117,4 +123,5 @@ export type IpcChannel =
   | (typeof IPC_CHANNELS.relationship)[keyof typeof IPC_CHANNELS.relationship]
   | (typeof IPC_CHANNELS.settings)[keyof typeof IPC_CHANNELS.settings]
   | (typeof IPC_CHANNELS.app)[keyof typeof IPC_CHANNELS.app]
+  | (typeof IPC_CHANNELS.projectPortability)[keyof typeof IPC_CHANNELS.projectPortability]
   | (typeof IPC_CHANNELS.novelProject)[keyof typeof IPC_CHANNELS.novelProject]
