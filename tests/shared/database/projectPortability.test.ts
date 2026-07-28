@@ -1,8 +1,15 @@
 import { initializeDatabase, type SqliteDatabase } from '../../../src/main/database'
+import { inspectPlaintextCredentialState } from '../../../src/main/backup/credentialSafety'
 import {
   ProjectPortabilityCoordinator,
   ProjectPortabilityService,
 } from '../../../src/main/projectPortability'
+import { createWorkbenchService } from '../../../src/main/workbench'
+import {
+  CredentialService,
+  type SafeStorageAdapter,
+} from '../../../src/main/security/credentialService'
+import { LlmCredentialController } from '../../../src/main/security/llmCredentialController'
 import {
   projectArchiveIntegritySha256,
   type ProjectArchiveCollection,
@@ -22,6 +29,14 @@ const CHARACTER_ID = 'character-source'
 const MATERIAL_ID = 'material-source'
 const TEST_SECRET = 'test-api-key-must-not-export'
 const LOCAL_PATH = 'C:\\Users\\private-user\\source.txt'
+
+class FakeSafeStorage implements SafeStorageAdapter {
+  public isEncryptionAvailable(): boolean { return true }
+  public encryptString(value: string): Buffer { return Buffer.from(`encrypted:${value}`, 'utf8') }
+  public decryptString(value: Buffer): string {
+    return value.toString('utf8').slice('encrypted:'.length)
+  }
+}
 
 function cloneArchive(archive: ProjectArchiveV1): ProjectArchiveV1 {
   return JSON.parse(JSON.stringify(archive)) as ProjectArchiveV1
@@ -464,6 +479,140 @@ describe('ProjectPortabilityService', () => {
     expect(database.pragma('foreign_key_check')).toEqual([])
   })
 
+  test('excludes migrated references, plaintext credentials, and config-local paths only', async () => {
+    const settings = {
+      theme: 'retained-setting',
+      llmBaseUrl: 'https://example.test/v1',
+      llmCredentialId: 'llm:project:old-project:secret-ref',
+      apiKey: 'portable-secret',
+      token: 'portable-token',
+      password: 'portable-password',
+      nested: {
+        credentialId: 'nested-secret-ref',
+        authorization: 'Bearer nested-secret',
+        workspace: 'C:\\Users\\private\\workspace',
+      },
+    }
+    database.prepare('UPDATE project_configs SET settings_json = ? WHERE project_id = ?')
+      .run(JSON.stringify(settings), PROJECT_ID)
+    database.prepare('UPDATE project_skills SET config_json = ? WHERE project_id = ?')
+      .run(JSON.stringify({
+        strict: true,
+        apiKeyCredentialId: 'skill-secret-ref',
+        cachePath: '/home/private/cache',
+      }), PROJECT_ID)
+    database.prepare('UPDATE chapters SET content = ? WHERE project_id = ?')
+      .run('小说正文中的 apiKey token password authorization 字样必须保留。', PROJECT_ID)
+
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const built = await service.buildArchive(PROJECT_ID)
+
+    for (const secret of [
+      'old-project',
+      'secret-ref',
+      'portable-secret',
+      'portable-token',
+      'portable-password',
+      'nested-secret',
+      'private\\workspace',
+      '/home/private/cache',
+      'llmCredentialId',
+      'apiKeyCredentialId',
+    ]) {
+      expect(built.json).not.toContain(secret)
+    }
+    expect(built.archive.payload.project_configs[0].settings_json).toEqual({
+      theme: 'retained-setting',
+      llmBaseUrl: 'https://example.test/v1',
+      nested: { workspace: null },
+    })
+    expect(built.archive.payload.project_skills[0].config).toEqual({
+      strict: true,
+      cachePath: null,
+    })
+    expect(built.json).toContain('小说正文中的 apiKey token password authorization 字样必须保留。')
+    expect(built.archive.manifest.warnings).toContainEqual(expect.objectContaining({
+      code: 'credentials-excluded',
+      count: 8,
+    }))
+    expect(built.archive.manifest.warnings).toContainEqual(expect.objectContaining({
+      code: 'local-source-path-omitted',
+      count: 3,
+    }))
+    expect(database.prepare<{ settings_json: string }>(
+      'SELECT settings_json FROM project_configs WHERE project_id = ?',
+    ).get(PROJECT_ID)?.settings_json).toBe(JSON.stringify(settings))
+  })
+
+  test('rejects recomputed archives that reintroduce credential state before preview or writes', async () => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const archive = cloneArchive((await service.buildArchive(PROJECT_ID)).archive)
+    archive.payload.project_configs[0].settings_json = {
+      apiKey: 'attacker-secret',
+      llmCredentialId: 'llm:project:old-install:reference',
+    }
+    archive.payload.project_skills[0].config = {
+      token: 'attacker-token',
+      file: 'file:///C:/private.txt',
+    }
+    refreshArchiveIntegrity(archive)
+    await expect(service.inspectArchiveJson(JSON.stringify(archive))).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_INVALID',
+    })
+
+    const sourceFile = path.join(temporaryDirectory, 'unsafe.yourcrush-project.json')
+    fs.writeFileSync(sourceFile, JSON.stringify(archive))
+    const coordinator = new ProjectPortabilityCoordinator(service, temporaryDirectory)
+    await expect(coordinator.inspectFile(sourceFile)).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_INVALID',
+    })
+    expect(database.prepare<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM projects',
+    ).get()?.count).toBe(1)
+    const safeFile = path.join(temporaryDirectory, 'safe.yourcrush-project.json')
+    fs.writeFileSync(safeFile, (await service.buildArchive(PROJECT_ID)).json)
+    const preview = await coordinator.inspectFile(safeFile)
+    expect(preview.credentialsExcluded).toBe(true)
+    await coordinator.cancelImport(preview.importToken)
+    await coordinator.dispose()
+  })
+
+  test('imports with backup-safe unbound credential state and an unconfigured status', async () => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const imported = service.importArchive(
+      await service.inspectArchiveJson((await service.buildArchive(PROJECT_ID)).json),
+    )
+    expect(inspectPlaintextCredentialState(database)).toMatchObject({
+      safeForUserBackup: true,
+      plaintextCredentialCount: 0,
+    })
+    const workbench = createWorkbenchService(database, { projectRoot: temporaryDirectory })
+    const credentialService = new CredentialService(
+      temporaryDirectory,
+      new FakeSafeStorage(),
+      'win32',
+    )
+    const controller = new LlmCredentialController({
+      userDataPath: temporaryDirectory,
+      database,
+      workbenchService: workbench,
+      credentialService,
+    })
+    expect(controller.status({ scope: 'project', projectId: imported.projectId })).toMatchObject({
+      success: true,
+      data: { configured: false, error: null },
+    })
+  })
+
   test('rejects checksum changes before writing', async () => {
     const service = new ProjectPortabilityService(database, {
       appVersion: '0.2.0-alpha.1',
@@ -891,6 +1040,92 @@ describe('ProjectPortabilityService', () => {
     expect(built.archive.payload.source_materials[0].uri).toBe('https://example.test/source')
     expect(Buffer.from(built.json, 'utf8').includes(Buffer.from('secret-token', 'utf8'))).toBe(false)
     expect(Buffer.from(built.json, 'utf8').includes(Buffer.from('private-fragment', 'utf8'))).toBe(false)
+  })
+
+  test.each([
+    'https://example.test/v1',
+    'http://localhost:11434/v1',
+    'http://127.0.0.1:1234/v1',
+    'http://[::1]:11434/v1',
+  ])('round-trips a safe canonical LLM endpoint: %s', async (baseUrl) => {
+    database.prepare('UPDATE llm_configs SET base_url = ? WHERE id = ?').run(baseUrl, LLM_ID)
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const built = await service.buildArchive(PROJECT_ID)
+    expect(built.archive.payload.llm_configs[0].base_url).toBe(baseUrl)
+    const imported = service.importArchive(await service.inspectArchiveJson(built.json))
+    expect(database.prepare<{ base_url: string }>(
+      'SELECT base_url FROM llm_configs WHERE project_id = ?',
+    ).get(imported.projectId)?.base_url).toBe(baseUrl)
+  })
+
+  test.each([
+    'http://remote.example.test/v1',
+    'file:///tmp/model',
+    'ftp://example.test/model',
+    'https://user:password@example.test/v1',
+    'https://example.test/v1#fragment',
+    'https:\\\\example.test\\v1',
+    'example.test/v1',
+    '',
+  ])('rejects an unsafe LLM endpoint during export and recomputed inspect: %s', async (baseUrl) => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const valid = cloneArchive((await service.buildArchive(PROJECT_ID)).archive)
+    valid.payload.llm_configs[0].base_url = baseUrl
+    refreshArchiveIntegrity(valid)
+    await expect(service.inspectArchiveJson(JSON.stringify(valid))).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_INVALID',
+    })
+
+    database.prepare('UPDATE llm_configs SET base_url = ? WHERE id = ?').run(baseUrl, LLM_ID)
+    await expect(service.buildArchive(PROJECT_ID)).rejects.toMatchObject({
+      code: 'PROJECT_EXPORT_FAILED',
+    })
+  })
+
+  test.each([
+    'file:///C:/private.txt',
+    'ftp://example.test/private',
+    'https://user:password@example.test/private',
+    'https://example.test/source?token=secret',
+    'https://example.test/source#private',
+    'C:\\Users\\private\\source.txt',
+  ])('rejects a non-canonical source URI during inspect: %s', async (uri) => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const archive = cloneArchive((await service.buildArchive(PROJECT_ID)).archive)
+    archive.payload.source_materials[0].uri = uri
+    refreshArchiveIntegrity(archive)
+    await expect(service.inspectArchiveJson(JSON.stringify(archive))).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_INVALID',
+    })
+    expect(database.prepare<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM projects',
+    ).get()?.count).toBe(1)
+  })
+
+  test.each([
+    'https://example.test/source',
+    'http://example.test/source',
+  ])('round-trips a canonical source URI: %s', async (uri) => {
+    database.prepare('UPDATE source_materials SET uri = ? WHERE id = ?').run(uri, MATERIAL_ID)
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const built = await service.buildArchive(PROJECT_ID)
+    expect(built.archive.payload.source_materials[0].uri).toBe(uri)
+    const imported = service.importArchive(await service.inspectArchiveJson(built.json))
+    expect(database.prepare<{ uri: string | null }>(
+      'SELECT uri FROM source_materials WHERE project_id = ?',
+    ).get(imported.projectId)?.uri).toBe(uri)
   })
 
   test('round-trips production-shaped SQLite defaults as canonical UTC timestamps', async () => {
