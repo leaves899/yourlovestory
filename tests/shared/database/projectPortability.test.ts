@@ -4,10 +4,14 @@ import {
   ProjectPortabilityService,
 } from '../../../src/main/projectPortability'
 import {
-  sha256,
-  stableStringify,
+  projectArchiveIntegritySha256,
+  type ProjectArchiveCollection,
   type ProjectArchiveV1,
 } from '../../../src/shared/projectPortability'
+import {
+  ARCHIVE_TABLES,
+  isArchiveTimestampColumn,
+} from '../../../src/shared/projectPortability/archiveSchema'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
@@ -23,8 +27,8 @@ function cloneArchive(archive: ProjectArchiveV1): ProjectArchiveV1 {
   return JSON.parse(JSON.stringify(archive)) as ProjectArchiveV1
 }
 
-function refreshPayloadChecksum(archive: ProjectArchiveV1): void {
-  archive.manifest.payloadSha256 = sha256(stableStringify(archive.payload))
+function refreshArchiveIntegrity(archive: ProjectArchiveV1): void {
+  archive.manifest.integritySha256 = projectArchiveIntegritySha256(archive)
 }
 
 function seed(database: SqliteDatabase): void {
@@ -494,14 +498,14 @@ describe('ProjectPortabilityService', () => {
 
     const duplicate = JSON.parse(JSON.stringify(original)) as ProjectArchiveV1
     duplicate.payload.characters.push({ ...duplicate.payload.characters[0] })
-    duplicate.manifest.payloadSha256 = sha256(stableStringify(duplicate.payload))
+    refreshArchiveIntegrity(duplicate)
     await expect(service.inspectArchiveJson(JSON.stringify(duplicate))).rejects.toMatchObject({
       code: 'PROJECT_IMPORT_CONFLICT',
     })
 
     const dangling = JSON.parse(JSON.stringify(original)) as ProjectArchiveV1
     dangling.payload.source_materials[0].character_id = 'missing-character'
-    dangling.manifest.payloadSha256 = sha256(stableStringify(dangling.payload))
+    refreshArchiveIntegrity(dangling)
     await expect(service.inspectArchiveJson(JSON.stringify(dangling))).rejects.toMatchObject({
       code: 'PROJECT_IMPORT_INVALID',
     })
@@ -615,19 +619,35 @@ describe('ProjectPortabilityService', () => {
     })
   })
 
-  test('binds manifest identity to payload and canonicalizes warning messages', async () => {
+  test('binds preview metadata and payload to archive integrity', async () => {
     const service = new ProjectPortabilityService(database, {
       appVersion: '0.2.0-alpha.1',
       schemaVersion: 8,
     })
     const original = JSON.parse((await service.buildArchive(PROJECT_ID)).json) as ProjectArchiveV1
-    for (const field of ['sourceProjectId', 'projectName'] as const) {
+    const mutations: Array<(archive: ProjectArchiveV1) => void> = [
+      (archive) => { archive.manifest.sourceProjectId = 'attacker-controlled' },
+      (archive) => { archive.manifest.projectName = 'attacker-controlled' },
+      (archive) => { archive.manifest.exportedAt = '2026-02-01T00:00:00.000Z' },
+      (archive) => { archive.manifest.appVersion = 'attacker-controlled' },
+      (archive) => { archive.manifest.databaseSchemaVersion += 1 },
+      (archive) => { archive.manifest.exclusions.push('attacker-controlled') },
+      (archive) => { archive.manifest.warnings[0].count += 1 },
+      (archive) => { archive.payload.projects[0].name = 'attacker-controlled' },
+    ]
+    for (const mutate of mutations) {
       const forged = cloneArchive(original)
-      forged.manifest[field] = 'attacker-controlled'
+      mutate(forged)
       await expect(service.inspectArchiveJson(JSON.stringify(forged))).rejects.toMatchObject({
-        code: 'PROJECT_IMPORT_INVALID',
+        code: 'PROJECT_IMPORT_CHECKSUM_MISMATCH',
       })
     }
+    const internallyInconsistent = cloneArchive(original)
+    internallyInconsistent.manifest.projectName = 'different-from-payload'
+    refreshArchiveIntegrity(internallyInconsistent)
+    await expect(
+      service.inspectArchiveJson(JSON.stringify(internallyInconsistent)),
+    ).rejects.toMatchObject({ code: 'PROJECT_IMPORT_INVALID' })
 
     const forgedWarning = cloneArchive(original)
     forgedWarning.manifest.warnings[0].message = 'archive-controlled warning'
@@ -636,9 +656,93 @@ describe('ProjectPortabilityService', () => {
 
     const duplicateWarning = cloneArchive(original)
     duplicateWarning.manifest.warnings.push({ ...duplicateWarning.manifest.warnings[0] })
+    refreshArchiveIntegrity(duplicateWarning)
     await expect(service.inspectArchiveJson(JSON.stringify(duplicateWarning))).rejects.toMatchObject({
       code: 'PROJECT_IMPORT_INVALID',
     })
+  })
+
+  test('round-trips every legal domain enum value', async () => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const original = (await service.buildArchive(PROJECT_ID)).archive
+    const cases: Array<{
+      values: readonly string[]
+      set: (archive: ProjectArchiveV1, value: string) => void
+    }> = [
+      {
+        values: ['active', 'archived'],
+        set: (archive, value) => { archive.payload.projects[0].status = value },
+      },
+      {
+        values: ['planned', 'drafting', 'active', 'completed', 'archived'],
+        set: (archive, value) => { archive.payload.volumes[0].status = value },
+      },
+      {
+        values: ['draft', 'confirmed', 'locked'],
+        set: (archive, value) => {
+          archive.payload.volume_outlines[0].status = value
+          archive.payload.chapter_outlines[0].status = value
+        },
+      },
+      {
+        values: ['planned', 'drafting', 'review', 'completed'],
+        set: (archive, value) => { archive.payload.chapters[0].status = value },
+      },
+      {
+        values: ['manual', 'paragraph_revision', 'polish', 'fallback'],
+        set: (archive, value) => { archive.payload.chapter_revisions[0].operation = value },
+      },
+      {
+        values: ['review', 'approved', 'rejected'],
+        set: (archive, value) => { archive.payload.chapter_versions[0].status = value },
+      },
+      {
+        values: [
+          'suggested', 'planned', 'planted', 'active',
+          'revealed', 'paid_off', 'resolved', 'abandoned',
+        ],
+        set: (archive, value) => { archive.payload.foreshadows[0].status = value },
+      },
+      {
+        values: [
+          'suggested', 'planned', 'planted', 'activated', 'revealed',
+          'paid_off', 'resolved', 'abandoned', 'note',
+        ],
+        set: (archive, value) => { archive.payload.foreshadow_events[0].event_type = value },
+      },
+      {
+        values: [
+          'fact', 'event', 'relationship', 'character',
+          'worldview', 'emotion', 'theme', 'custom',
+        ],
+        set: (archive, value) => {
+          archive.payload.narrative_memories[0].memory_type = value
+          archive.payload.narrative_memory_proposals[0].memory_type = value
+        },
+      },
+      {
+        values: ['proposed', 'approved', 'rejected', 'archived'],
+        set: (archive, value) => { archive.payload.narrative_memories[0].status = value },
+      },
+      {
+        values: ['proposed', 'approved', 'rejected'],
+        set: (archive, value) => {
+          archive.payload.narrative_memory_proposals[0].status = value
+        },
+      },
+    ]
+    for (const entry of cases) {
+      for (const value of entry.values) {
+        const archive = cloneArchive(original)
+        entry.set(archive, value)
+        refreshArchiveIntegrity(archive)
+        const inspected = await service.inspectArchiveJson(JSON.stringify(archive))
+        expect(() => service.importArchive(inspected)).not.toThrow()
+      }
+    }
   })
 
   test('rejects enum, range, uniqueness, ownership, and cycle violations before insert', async () => {
@@ -658,6 +762,18 @@ describe('ProjectPortabilityService', () => {
       {
         code: 'PROJECT_IMPORT_INVALID',
         mutate: (archive) => { archive.payload.narrative_memory_proposals[0].confidence = 2 },
+      },
+      {
+        code: 'PROJECT_IMPORT_INVALID',
+        mutate: (archive) => { archive.payload.volumes[0].volume_number = 0 },
+      },
+      {
+        code: 'PROJECT_IMPORT_INVALID',
+        mutate: (archive) => { archive.payload.chapter_outlines[0].chapter_number = 0 },
+      },
+      {
+        code: 'PROJECT_IMPORT_INVALID',
+        mutate: (archive) => { archive.payload.chapter_versions[0].version_number = 0 },
       },
       {
         code: 'PROJECT_IMPORT_INVALID',
@@ -743,7 +859,7 @@ describe('ProjectPortabilityService', () => {
     for (const entry of cases) {
       const archive = cloneArchive(original)
       entry.mutate(archive)
-      refreshPayloadChecksum(archive)
+      refreshArchiveIntegrity(archive)
       await expect(service.inspectArchiveJson(JSON.stringify(archive))).rejects.toMatchObject({
         code: entry.code,
       })
@@ -775,6 +891,134 @@ describe('ProjectPortabilityService', () => {
     expect(built.archive.payload.source_materials[0].uri).toBe('https://example.test/source')
     expect(Buffer.from(built.json, 'utf8').includes(Buffer.from('secret-token', 'utf8'))).toBe(false)
     expect(Buffer.from(built.json, 'utf8').includes(Buffer.from('private-fragment', 'utf8'))).toBe(false)
+  })
+
+  test('round-trips production-shaped SQLite defaults as canonical UTC timestamps', async () => {
+    const productionProjectId = 'production-defaults-project'
+    database.exec(`
+      INSERT INTO projects (id, slug, name)
+      VALUES ('${productionProjectId}', 'production-defaults', '生产形态项目');
+      INSERT INTO llm_configs (
+        id, project_id, name, base_url, model, temperature
+      ) VALUES (
+        'production-llm', '${productionProjectId}', '生产模型',
+        'https://example.test/v1', 'model', 3.5
+      );
+      INSERT INTO project_configs (project_id, default_llm_config_id)
+      VALUES ('${productionProjectId}', 'production-llm');
+      INSERT INTO characters (id, project_id, name)
+      VALUES ('production-character', '${productionProjectId}', '生产角色');
+      INSERT INTO organizations (id, project_id, name)
+      VALUES ('production-organization', '${productionProjectId}', '生产组织');
+      INSERT INTO relations (
+        id, project_id, source_character_id, target_character_id, relation_type,
+        strength, source_entity_type, source_entity_id, target_entity_type, target_entity_id
+      ) VALUES (
+        'production-relation', '${productionProjectId}', 'production-character', NULL,
+        'member-of', 4.5, 'character', 'production-character',
+        'organization', 'production-organization'
+      );
+      INSERT INTO chapters (id, project_id, chapter_number)
+      VALUES ('production-chapter', '${productionProjectId}', 1);
+      INSERT INTO chapter_revisions (id, chapter_id, revision_number)
+      VALUES ('production-revision', 'production-chapter', 1);
+      INSERT INTO chapter_versions (id, chapter_id, version_number)
+      VALUES ('production-version', 'production-chapter', 1);
+    `)
+    const storedTimestamp = database
+      .prepare<{ created_at: string }>('SELECT created_at FROM projects WHERE id = ?')
+      .get(productionProjectId)?.created_at
+    expect(storedTimestamp).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const built = await service.buildArchive(productionProjectId)
+    const canonicalTimestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+    for (const table of Object.keys(ARCHIVE_TABLES) as ProjectArchiveCollection[]) {
+      for (const row of built.archive.payload[table] as Record<string, unknown>[]) {
+        for (const column of Object.keys(ARCHIVE_TABLES[table])) {
+          if (isArchiveTimestampColumn(table, column) && row[column] !== null) {
+            expect(row[column]).toEqual(expect.stringMatching(canonicalTimestamp))
+          }
+        }
+      }
+    }
+    expect(built.archive.payload.llm_configs[0].temperature).toBe(3.5)
+    expect(built.archive.payload.relations[0].strength).toBe(4.5)
+
+    const inspected = await service.inspectArchiveJson(built.json)
+    const imported = service.importArchive(inspected)
+    expect(database.prepare<{ temperature: number }>(
+      'SELECT temperature FROM llm_configs WHERE project_id = ?',
+    ).get(imported.projectId)?.temperature).toBe(3.5)
+    expect(database.pragma('foreign_key_check')).toEqual([])
+    const reExported = await service.buildArchive(imported.projectId)
+    await expect(service.inspectArchiveJson(reExported.json)).resolves.toBeDefined()
+  })
+
+  test('rejects invalid database timestamps before creating an archive', async () => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    database.prepare('UPDATE projects SET created_at = ? WHERE id = ?')
+      .run('2026-02-31', PROJECT_ID)
+    await expect(service.buildArchive(PROJECT_ID)).rejects.toMatchObject({
+      code: 'PROJECT_EXPORT_FAILED',
+    })
+  })
+
+  test('aligns temperature and relation strength with existing application rules', async () => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    database.prepare('UPDATE llm_configs SET temperature = ? WHERE id = ?').run(1e15, LLM_ID)
+    database.prepare('UPDATE relations SET strength = ? WHERE id = ?').run(-4.5, 'relation-source')
+    const valid = await service.buildArchive(PROJECT_ID)
+    const inspected = await service.inspectArchiveJson(valid.json)
+    const imported = service.importArchive(inspected)
+    expect(database.prepare<{ temperature: number }>(
+      'SELECT temperature FROM llm_configs WHERE project_id = ?',
+    ).get(imported.projectId)?.temperature).toBe(1e15)
+    expect(database.prepare<{ strength: number }>(
+      'SELECT strength FROM relations WHERE project_id = ?',
+    ).get(imported.projectId)?.strength).toBe(-4.5)
+
+    const invalid = cloneArchive(valid.archive)
+    invalid.payload.llm_configs[0].temperature = -0.1
+    refreshArchiveIntegrity(invalid)
+    await expect(service.inspectArchiveJson(JSON.stringify(invalid))).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_INVALID',
+    })
+  })
+
+  test.each([
+    ['character', CHARACTER_ID],
+    ['organization', 'org-source'],
+    ['worldview', 'world-source'],
+  ] as const)('rejects a %s self-relation during inspect', async (entityType, entityId) => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const archive = cloneArchive((await service.buildArchive(PROJECT_ID)).archive)
+    const relation = archive.payload.relations[0]
+    relation.source_entity_type = entityType
+    relation.source_entity_id = entityId
+    relation.target_entity_type = entityType
+    relation.target_entity_id = entityId
+    relation.source_character_id = entityType === 'character' ? entityId : null
+    relation.target_character_id = entityType === 'character' ? entityId : null
+    refreshArchiveIntegrity(archive)
+    await expect(service.inspectArchiveJson(JSON.stringify(archive))).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_INVALID',
+    })
+    expect(database.prepare<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM projects',
+    ).get()?.count).toBe(1)
   })
 
   test('expires tokens without retaining staged entries and enforces active staging limits', async () => {
