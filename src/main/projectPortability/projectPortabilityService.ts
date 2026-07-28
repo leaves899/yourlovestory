@@ -7,6 +7,8 @@ import {
 } from '../../shared/projectPortability/archiveSchema'
 import {
   canonicalizeProjectArchiveWarnings,
+  isCanonicalPortableSourceUri,
+  portableSourceUri,
   PROJECT_ARCHIVE_MAX_BYTES,
   PROJECT_ARCHIVE_FORMAT,
   PROJECT_ARCHIVE_VERSION,
@@ -23,6 +25,12 @@ import {
   type ProjectArchiveWarning,
   type ProjectImportResult,
 } from '../../shared/projectPortability'
+import {
+  inspectPortableConfiguration,
+  normalizeConfigurationKey,
+  sanitizePortableConfiguration,
+} from '../../shared/security/configCredentialSafety'
+import { normalizeModelEndpoint } from '../../shared/security/urlSecurity'
 import type { SqliteDatabase } from '../database'
 
 const EXCLUSIONS = [
@@ -193,23 +201,6 @@ function nullableStringField(row: ProjectArchiveRecord, field: string): string |
   return value
 }
 
-function portableSourceUri(uri: string): string | null {
-  try {
-    const parsed = new URL(uri)
-    if (
-      (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
-      || parsed.username.length > 0
-      || parsed.password.length > 0
-      || parsed.hostname.length === 0
-    ) return null
-    parsed.search = ''
-    parsed.hash = ''
-    return parsed.toString()
-  } catch {
-    return null
-  }
-}
-
 function normalizeSlug(value: string): string {
   const slug = value
     .normalize('NFKC')
@@ -233,13 +224,11 @@ export class ProjectPortabilityService {
     if (!project) throw portabilityError('PROJECT_NOT_FOUND')
 
     const payload = this.readPayload(projectId)
-    const warnings = this.sanitizeExternalLinks(payload)
+    const warnings = this.sanitizeExternalLinks(
+      payload,
+      this.countBoundLlmCredentials(projectId),
+    )
     warnings.push(
-      {
-        code: 'credentials-excluded',
-        count: payload.llm_configs.length,
-        message: projectArchiveWarningMessage('credentials-excluded', payload.llm_configs.length),
-      },
       {
         code: 'runtime-history-excluded',
         count: 0,
@@ -441,7 +430,86 @@ export class ProjectPortabilityService {
     }
   }
 
-  private sanitizeExternalLinks(payload: ProjectArchivePayloadV1): ProjectArchiveWarning[] {
+  private countBoundLlmCredentials(projectId: string): number {
+    return this.database.prepare<{ count: number }>(
+      `SELECT COUNT(*) AS count
+       FROM llm_configs
+       WHERE project_id = ?
+         AND TRIM(COALESCE(credential_id, '')) <> ''`,
+    ).get(projectId)?.count ?? 0
+  }
+
+  private normalizeConfigurationEndpoints(
+    value: JsonValue,
+    mode: 'export' | 'import',
+  ): JsonValue {
+    if (Array.isArray(value)) {
+      return value.map((entry) => this.normalizeConfigurationEndpoints(entry, mode))
+    }
+    if (value === null || typeof value !== 'object') return value
+    const normalized: Record<string, JsonValue> = {}
+    for (const [key, entry] of Object.entries(value)) {
+      const normalizedKey = normalizeConfigurationKey(key)
+      if (normalizedKey === 'llmbaseurl' || normalizedKey === 'baseurl') {
+        if (typeof entry !== 'string' || entry.length === 0) {
+          throw portabilityError(
+            mode === 'export' ? 'PROJECT_EXPORT_FAILED' : 'PROJECT_IMPORT_INVALID',
+          )
+        }
+        let endpoint: string
+        try {
+          endpoint = normalizeModelEndpoint(entry).normalized
+        } catch {
+          throw portabilityError(
+            mode === 'export' ? 'PROJECT_EXPORT_FAILED' : 'PROJECT_IMPORT_INVALID',
+          )
+        }
+        if (mode === 'import' && endpoint !== entry) {
+          throw portabilityError('PROJECT_IMPORT_INVALID')
+        }
+        normalized[key] = endpoint
+      } else {
+        normalized[key] = this.normalizeConfigurationEndpoints(entry, mode)
+      }
+    }
+    return normalized
+  }
+
+  private normalizeLlmEndpoints(
+    payload: ProjectArchivePayloadV1,
+    mode: 'export' | 'import',
+  ): void {
+    for (const row of payload.llm_configs) {
+      const baseUrl = row.base_url
+      if (typeof baseUrl !== 'string' || baseUrl.length === 0) {
+        throw portabilityError(
+          mode === 'export' ? 'PROJECT_EXPORT_FAILED' : 'PROJECT_IMPORT_INVALID',
+        )
+      }
+      let normalized: string
+      try {
+        normalized = normalizeModelEndpoint(baseUrl).normalized
+      } catch {
+        throw portabilityError(
+          mode === 'export' ? 'PROJECT_EXPORT_FAILED' : 'PROJECT_IMPORT_INVALID',
+        )
+      }
+      if (mode === 'import' && normalized !== baseUrl) {
+        throw portabilityError('PROJECT_IMPORT_INVALID')
+      }
+      row.base_url = normalized
+    }
+    const settings = payload.project_configs[0]?.settings_json
+    if (settings !== undefined) {
+      payload.project_configs[0].settings_json =
+        this.normalizeConfigurationEndpoints(settings, mode)
+    }
+  }
+
+  private sanitizeExternalLinks(
+    payload: ProjectArchivePayloadV1,
+    boundCredentialCount: number,
+  ): ProjectArchiveWarning[] {
     let crushLinks = 0
     for (const character of payload.characters) {
       if (character.crush_slug !== null) crushLinks += 1
@@ -449,6 +517,22 @@ export class ProjectPortabilityService {
     }
     let fragmentLinks = 0
     let localUris = 0
+    let plaintextCredentials = 0
+    let credentialReferences = 0
+    const sanitizeConfig = (value: JsonValue): JsonValue => {
+      const sanitized = sanitizePortableConfiguration(value)
+      plaintextCredentials += sanitized.removedPlaintextCredentials
+      credentialReferences += sanitized.removedCredentialReferences
+      localUris += sanitized.removedLocalPaths
+      return sanitized.value
+    }
+    for (const config of payload.project_configs) {
+      config.settings_json = sanitizeConfig(config.settings_json)
+    }
+    for (const skill of payload.project_skills) {
+      skill.config = sanitizeConfig(skill.config)
+    }
+    this.normalizeLlmEndpoints(payload, 'export')
     for (const material of payload.source_materials) {
       if (material.fragment_id !== null) fragmentLinks += 1
       material.fragment_id = null
@@ -475,6 +559,13 @@ export class ProjectPortabilityService {
       count: localUris,
       message: projectArchiveWarningMessage('local-source-path-omitted', localUris),
     })
+    const credentialStateCount =
+      boundCredentialCount + plaintextCredentials + credentialReferences
+    warnings.push({
+      code: 'credentials-excluded',
+      count: credentialStateCount,
+      message: projectArchiveWarningMessage('credentials-excluded', credentialStateCount),
+    })
     return warnings
   }
 
@@ -482,6 +573,15 @@ export class ProjectPortabilityService {
     if (payload.projects.length !== 1 || payload.project_configs.length !== 1) {
       throw portabilityError('PROJECT_IMPORT_INVALID')
     }
+    for (const value of [
+      payload.project_configs[0].settings_json,
+      ...payload.project_skills.map((skill) => skill.config),
+    ]) {
+      if (!inspectPortableConfiguration(value).safe) {
+        throw portabilityError('PROJECT_IMPORT_INVALID')
+      }
+    }
+    this.normalizeLlmEndpoints(payload, 'import')
     const ids = new Map<ProjectArchiveCollection, Set<string>>()
     for (const table of Object.keys(ARCHIVE_TABLES) as ProjectArchiveCollection[]) {
       if (table === 'project_skills') continue
@@ -587,6 +687,9 @@ export class ProjectPortabilityService {
     }
     requireRef('project_configs', payload.project_configs[0], 'default_llm_config_id', 'llm_configs', true)
     for (const row of payload.source_materials) {
+      if (!isCanonicalPortableSourceUri(row.uri)) {
+        throw portabilityError('PROJECT_IMPORT_INVALID')
+      }
       requireRef('source_materials', row, 'character_id', 'characters', true)
     }
     for (const row of payload.arcs) requireRef('arcs', row, 'parent_arc_id', 'arcs', true)
@@ -721,8 +824,9 @@ export class ProjectPortabilityService {
     optional(result.source_materials, 'character_id', 'characters')
     for (const row of result.source_materials) {
       row.fragment_id = null
-      const uri = row.uri
-      if (typeof uri === 'string') row.uri = portableSourceUri(uri)
+      if (!isCanonicalPortableSourceUri(row.uri)) {
+        throw portabilityError('PROJECT_IMPORT_INVALID')
+      }
     }
     for (const row of result.characters) row.crush_slug = null
     optional(result.arcs, 'parent_arc_id', 'arcs')

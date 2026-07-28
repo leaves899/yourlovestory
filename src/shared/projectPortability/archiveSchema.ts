@@ -6,6 +6,7 @@ import {
   type ProjectArchiveV1,
 } from './types'
 import { portabilityError } from './errors'
+import { isCanonicalPortableSourceUri } from './portableUri'
 
 type ColumnKind =
   | 'id'
@@ -13,6 +14,7 @@ type ColumnKind =
   | 'nonEmptyString'
   | 'longString'
   | 'nullableString'
+  | 'nullablePortableUri'
   | 'number'
   | 'integer'
   | 'nullableNumber'
@@ -83,7 +85,7 @@ export const ARCHIVE_TABLES: Record<ProjectArchiveCollection, ArchiveTableDefini
   },
   source_materials: {
     id: 'id', project_id: 'id', title: 'string', material_type: 'string',
-    uri: 'nullableString', content: 'longString', metadata_json: 'json',
+    uri: 'nullablePortableUri', content: 'longString', metadata_json: 'json',
     character_id: 'nullableString', fragment_id: 'nullableString', version: 'positiveInteger',
     created_at: 'date', updated_at: 'date',
   },
@@ -221,6 +223,15 @@ function buildArchiveSchema(runtime: TypeBoxRuntime): TSchema {
       case 'longString': return Type.String({ maxLength: 2_000_000 })
       case 'nullableString':
         return Type.Union([Type.Null(), Type.String({ maxLength: 16_384 })])
+      case 'nullablePortableUri':
+        return Type.Union([
+          Type.Null(),
+          Type.String({
+            minLength: 1,
+            maxLength: 16_384,
+            pattern: '^https?://(?:\\[[0-9a-fA-F:]+\\]|[^\\s/?#@:]+)(?::\\d+)?(?:/[^\\s?#]*)?$',
+          }),
+        ])
       case 'number': return Type.Number({ minimum: -SAFE_NUMERIC_MAX, maximum: SAFE_NUMERIC_MAX })
       case 'integer':
         return Type.Integer({ minimum: -SAFE_NUMERIC_MAX, maximum: SAFE_NUMERIC_MAX })
@@ -394,6 +405,7 @@ function checkColumn(kind: ColumnKind, value: unknown): boolean {
     case 'longString': return typeof value === 'string' && value.length <= 2_000_000
     case 'nullableString':
       return value === null || (typeof value === 'string' && value.length <= 16_384)
+    case 'nullablePortableUri': return isCanonicalPortableSourceUri(value)
     case 'number':
       return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e15
     case 'integer': return isIntegerBetween(-SAFE_NUMERIC_MAX, SAFE_NUMERIC_MAX)
