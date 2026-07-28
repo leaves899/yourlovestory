@@ -140,6 +140,9 @@ function SettingsPage() {
         schemaVersion: null,
         message: '无法读取数据库状态。',
         lastBackupAt: null,
+        backupAllowed: false,
+        backupEligibility: 'database-unavailable',
+        backupBlockedReason: '无法读取数据库状态。',
       })
     })
   }, [])
@@ -265,7 +268,7 @@ function SettingsPage() {
     setBackupBusy(true)
     try {
       const result = await window.electronAPI.createBackup()
-      if (!result.success) throw new Error(result.error ?? '创建备份失败')
+      if (!result.success) throw new Error(result.error?.message ?? '创建备份失败')
       await loadDataSafety()
       toast({ title: '数据库备份已创建', status: 'success', duration: 3000 })
     } catch (error: unknown) {
@@ -284,7 +287,9 @@ function SettingsPage() {
     setBackupBusy(true)
     try {
       const result = await window.electronAPI.verifyBackup(id)
-      if (!result.success || !result.data) throw new Error(result.error ?? '校验备份失败')
+      if (!result.success || !result.data) {
+        throw new Error(result.error?.message ?? '校验备份失败')
+      }
       const verification = result.data
       setVerificationById((current) => ({ ...current, [id]: verification }))
     } catch (error: unknown) {
@@ -306,7 +311,7 @@ function SettingsPage() {
     setBackupBusy(true)
     try {
       const result = await window.electronAPI.restoreBackup(backup.id, true)
-      if (!result.success) throw new Error(result.error ?? '恢复备份失败')
+      if (!result.success) throw new Error(result.error?.message ?? '恢复备份失败')
       toast({ title: '数据库已恢复，应用正在重启', status: 'success', duration: 3000 })
     } catch (error: unknown) {
       toast({

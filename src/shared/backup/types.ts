@@ -20,6 +20,7 @@ export interface BackupVerificationResult {
   valid: boolean
   checkedAt: string
   error?: string
+  errorCode?: BackupErrorCode
 }
 
 export interface RestorePreparationResult {
@@ -41,19 +42,53 @@ export interface PruneFailure {
 export interface PruneResult {
   deleted: string[]
   failed: PruneFailure[]
+  retained: string[]
+  policyExceeded: boolean
 }
 
+export type DatabaseBackupEligibility =
+  | 'safe'
+  | 'contains-legacy-plaintext-credentials'
+  | 'credential-migration-pending'
+  | 'database-unavailable'
+
 export interface DatabaseStatus {
-  state: 'ready' | 'recovery-required' | 'migration-rolled-back'
+  state:
+    | 'ready'
+    | 'credential-migration-required'
+    | 'recovery-required'
+    | 'migration-rolled-back'
   integrity: 'ok' | 'failed' | 'unknown'
   schemaVersion: number | null
   message: string | null
   lastBackupAt: string | null
+  backupAllowed: boolean
+  backupEligibility: DatabaseBackupEligibility
+  backupBlockedReason: string | null
+}
+
+export type BackupErrorCode =
+  | 'BACKUP_NOT_FOUND'
+  | 'BACKUP_INVALID'
+  | 'BACKUP_CHECKSUM_MISMATCH'
+  | 'BACKUP_NOT_ALLOWED'
+  | 'DATABASE_UNAVAILABLE'
+  | 'DATABASE_RECOVERY_REQUIRED'
+  | 'RESTORE_FAILED'
+  | 'RESTORE_ROLLBACK_FAILED'
+  | 'LOCAL_IO_ERROR'
+
+export interface BackupError {
+  code: BackupErrorCode
+  message: string
 }
 
 export interface RestoreExecutionResult {
-  restored: boolean
+  outcome:
+    | 'restored'
+    | 'restore-failed-rolled-back'
+    | 'restore-failed-recovery-required'
   backupId: string
-  preRestoreBackupId: string
+  preRestoreBackupId: string | null
   relaunching: boolean
 }

@@ -5,9 +5,10 @@ import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveDat
 import {
   DatabaseBackupService,
   DEFAULT_BACKUP_RETENTION_POLICY,
-  type BackupRecord,
   type DatabaseStatus,
+  type InternalMigrationSnapshot,
 } from '../backup'
+import { inspectPlaintextCredentialState } from '../backup/credentialSafety'
 import { getDatabasePath, openDatabase } from './database'
 import {
   getAppliedMigrations,
@@ -38,7 +39,7 @@ export interface DatabaseLifecycleSuccess<T extends CredentialMigrationResult> {
   backupService: DatabaseBackupService
   status: DatabaseStatus
   credentialMigration: T
-  migrationBackup: BackupRecord | null
+  migrationBackup: InternalMigrationSnapshot | null
 }
 
 export interface DatabaseLifecycleFailure {
@@ -46,7 +47,7 @@ export interface DatabaseLifecycleFailure {
   database: null
   backupService: DatabaseBackupService
   status: DatabaseStatus
-  migrationBackup: BackupRecord | null
+  migrationBackup: InternalMigrationSnapshot | null
 }
 
 export type DatabaseLifecycleResult<T extends CredentialMigrationResult> =
@@ -81,16 +82,21 @@ function preserveFailedDatabase(databasePath: string, userDataPath: string, now:
 
 export function replaceDatabaseFromStagedFile(databasePath: string, stagedPath: string): void {
   const displacedPath = `${databasePath}.displaced-${randomUUID()}.tmp`
+  let installedStagedDatabase = false
   cleanupSidecars(databasePath)
   try {
     if (fs.existsSync(databasePath)) fs.renameSync(databasePath, displacedPath)
     fs.renameSync(stagedPath, databasePath)
+    installedStagedDatabase = true
     fs.rmSync(displacedPath, { force: true })
   } catch (error: unknown) {
-    if (!fs.existsSync(databasePath) && fs.existsSync(displacedPath)) {
-      fs.renameSync(displacedPath, databasePath)
+    if (fs.existsSync(displacedPath)) {
+      if (installedStagedDatabase) fs.rmSync(databasePath, { force: true })
+      if (!fs.existsSync(databasePath)) fs.renameSync(displacedPath, databasePath)
     }
     fs.rmSync(stagedPath, { force: true })
+    fs.rmSync(`${stagedPath}-wal`, { force: true })
+    fs.rmSync(`${stagedPath}-shm`, { force: true })
     throw error
   }
 }
@@ -111,7 +117,7 @@ export async function initializeDatabaseLifecycle<T extends CredentialMigrationR
   const failure = (
     state: DatabaseStatus['state'],
     message: string,
-    migrationBackup: BackupRecord | null = null,
+    migrationBackup: InternalMigrationSnapshot | null = null,
     integrity: DatabaseStatus['integrity'] = 'unknown',
   ): DatabaseLifecycleFailure => ({
     success: false,
@@ -123,7 +129,10 @@ export async function initializeDatabaseLifecycle<T extends CredentialMigrationR
       integrity,
       schemaVersion: null,
       message: sanitizeErrorMessage(message, 'Database startup failed'),
-      lastBackupAt: migrationBackup?.createdAt ?? null,
+      lastBackupAt: null,
+      backupAllowed: false,
+      backupEligibility: 'database-unavailable',
+      backupBlockedReason: sanitizeErrorMessage(message, 'Database startup failed'),
     },
   })
 
@@ -160,10 +169,10 @@ export async function initializeDatabaseLifecycle<T extends CredentialMigrationR
     )
   }
 
-  let migrationBackup: BackupRecord | null = null
+  let migrationBackup: InternalMigrationSnapshot | null = null
   if (pending.length > 0 && existedBeforeOpen) {
     try {
-      migrationBackup = await backupService.createBackup({ reason: 'pre-migration' })
+      migrationBackup = await backupService.createInternalMigrationSnapshot()
     } catch (error: unknown) {
       database.close()
       database = null
@@ -180,14 +189,48 @@ export async function initializeDatabaseLifecycle<T extends CredentialMigrationR
     const credentialBoundary = candidateMigrations.filter((migration) => migration.version < 8)
     runMigrations(database, credentialBoundary)
     const credentialMigration = options.migrateCredentials(database)
-    if (credentialMigration.pending === 0) runMigrations(database, candidateMigrations)
+    if (credentialMigration.pending > 0) {
+      const schemaVersion = inspectDatabase(database)
+      if (migrationBackup) {
+        backupService.finalizeInternalMigrationSnapshot(migrationBackup, 'success')
+        migrationBackup = null
+      }
+      return {
+        success: true,
+        database,
+        backupService,
+        credentialMigration,
+        migrationBackup: null,
+        status: {
+          state: 'credential-migration-required',
+          integrity: 'ok',
+          schemaVersion,
+          message: '请先完成凭据迁移，之后才能使用项目数据和数据库备份。',
+          lastBackupAt: (await backupService.listBackups())[0]?.createdAt ?? null,
+          backupAllowed: false,
+          backupEligibility: 'credential-migration-pending',
+          backupBlockedReason: '数据库仍包含尚未迁移的凭据。',
+        },
+      }
+    }
+    runMigrations(database, candidateMigrations)
+    if (!inspectPlaintextCredentialState(database).safeForUserBackup) {
+      throw new Error('Credential cleanup did not reach a backup-safe state')
+    }
+    // DROP COLUMN can leave deleted credential bytes in SQLite free pages. Rebuild
+    // the file before any user-visible snapshot can be created.
+    database.exec('VACUUM')
     const schemaVersion = inspectDatabase(database)
-    let lastBackupAt = migrationBackup?.createdAt ?? null
+    if (migrationBackup) {
+      backupService.finalizeInternalMigrationSnapshot(migrationBackup, 'success')
+      migrationBackup = null
+    }
+    let lastBackupAt: string | null = null
     try {
       await backupService.createScheduledBackupIfDue()
       await backupService.pruneBackups(
         DEFAULT_BACKUP_RETENTION_POLICY,
-        migrationBackup ? [migrationBackup.id] : [],
+        [],
       )
       lastBackupAt = (await backupService.listBackups())[0]?.createdAt ?? lastBackupAt
     } catch {
@@ -205,6 +248,9 @@ export async function initializeDatabaseLifecycle<T extends CredentialMigrationR
         schemaVersion,
         message: null,
         lastBackupAt,
+        backupAllowed: true,
+        backupEligibility: 'safe',
+        backupBlockedReason: null,
       },
     }
   } catch (error: unknown) {
@@ -221,7 +267,7 @@ export async function initializeDatabaseLifecycle<T extends CredentialMigrationR
     }
     try {
       if (migrationBackup) {
-        const staged = await backupService.stageRestore(migrationBackup.id)
+        const staged = await backupService.stageInternalMigrationRestore(migrationBackup)
         replaceDatabaseFromStagedFile(databasePath, staged)
         const restored = openDatabase(options.userDataPath)
         try {
@@ -229,6 +275,7 @@ export async function initializeDatabaseLifecycle<T extends CredentialMigrationR
         } finally {
           restored.close()
         }
+        backupService.finalizeInternalMigrationSnapshot(migrationBackup, 'failed')
         return failure(
           'migration-rolled-back',
           sanitizeErrorMessage(error, 'Migration failed and was rolled back'),
@@ -237,6 +284,13 @@ export async function initializeDatabaseLifecycle<T extends CredentialMigrationR
         )
       }
     } catch (restoreError: unknown) {
+      if (migrationBackup) {
+        try {
+          backupService.finalizeInternalMigrationSnapshot(migrationBackup, 'failed')
+        } catch {
+          // Preserve the restore failure as the primary recovery signal.
+        }
+      }
       return failure(
         'recovery-required',
         sanitizeErrorMessage(restoreError, 'Migration rollback failed'),

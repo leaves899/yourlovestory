@@ -243,21 +243,24 @@ describe('modular IPC registration', () => {
         schemaVersion: 8,
         message: null,
         lastBackupAt: null,
+        backupAllowed: true,
+        backupEligibility: 'safe',
+        backupBlockedReason: null,
       },
       audit,
     })
 
     await expect(invoke('backup:list', { path: 'C:\\arbitrary.sqlite' })).resolves.toMatchObject({
       success: false,
-      error: 'This operation does not accept input',
+      error: { code: 'BACKUP_INVALID' },
     })
     await expect(invoke('backup:verify', { id: '' })).resolves.toMatchObject({
       success: false,
-      error: 'id is required',
+      error: { code: 'BACKUP_INVALID' },
     })
     await expect(invoke('backup:restore', { id: 'backup-1', confirm: false })).resolves.toMatchObject({
       success: false,
-      error: 'Explicit restore confirmation is required',
+      error: { code: 'BACKUP_INVALID' },
     })
     await expect(invoke('backup:restore', {
       id: 'backup-1',
@@ -267,7 +270,7 @@ describe('modular IPC registration', () => {
       senderFrame: { url: 'file:///app/index.html' },
     })).resolves.toMatchObject({
       success: false,
-      error: 'Restore input contains unsupported fields',
+      error: { code: 'BACKUP_INVALID' },
     })
     await expect(invoke('backup:restore', {
       id: 'backup-1',
@@ -277,7 +280,7 @@ describe('modular IPC registration', () => {
       senderFrame: { url: 'https://untrusted.example/' },
     })).resolves.toMatchObject({
       success: false,
-      error: 'untrusted IPC sender',
+      error: { code: 'BACKUP_INVALID' },
     })
     expect(restoreBackup).not.toHaveBeenCalled()
     expect(audit).toHaveBeenCalledWith({ channel: 'backup:restore', outcome: 'failed' })

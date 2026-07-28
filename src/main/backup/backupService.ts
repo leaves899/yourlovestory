@@ -2,8 +2,9 @@ import Database from 'better-sqlite3'
 import { createHash, randomUUID } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveData'
 import type { SqliteDatabase } from '../database'
+import { inspectPlaintextCredentialState } from './credentialSafety'
+import { BackupOperationError, backupError, toBackupError } from './errors'
 import {
   DEFAULT_BACKUP_RETENTION_POLICY,
   type BackupRecord,
@@ -13,9 +14,11 @@ import {
   type CreateBackupOptions,
   type PruneResult,
   type RestorePreparationResult,
+  type InternalMigrationSnapshot,
 } from './types'
 
 const BACKUP_DIRECTORY = path.join('backups', 'database')
+const INTERNAL_MIGRATION_DIRECTORY = 'internal-migration'
 const METADATA_SUFFIX = '.json'
 const DATABASE_SUFFIX = '.sqlite'
 const TEMP_SUFFIX = '.tmp'
@@ -31,7 +34,7 @@ function databaseFilename(id: string): string {
 }
 
 function assertBackupId(id: string): void {
-  if (!BACKUP_ID_PATTERN.test(id)) throw new Error('Invalid backup id')
+  if (!BACKUP_ID_PATTERN.test(id)) throw backupError('BACKUP_INVALID')
 }
 
 function isBackupRecord(value: unknown): value is BackupRecord {
@@ -85,6 +88,8 @@ function inspectSnapshot(filename: string): number {
     return version?.version ?? 0
   } finally {
     database.close()
+    fs.rmSync(`${filename}-wal`, { force: true })
+    fs.rmSync(`${filename}-shm`, { force: true })
   }
 }
 
@@ -107,7 +112,10 @@ export class DatabaseBackupService implements BackupService {
 
   public async createBackup(options: CreateBackupOptions): Promise<BackupRecord> {
     const database = this.options.getDatabase()
-    if (!database) throw new Error('Database is not available for backup')
+    if (!database) throw backupError('DATABASE_UNAVAILABLE')
+    if (!inspectPlaintextCredentialState(database).safeForUserBackup) {
+      throw backupError('BACKUP_NOT_ALLOWED')
+    }
     fs.mkdirSync(this.backupDirectory, { recursive: true })
 
     const createdAt = this.now().toISOString()
@@ -145,7 +153,79 @@ export class DatabaseBackupService implements BackupService {
       fs.rmSync(temporaryMetadataPath, { force: true })
       fs.rmSync(finalPath, { force: true })
       fs.rmSync(metadataPath, { force: true })
-      throw new Error(sanitizeErrorMessage(error, 'Database backup failed'))
+      if (error instanceof BackupOperationError) throw error
+      throw backupError('LOCAL_IO_ERROR')
+    }
+  }
+
+  public async createInternalMigrationSnapshot(): Promise<InternalMigrationSnapshot> {
+    const database = this.options.getDatabase()
+    if (!database) throw backupError('DATABASE_UNAVAILABLE')
+    const directory = path.join(this.backupDirectory, INTERNAL_MIGRATION_DIRECTORY)
+    fs.mkdirSync(directory, { recursive: true })
+    const createdAt = this.now().toISOString()
+    const id = `${createdAt.replace(/[:.]/g, '-')}-${randomUUID()}`
+    const finalPath = path.join(directory, databaseFilename(id))
+    const metadataPath = path.join(directory, metadataFilename(id))
+    const temporaryPath = `${finalPath}${TEMP_SUFFIX}`
+    try {
+      await database.backup(temporaryPath)
+      inspectSnapshot(temporaryPath)
+      const fileHash = await sha256(temporaryPath)
+      fs.renameSync(temporaryPath, finalPath)
+      fs.writeFileSync(metadataPath, JSON.stringify({
+        id,
+        createdAt,
+        sha256: fileHash,
+        containsLegacySensitiveSchema: true,
+        purpose: 'single-migration-rollback',
+      }, null, 2), { encoding: 'utf8', flag: 'wx' })
+      return { id, createdAt, sha256: fileHash }
+    } catch {
+      fs.rmSync(temporaryPath, { force: true })
+      fs.rmSync(finalPath, { force: true })
+      fs.rmSync(metadataPath, { force: true })
+      throw backupError('LOCAL_IO_ERROR')
+    }
+  }
+
+  public async stageInternalMigrationRestore(
+    snapshot: InternalMigrationSnapshot,
+  ): Promise<string> {
+    assertBackupId(snapshot.id)
+    const source = path.join(
+      this.backupDirectory,
+      INTERNAL_MIGRATION_DIRECTORY,
+      databaseFilename(snapshot.id),
+    )
+    if (!fs.existsSync(source)) throw backupError('BACKUP_NOT_FOUND')
+    if ((await sha256(source)) !== snapshot.sha256) {
+      throw backupError('BACKUP_CHECKSUM_MISMATCH')
+    }
+    inspectSnapshot(source)
+    const staged = `${this.options.databasePath}.restore-${randomUUID()}${TEMP_SUFFIX}`
+    fs.copyFileSync(source, staged, fs.constants.COPYFILE_EXCL)
+    return staged
+  }
+
+  public finalizeInternalMigrationSnapshot(
+    snapshot: InternalMigrationSnapshot,
+    outcome: 'success' | 'failed',
+  ): void {
+    const directory = path.join(this.backupDirectory, INTERNAL_MIGRATION_DIRECTORY)
+    const source = path.join(directory, databaseFilename(snapshot.id))
+    const metadata = path.join(directory, metadataFilename(snapshot.id))
+    if (!fs.existsSync(source)) return
+    if (outcome === 'success') {
+      fs.rmSync(source, { force: true })
+      fs.rmSync(metadata, { force: true })
+      return
+    }
+    const failedDirectory = path.join(directory, 'failed')
+    fs.mkdirSync(failedDirectory, { recursive: true })
+    fs.renameSync(source, path.join(failedDirectory, databaseFilename(snapshot.id)))
+    if (fs.existsSync(metadata)) {
+      fs.renameSync(metadata, path.join(failedDirectory, metadataFilename(snapshot.id)))
     }
   }
 
@@ -175,19 +255,21 @@ export class DatabaseBackupService implements BackupService {
       const record = await this.readRecord(id)
       const filename = this.resolveDatabasePath(record)
       if ((await sha256(filename)) !== record.sha256) {
-        throw new Error('Backup checksum does not match')
+        throw backupError('BACKUP_CHECKSUM_MISMATCH')
       }
       const schemaVersion = inspectSnapshot(filename)
       if (schemaVersion !== record.schemaVersion) {
-        throw new Error('Backup schema version does not match')
+        throw backupError('BACKUP_INVALID')
       }
       return { id, valid: true, checkedAt }
     } catch (error: unknown) {
+      const safeError = toBackupError(error, 'BACKUP_INVALID')
       return {
         id,
         valid: false,
         checkedAt,
-        error: sanitizeErrorMessage(error, 'Backup verification failed'),
+        error: safeError.message,
+        errorCode: safeError.code,
       }
     }
   }
@@ -200,14 +282,18 @@ export class DatabaseBackupService implements BackupService {
 
   public async stageRestore(id: string): Promise<string> {
     const prepared = await this.restoreBackup(id)
-    if (!prepared.ready) throw new Error(prepared.verification.error ?? 'Backup verification failed')
+    if (!prepared.ready) {
+      throw backupError(prepared.verification.errorCode ?? 'BACKUP_INVALID')
+    }
     const record = await this.readRecord(id)
     const source = this.resolveDatabasePath(record)
     const staged = `${this.options.databasePath}.restore-${randomUUID()}${TEMP_SUFFIX}`
     fs.copyFileSync(source, staged, fs.constants.COPYFILE_EXCL)
     try {
       inspectSnapshot(staged)
-      if ((await sha256(staged)) !== record.sha256) throw new Error('Staged restore checksum does not match')
+      if ((await sha256(staged)) !== record.sha256) {
+        throw backupError('BACKUP_CHECKSUM_MISMATCH')
+      }
       return staged
     } catch (error: unknown) {
       fs.rmSync(staged, { force: true })
@@ -239,17 +325,45 @@ export class DatabaseBackupService implements BackupService {
 
     const protectedIds = new Set(protectedBackupIds)
     const records = await this.listBackups()
-    const ordinary = records.filter(
-      (record) => record.reason !== 'pre-migration' && !protectedIds.has(record.id),
-    )
     const cutoff = this.now().getTime() - policy.maxAgeDays * 24 * 60 * 60 * 1000
-    const expired = ordinary.filter((record) => Date.parse(record.createdAt) < cutoff)
-    const remainingOrdinary = ordinary.filter((record) => !expired.includes(record))
-    const retainedProtected = records.length - ordinary.length
-    const allowedOrdinary = Math.max(0, policy.maxBackups - retainedProtected)
-    const overLimit = remainingOrdinary.slice(allowedOrdinary)
-    const targets = [...new Map([...expired, ...overLimit].map((record) => [record.id, record])).values()]
-    const result: PruneResult = { deleted: [], failed: [] }
+    const retain = new Set<string>(
+      records.filter((record) => protectedIds.has(record.id)).map((record) => record.id),
+    )
+    for (const reason of ['pre-migration', 'pre-restore'] as const) {
+      if (retain.size >= policy.maxBackups) break
+      const latest = records.find((record) => record.reason === reason)
+      if (latest) retain.add(latest.id)
+    }
+    const priority: Record<BackupRecord['reason'], number> = {
+      manual: 0,
+      scheduled: 1,
+      'pre-migration': 2,
+      'pre-restore': 2,
+    }
+    const eligible = records
+      .filter((record) => {
+        if (retain.has(record.id)) return false
+        if (
+          (record.reason === 'manual' || record.reason === 'scheduled')
+          && Date.parse(record.createdAt) < cutoff
+        ) return false
+        return true
+      })
+      .sort((left, right) => (
+        priority[left.reason] - priority[right.reason]
+        || right.createdAt.localeCompare(left.createdAt)
+      ))
+    for (const record of eligible) {
+      if (retain.size >= policy.maxBackups) break
+      retain.add(record.id)
+    }
+    const targets = records.filter((record) => !retain.has(record.id))
+    const result: PruneResult = {
+      deleted: [],
+      failed: [],
+      retained: [],
+      policyExceeded: false,
+    }
 
     for (const record of targets) {
       try {
@@ -259,10 +373,12 @@ export class DatabaseBackupService implements BackupService {
       } catch (error: unknown) {
         result.failed.push({
           id: record.id,
-          error: sanitizeErrorMessage(error, 'Backup deletion failed'),
+          error: toBackupError(error, 'LOCAL_IO_ERROR').message,
         })
       }
     }
+    result.retained = (await this.listBackups()).map((record) => record.id)
+    result.policyExceeded = result.retained.length > policy.maxBackups
     return result
   }
 
@@ -270,9 +386,11 @@ export class DatabaseBackupService implements BackupService {
     return this.options.databasePath
   }
 
-  public preserveCurrentDatabase(label: 'pre-restore-unusable'): string {
+  public preserveCurrentDatabase(
+    label: 'pre-restore-unusable' | 'restore-failed-target',
+  ): string {
     if (!fs.existsSync(this.options.databasePath)) {
-      throw new Error('Current database is unavailable')
+      throw backupError('DATABASE_UNAVAILABLE')
     }
     const directory = path.join(this.backupDirectory, 'failed')
     fs.mkdirSync(directory, { recursive: true })
@@ -293,9 +411,9 @@ export class DatabaseBackupService implements BackupService {
     try {
       value = JSON.parse(fs.readFileSync(metadataPath, 'utf8'))
     } catch {
-      throw new Error('Backup metadata is unavailable')
+      throw backupError('BACKUP_NOT_FOUND')
     }
-    if (!isBackupRecord(value) || value.id !== id) throw new Error('Backup metadata is invalid')
+    if (!isBackupRecord(value) || value.id !== id) throw backupError('BACKUP_INVALID')
     return value
   }
 

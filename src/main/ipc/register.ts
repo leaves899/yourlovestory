@@ -109,6 +109,9 @@ export function setupIPC(options: IpcSetupOptions = {}): void {
       schemaVersion: null,
       message: 'Database status is unavailable',
       lastBackupAt: null,
+      backupAllowed: false,
+      backupEligibility: 'database-unavailable',
+      backupBlockedReason: 'Database status is unavailable',
     },
     restoreBackup: options.restoreBackup,
   })

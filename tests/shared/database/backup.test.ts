@@ -12,6 +12,7 @@ import {
   executeDatabaseRestore,
   initializeDatabase,
   initializeDatabaseLifecycle,
+  migrations,
   type Migration,
   type SqliteDatabase,
 } from '@/main/database'
@@ -99,13 +100,60 @@ describe('database backup service', () => {
     expect(await scheduledService.createScheduledBackupIfDue()).not.toBeNull()
   })
 
+  test('blocks every user-visible backup while legacy plaintext credentials remain', async () => {
+    database?.close()
+    database = null
+    const legacyRoot = path.join(root, 'legacy')
+    const legacyDatabase = initializeDatabase(legacyRoot, {
+      migrations: migrations.filter((migration) => migration.version < 8),
+    })
+    const secret = 'sk-legacy-plaintext-secret-123456'
+    legacyDatabase.prepare(
+      "INSERT INTO projects (id, slug, name) VALUES ('project-1', 'project-1', 'Project')",
+    ).run()
+    legacyDatabase.prepare(
+      `INSERT INTO llm_configs
+        (id, project_id, name, provider, base_url, model, api_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run('config-1', 'project-1', 'Default', 'openai', 'https://example.invalid', 'model', secret)
+
+    for (const reason of ['manual', 'scheduled', 'pre-migration', 'pre-restore'] as const) {
+      const legacyService = new DatabaseBackupService({
+        userDataPath: legacyRoot,
+        databasePath: getDatabasePath(legacyRoot),
+        appVersion: 'test-version',
+        getDatabase: () => legacyDatabase,
+      })
+      await expect(legacyService.createBackup({ reason })).rejects.toMatchObject({
+        code: 'BACKUP_NOT_ALLOWED',
+      })
+    }
+    const legacyService = new DatabaseBackupService({
+      userDataPath: legacyRoot,
+      databasePath: getDatabasePath(legacyRoot),
+      appVersion: 'test-version',
+      getDatabase: () => legacyDatabase,
+    })
+    expect(await legacyService.listBackups()).toEqual([])
+    expect(JSON.stringify(await legacyService.listBackups())).not.toContain(secret)
+
+    const internal = await legacyService.createInternalMigrationSnapshot()
+    expect(await legacyService.listBackups()).toEqual([])
+    await expect(legacyService.verifyBackup(internal.id)).resolves.toMatchObject({
+      valid: false,
+      errorCode: 'BACKUP_NOT_FOUND',
+    })
+    legacyService.finalizeInternalMigrationSnapshot(internal, 'success')
+    legacyDatabase.close()
+  })
+
   test('rejects checksum mismatch and corrupted snapshots', async () => {
     const record = await service.createBackup({ reason: 'manual' })
     const backupPath = path.join(root, 'backups', 'database', record.filename)
     fs.appendFileSync(backupPath, 'tampered')
     await expect(service.verifyBackup(record.id)).resolves.toMatchObject({
       valid: false,
-      error: 'Backup checksum does not match',
+      errorCode: 'BACKUP_CHECKSUM_MISMATCH',
     })
     await expect(service.restoreBackup(record.id)).resolves.toMatchObject({ ready: false })
 
@@ -120,7 +168,7 @@ describe('database backup service', () => {
     await expect(service.verifyBackup(second.id)).resolves.toMatchObject({ valid: false })
   })
 
-  test('supports Unicode paths and prunes ordinary backups while retaining migration snapshots', async () => {
+  test('supports Unicode paths and keeps only the newest migration snapshot within the cap', async () => {
     database?.close()
     const unicodeRoot = path.join(root, '数据 备份')
     database = initializeDatabase(unicodeRoot)
@@ -158,6 +206,49 @@ describe('database backup service', () => {
     ])
   })
 
+  test('bounds a mixed set of 17 backups while preserving explicit and newest recovery points', async () => {
+    const records: BackupRecord[] = []
+    for (let index = 0; index < 17; index += 1) {
+      const datedService = new DatabaseBackupService({
+        userDataPath: root,
+        databasePath: getDatabasePath(root),
+        appVersion: 'test-version',
+        getDatabase: () => database,
+        now: () => new Date(Date.UTC(2026, 2, index + 1)),
+      })
+      const reason = index % 5 === 0
+        ? 'pre-migration'
+        : index % 4 === 0
+          ? 'pre-restore'
+          : index % 2 === 0
+            ? 'scheduled'
+            : 'manual'
+      records.push(await datedService.createBackup({ reason }))
+    }
+    const newestMigration = [...records].reverse()
+      .find((record) => record.reason === 'pre-migration')!
+    const newestRestore = [...records].reverse()
+      .find((record) => record.reason === 'pre-restore')!
+    const protectedId = records[0].id
+
+    const result = await new DatabaseBackupService({
+      userDataPath: root,
+      databasePath: getDatabasePath(root),
+      appVersion: 'test-version',
+      getDatabase: () => database,
+      now: () => new Date('2026-04-01T00:00:00.000Z'),
+    }).pruneBackups({ maxBackups: 10, maxAgeDays: 30 }, [protectedId])
+
+    expect(result.failed).toEqual([])
+    expect(result.policyExceeded).toBe(false)
+    expect(result.retained).toHaveLength(10)
+    expect(result.retained).toEqual(expect.arrayContaining([
+      protectedId,
+      newestMigration.id,
+      newestRestore.id,
+    ]))
+  })
+
   test('creates a pre-restore snapshot before replacing the database', async () => {
     database!.exec('CREATE TABLE restore_probe (value TEXT NOT NULL)')
     database!.prepare('INSERT INTO restore_probe (value) VALUES (?)').run('目标版本')
@@ -173,9 +264,10 @@ describe('database backup service', () => {
         database = null
       },
       relaunch,
+      exit: jest.fn(),
     })
     expect(result).toMatchObject({
-      restored: true,
+      outcome: 'restored',
       backupId: target.id,
       relaunching: true,
     })
@@ -209,17 +301,17 @@ describe('database backup service', () => {
       databaseAvailable: false,
       closeDatabase: jest.fn(),
       relaunch,
+      exit: jest.fn(),
     })
-    expect(result.restored).toBe(true)
-    expect(result.preRestoreBackupId).toMatch(/^pre-restore-unusable-/)
+    expect(result.outcome).toBe('restored')
+    expect(result.preRestoreBackupId).toBeNull()
     expect(relaunch).toHaveBeenCalledTimes(1)
-    expect(fs.existsSync(path.join(
+    expect(fs.readdirSync(path.join(
       root,
       'backups',
       'database',
       'failed',
-      `${result.preRestoreBackupId}.sqlite`,
-    ))).toBe(true)
+    )).some((entry) => entry.startsWith('pre-restore-unusable-'))).toBe(true)
 
     const restored = new Database(getDatabasePath(root), { readonly: true, fileMustExist: true })
     try {
@@ -229,6 +321,116 @@ describe('database backup service', () => {
     } finally {
       restored.close()
     }
+  })
+
+  test('rolls back and relaunches when replacement fails after the database closes', async () => {
+    const target = await service.createBackup({ reason: 'manual' })
+    const replaceDatabase = jest.fn()
+      .mockImplementationOnce(() => {
+        throw new Error('injected target replacement failure')
+      })
+      .mockImplementationOnce(() => undefined)
+    const relaunch = jest.fn()
+    const exit = jest.fn()
+
+    const result = await executeDatabaseRestore({
+      backupService: service,
+      backupId: target.id,
+      closeDatabase: () => {
+        database!.close()
+        database = null
+      },
+      replaceDatabase,
+      verifyDatabase: jest.fn(),
+      relaunch,
+      exit,
+    })
+
+    expect(result.outcome).toBe('restore-failed-rolled-back')
+    expect(relaunch).toHaveBeenCalledTimes(1)
+    expect(exit).toHaveBeenCalledTimes(1)
+    expect(fs.readdirSync(path.dirname(getDatabasePath(root)))
+      .filter((entry) => entry.includes('.restore-'))).toEqual([])
+    const reopened = new Database(getDatabasePath(root), { readonly: true, fileMustExist: true })
+    expect(reopened.pragma('quick_check')).toEqual([{ quick_check: 'ok' }])
+    reopened.close()
+  })
+
+  test('rolls back when the target replacement succeeds but final verification fails', async () => {
+    const target = await service.createBackup({ reason: 'manual' })
+    const verifyDatabase = jest.fn()
+      .mockImplementationOnce(() => {
+        throw new Error('injected target verification failure')
+      })
+      .mockImplementationOnce(() => undefined)
+
+    const result = await executeDatabaseRestore({
+      backupService: service,
+      backupId: target.id,
+      closeDatabase: () => {
+        database!.close()
+        database = null
+      },
+      replaceDatabase: jest.fn(),
+      verifyDatabase,
+      relaunch: jest.fn(),
+      exit: jest.fn(),
+    })
+
+    expect(result.outcome).toBe('restore-failed-rolled-back')
+    expect(verifyDatabase).toHaveBeenCalledTimes(2)
+  })
+
+  test('enters recovery mode and relaunches when restore and rollback both fail', async () => {
+    const target = await service.createBackup({ reason: 'manual' })
+    const markRecoveryRequired = jest.fn()
+    const relaunch = jest.fn()
+    const exit = jest.fn()
+
+    const result = await executeDatabaseRestore({
+      backupService: service,
+      backupId: target.id,
+      closeDatabase: () => {
+        database!.close()
+        database = null
+      },
+      replaceDatabase: jest.fn(() => {
+        throw new Error('injected replacement failure')
+      }),
+      verifyDatabase: jest.fn(),
+      markRecoveryRequired,
+      relaunch,
+      exit,
+    })
+
+    expect(result.outcome).toBe('restore-failed-recovery-required')
+    expect(markRecoveryRequired).toHaveBeenCalledTimes(1)
+    expect(relaunch).toHaveBeenCalledTimes(1)
+    expect(exit).toHaveBeenCalledTimes(1)
+    expect(fs.readdirSync(path.join(root, 'backups', 'database', 'failed'))
+      .some((entry) => entry.startsWith('restore-failed-target-'))).toBe(true)
+  })
+
+  test('does not exit when scheduling the relaunch fails', async () => {
+    const target = await service.createBackup({ reason: 'manual' })
+    const exit = jest.fn()
+
+    await expect(executeDatabaseRestore({
+      backupService: service,
+      backupId: target.id,
+      closeDatabase: () => {
+        database!.close()
+        database = null
+      },
+      replaceDatabase: jest.fn(),
+      verifyDatabase: jest.fn(),
+      relaunch: () => {
+        throw new Error('injected relaunch failure')
+      },
+      exit,
+    })).rejects.toMatchObject({ code: 'RESTORE_FAILED' })
+
+    expect(exit).not.toHaveBeenCalled()
   })
 })
 
@@ -303,10 +505,89 @@ describe('managed database lifecycle', () => {
     expect(result.success).toBe(true)
     if (!result.success) return
     try {
-      expect(result.migrationBackup?.reason).toBe('pre-migration')
+      expect(result.migrationBackup).toBeNull()
+      expect(await result.backupService.listBackups()).toEqual(
+        expect.not.arrayContaining([expect.objectContaining({ reason: 'pre-migration' })]),
+      )
       expect(result.database.prepare('SELECT value FROM original_data').get()).toEqual({
         value: '保留内容',
       })
+    } finally {
+      result.database.close()
+    }
+  })
+
+  test('keeps the application gated and ordinary backups blocked when credential migration is pending', async () => {
+    const legacy = initializeDatabase(root, { migrations: [first] })
+    legacy.close()
+
+    const result = await initializeDatabaseLifecycle({
+      userDataPath: root,
+      appVersion: 'test-version',
+      candidateMigrations: [first, seventh, eighth],
+      migrateCredentials: () => ({ pending: 1, failed: 0 }),
+    })
+
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    try {
+      expect(result.status).toMatchObject({
+        state: 'credential-migration-required',
+        backupAllowed: false,
+        backupEligibility: 'credential-migration-pending',
+        schemaVersion: 7,
+      })
+      await expect(result.backupService.createBackup({ reason: 'manual' })).rejects.toMatchObject({
+        code: 'BACKUP_NOT_ALLOWED',
+      })
+      expect(await result.backupService.listBackups()).toEqual([])
+    } finally {
+      result.database.close()
+    }
+  })
+
+  test('removes legacy credential bytes before creating the first ordinary backup', async () => {
+    const secret = 'sk-test-secret-do-not-expose-123456'
+    const legacy = initializeDatabase(root, {
+      migrations: migrations.filter((migration) => migration.version < 8),
+    })
+    legacy.prepare(
+      "INSERT INTO projects (id, slug, name) VALUES ('project-1', 'project-1', 'Project')",
+    ).run()
+    legacy.prepare(
+      `INSERT INTO llm_configs
+        (id, project_id, name, provider, base_url, model, api_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run('config-1', 'project-1', 'Default', 'openai', 'https://example.invalid', 'model', secret)
+    legacy.close()
+
+    const result = await initializeDatabaseLifecycle({
+      userDataPath: root,
+      appVersion: 'test-version',
+      migrateCredentials: (candidate) => {
+        candidate.prepare('UPDATE llm_configs SET api_key = ? WHERE id = ?').run('', 'config-1')
+        return { pending: 0, failed: 0 }
+      },
+    })
+
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    try {
+      const backup = (await result.backupService.listBackups())[0]
+      expect(backup).toBeDefined()
+      const backupPath = path.join(root, 'backups', 'database', backup.filename)
+      expect(fs.readFileSync(backupPath).includes(Buffer.from(secret))).toBe(false)
+      const snapshot = new Database(backupPath, { readonly: true, fileMustExist: true })
+      try {
+        const columns = snapshot.pragma('table_info(llm_configs)') as Array<{ name: string }>
+        expect(columns.some((column) => column.name === 'api_key')).toBe(false)
+      } finally {
+        snapshot.close()
+      }
+      expect(fs.readFileSync(
+        path.join(root, 'backups', 'database', `${backup.id}.json`),
+        'utf8',
+      )).not.toContain(secret)
     } finally {
       result.database.close()
     }

@@ -102,6 +102,7 @@ import type {
 } from './types/assistant'
 import type {
   BackupRecord,
+  BackupError,
   BackupVerificationResult,
   DatabaseStatus,
   RestoreExecutionResult,
@@ -155,16 +156,16 @@ interface ElectronAPI {
   deleteAllLlmCredentials: () => Promise<{ success: boolean; data?: { deleted: number; failed: number; referencesCleared: boolean; remaining: number }; error?: { code: string; message: string; retryable: boolean } }>
 
   // 数据安全
-  listBackups: () => Promise<{ success: boolean; data?: BackupRecord[]; error?: string }>
-  createBackup: () => Promise<{ success: boolean; data?: BackupRecord; error?: string }>
+  listBackups: () => Promise<{ success: boolean; data?: BackupRecord[]; error?: BackupError }>
+  createBackup: () => Promise<{ success: boolean; data?: BackupRecord; error?: BackupError }>
   verifyBackup: (
     id: string,
-  ) => Promise<{ success: boolean; data?: BackupVerificationResult; error?: string }>
+  ) => Promise<{ success: boolean; data?: BackupVerificationResult; error?: BackupError }>
   restoreBackup: (
     id: string,
     confirm: true,
-  ) => Promise<{ success: boolean; data?: RestoreExecutionResult; error?: string }>
-  getDatabaseStatus: () => Promise<{ success: boolean; data?: DatabaseStatus; error?: string }>
+  ) => Promise<{ success: boolean; data?: RestoreExecutionResult; error?: BackupError }>
+  getDatabaseStatus: () => Promise<{ success: boolean; data?: DatabaseStatus; error?: BackupError }>
 
   // 应用
   getAppInfo: () => Promise<any>

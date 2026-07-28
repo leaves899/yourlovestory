@@ -83,6 +83,7 @@ import type {
 import type { Foreshadow } from '../shared/narrativeWorkbench'
 import type {
   BackupRecord,
+  BackupError,
   BackupVerificationResult,
   DatabaseStatus,
   RestoreExecutionResult,
@@ -179,20 +180,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteAllLlmCredentials: () => ipcRenderer.invoke('llmCredential:deleteAll'),
 
   // 数据安全
-  listBackups: (): Promise<{ success: boolean; data?: BackupRecord[]; error?: string }> =>
+  listBackups: (): Promise<{ success: boolean; data?: BackupRecord[]; error?: BackupError }> =>
     ipcRenderer.invoke('backup:list'),
-  createBackup: (): Promise<{ success: boolean; data?: BackupRecord; error?: string }> =>
+  createBackup: (): Promise<{ success: boolean; data?: BackupRecord; error?: BackupError }> =>
     ipcRenderer.invoke('backup:create'),
   verifyBackup: (
     id: string,
-  ): Promise<{ success: boolean; data?: BackupVerificationResult; error?: string }> =>
+  ): Promise<{ success: boolean; data?: BackupVerificationResult; error?: BackupError }> =>
     ipcRenderer.invoke('backup:verify', { id }),
   restoreBackup: (
     id: string,
     confirm: true,
-  ): Promise<{ success: boolean; data?: RestoreExecutionResult; error?: string }> =>
+  ): Promise<{ success: boolean; data?: RestoreExecutionResult; error?: BackupError }> =>
     ipcRenderer.invoke('backup:restore', { id, confirm }),
-  getDatabaseStatus: (): Promise<{ success: boolean; data?: DatabaseStatus; error?: string }> =>
+  getDatabaseStatus: (): Promise<{ success: boolean; data?: DatabaseStatus; error?: BackupError }> =>
     ipcRenderer.invoke('backup:get-status'),
 
   // 应用

@@ -46,6 +46,9 @@ let databaseStatus: DatabaseStatus = {
   schemaVersion: null,
   message: '数据库尚未初始化。',
   lastBackupAt: null,
+  backupAllowed: false,
+  backupEligibility: 'database-unavailable',
+  backupBlockedReason: '数据库尚未初始化。',
 }
 
 const e2eUserDataPath = process.env.YOURCRUSH_E2E_USER_DATA
@@ -156,7 +159,18 @@ async function restoreDatabaseBackup(id: string): Promise<RestoreExecutionResult
     },
     relaunch: () => {
       app.relaunch()
-      app.exit(0)
+    },
+    exit: () => app.exit(0),
+    markRecoveryRequired: () => {
+      databaseStatus = {
+        ...databaseStatus,
+        state: 'recovery-required',
+        integrity: 'unknown',
+        message: '数据库恢复未完成，请从恢复中心重试。',
+        backupAllowed: false,
+        backupEligibility: 'database-unavailable',
+        backupBlockedReason: '数据库恢复未完成。',
+      }
     },
   })
 }
@@ -196,6 +210,16 @@ app.whenReady().then(async () => {
       pending: credentialMigration.pending,
       failed: credentialMigration.failed,
     })
+  }
+  if (lifecycle.status.state !== 'ready') {
+    setupIPC({
+      credentialService,
+      database,
+      backupService,
+      databaseStatus,
+      restoreBackup: restoreDatabaseBackup,
+    })
+    return
   }
   workbenchService = createWorkbenchService(database, { projectRoot: app.getPath('userData') })
   const llmCredentialController = new LlmCredentialController({

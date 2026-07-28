@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3'
+import * as fs from 'node:fs'
 import type { DatabaseBackupService, RestoreExecutionResult } from '../backup'
+import { backupError } from '../backup'
 import { replaceDatabaseFromStagedFile } from './lifecycle'
 
 export interface ExecuteDatabaseRestoreOptions {
@@ -7,7 +9,11 @@ export interface ExecuteDatabaseRestoreOptions {
   backupId: string
   closeDatabase: () => void
   relaunch: () => void
+  exit: () => void
+  markRecoveryRequired?: () => void
   databaseAvailable?: boolean
+  replaceDatabase?: (databasePath: string, stagedPath: string) => void
+  verifyDatabase?: (filename: string) => void
 }
 
 function verifyRestoredDatabase(filename: string): void {
@@ -15,11 +21,26 @@ function verifyRestoredDatabase(filename: string): void {
   try {
     const quickCheck = database.pragma('quick_check') as Array<{ quick_check: string }>
     if (quickCheck.length !== 1 || quickCheck[0]?.quick_check !== 'ok') {
-      throw new Error('Restored database integrity check failed')
+      throw backupError('BACKUP_INVALID')
     }
   } finally {
     database.close()
   }
+}
+
+function relaunchAndExit(options: ExecuteDatabaseRestoreOptions): void {
+  try {
+    options.relaunch()
+  } catch {
+    throw backupError('RESTORE_FAILED')
+  }
+  options.exit()
+}
+
+function removeStagedDatabase(filename: string): void {
+  fs.rmSync(filename, { force: true })
+  fs.rmSync(`${filename}-wal`, { force: true })
+  fs.rmSync(`${filename}-shm`, { force: true })
 }
 
 export async function executeDatabaseRestore(
@@ -27,30 +48,72 @@ export async function executeDatabaseRestore(
 ): Promise<RestoreExecutionResult> {
   const prepared = await options.backupService.restoreBackup(options.backupId)
   if (!prepared.ready) {
-    throw new Error(prepared.verification.error ?? 'Backup verification failed')
+    throw backupError(prepared.verification.errorCode ?? 'BACKUP_INVALID')
   }
 
   const databaseAvailable = options.databaseAvailable ?? true
   const preRestoreBackupId = databaseAvailable
     ? (await options.backupService.createBackup({ reason: 'pre-restore' })).id
-    : options.backupService.preserveCurrentDatabase('pre-restore-unusable')
+    : null
+  if (!databaseAvailable) {
+    try {
+      options.backupService.preserveCurrentDatabase('pre-restore-unusable')
+    } catch {
+      // A missing unusable database does not prevent restoring a verified backup.
+    }
+  }
   const staged = await options.backupService.stageRestore(options.backupId)
+  const replaceDatabase = options.replaceDatabase ?? replaceDatabaseFromStagedFile
+  const verifyDatabase = options.verifyDatabase ?? verifyRestoredDatabase
   options.closeDatabase()
 
   try {
-    replaceDatabaseFromStagedFile(options.backupService.getDatabasePath(), staged)
-    verifyRestoredDatabase(options.backupService.getDatabasePath())
-  } catch (error: unknown) {
-    if (databaseAvailable) {
-      const rollback = await options.backupService.stageRestore(preRestoreBackupId)
-      replaceDatabaseFromStagedFile(options.backupService.getDatabasePath(), rollback)
+    replaceDatabase(options.backupService.getDatabasePath(), staged)
+    verifyDatabase(options.backupService.getDatabasePath())
+  } catch {
+    removeStagedDatabase(staged)
+    try {
+      options.backupService.preserveCurrentDatabase('restore-failed-target')
+    } catch {
+      // Keep the verified user backups as the primary recovery source.
     }
-    throw error
+    if (databaseAvailable && preRestoreBackupId) {
+      let rollbackSucceeded = false
+      try {
+        const rollback = await options.backupService.stageRestore(preRestoreBackupId)
+        try {
+          replaceDatabase(options.backupService.getDatabasePath(), rollback)
+          verifyDatabase(options.backupService.getDatabasePath())
+          rollbackSucceeded = true
+        } finally {
+          removeStagedDatabase(rollback)
+        }
+      } catch {
+        options.markRecoveryRequired?.()
+      }
+      relaunchAndExit(options)
+      return {
+        outcome: rollbackSucceeded
+          ? 'restore-failed-rolled-back'
+          : 'restore-failed-recovery-required',
+        backupId: options.backupId,
+        preRestoreBackupId,
+        relaunching: true,
+      }
+    }
+    options.markRecoveryRequired?.()
+    relaunchAndExit(options)
+    return {
+      outcome: 'restore-failed-recovery-required',
+      backupId: options.backupId,
+      preRestoreBackupId,
+      relaunching: true,
+    }
   }
-
-  options.relaunch()
+  removeStagedDatabase(staged)
+  relaunchAndExit(options)
   return {
-    restored: true,
+    outcome: 'restored',
     backupId: options.backupId,
     preRestoreBackupId,
     relaunching: true,

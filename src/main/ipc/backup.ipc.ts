@@ -1,13 +1,14 @@
 import type {
+  BackupError,
   BackupService,
   DatabaseStatus,
   RestoreExecutionResult,
 } from '../backup'
+import { backupError, toBackupError } from '../backup'
 import {
   assertTrustedIpcSender,
   isRecord,
   readString,
-  safeError,
   type IpcRegistry,
 } from './shared'
 
@@ -18,7 +19,7 @@ interface BackupIpcDependencies {
 }
 
 function requireService(service?: BackupService): BackupService {
-  if (!service) throw new Error('Backup service is not initialized')
+  if (!service) throw backupError('DATABASE_UNAVAILABLE')
   return service
 }
 
@@ -44,9 +45,9 @@ function parseRestore(value: unknown): { id: string; confirm: true } {
   return { id: readString(value.id, 'id'), confirm: true }
 }
 
-const formatError = (error: unknown): { success: false; error: string } => ({
+const formatError = (error: unknown): { success: false; error: BackupError } => ({
   success: false,
-  error: safeError(error, 'Backup operation failed'),
+  error: toBackupError(error, 'BACKUP_INVALID'),
 })
 
 export function registerBackupIPC(
