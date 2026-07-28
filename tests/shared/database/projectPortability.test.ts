@@ -507,20 +507,30 @@ describe('ProjectPortabilityService', () => {
       schemaVersion: 8,
     })
     const archive = await exporter.inspectArchiveJson(exporter.buildArchive(PROJECT_ID).json)
-    const importer = new ProjectPortabilityService(database, {
-      appVersion: '0.2.0-alpha.1',
-      schemaVersion: 8,
-      faultInjection: (stage) => {
-        if (stage === 'after-character') throw new Error('injected')
-      },
-    })
-    expect(() => importer.importArchive(archive)).toThrow(
-      expect.objectContaining({ code: 'PROJECT_IMPORT_FAILED' }),
-    )
-    expect(database.prepare<{ count: number }>('SELECT COUNT(*) AS count FROM projects').get()?.count)
-      .toBe(1)
-    expect(database.prepare<{ count: number }>('SELECT COUNT(*) AS count FROM characters').get()?.count)
-      .toBe(1)
+    for (const failureStage of [
+      'after-project',
+      'after-character',
+      'after-chapter',
+      'after-narrative-memory',
+      'after-project-skill',
+    ]) {
+      const importer = new ProjectPortabilityService(database, {
+        appVersion: '0.2.0-alpha.1',
+        schemaVersion: 8,
+        faultInjection: (stage) => {
+          if (stage === failureStage) throw new Error('injected')
+        },
+      })
+      expect(() => importer.importArchive(archive)).toThrow(
+        expect.objectContaining({ code: 'PROJECT_IMPORT_FAILED' }),
+      )
+      expect(
+        database.prepare<{ count: number }>('SELECT COUNT(*) AS count FROM projects').get()?.count,
+      ).toBe(1)
+      expect(
+        database.prepare<{ count: number }>('SELECT COUNT(*) AS count FROM characters').get()?.count,
+      ).toBe(1)
+    }
   })
 
   test('uses one-time opaque tokens and rejects duplicate or concurrent commits', async () => {
