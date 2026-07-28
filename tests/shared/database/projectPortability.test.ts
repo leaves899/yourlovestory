@@ -19,6 +19,14 @@ const MATERIAL_ID = 'material-source'
 const TEST_SECRET = 'test-api-key-must-not-export'
 const LOCAL_PATH = 'C:\\Users\\private-user\\source.txt'
 
+function cloneArchive(archive: ProjectArchiveV1): ProjectArchiveV1 {
+  return JSON.parse(JSON.stringify(archive)) as ProjectArchiveV1
+}
+
+function refreshPayloadChecksum(archive: ProjectArchiveV1): void {
+  archive.manifest.payloadSha256 = sha256(stableStringify(archive.payload))
+}
+
 function seed(database: SqliteDatabase): void {
   database.prepare(
     `INSERT INTO projects (
@@ -409,7 +417,7 @@ describe('ProjectPortabilityService', () => {
       appVersion: '0.2.0-alpha.1',
       schemaVersion: 8,
     })
-    const built = service.buildArchive(PROJECT_ID)
+    const built = await service.buildArchive(PROJECT_ID)
 
     expect(built.json).not.toContain(TEST_SECRET)
     expect(built.json).not.toContain(LOCAL_PATH)
@@ -457,7 +465,7 @@ describe('ProjectPortabilityService', () => {
       appVersion: '0.2.0-alpha.1',
       schemaVersion: 8,
     })
-    const archive = JSON.parse(service.buildArchive(PROJECT_ID).json) as ProjectArchiveV1
+    const archive = JSON.parse((await service.buildArchive(PROJECT_ID)).json) as ProjectArchiveV1
     archive.payload.projects[0].name = '篡改'
     await expect(service.inspectArchiveJson(JSON.stringify(archive))).rejects.toMatchObject({
       code: 'PROJECT_IMPORT_CHECKSUM_MISMATCH',
@@ -471,7 +479,7 @@ describe('ProjectPortabilityService', () => {
       appVersion: '0.2.0-alpha.1',
       schemaVersion: 8,
     })
-    const original = JSON.parse(service.buildArchive(PROJECT_ID).json) as ProjectArchiveV1
+    const original = JSON.parse((await service.buildArchive(PROJECT_ID)).json) as ProjectArchiveV1
     const future = JSON.parse(JSON.stringify(original)) as ProjectArchiveV1
     future.manifest.formatVersion = 2 as 1
     await expect(service.inspectArchiveJson(JSON.stringify(future))).rejects.toMatchObject({
@@ -506,7 +514,7 @@ describe('ProjectPortabilityService', () => {
       appVersion: '0.2.0-alpha.1',
       schemaVersion: 8,
     })
-    const archive = await exporter.inspectArchiveJson(exporter.buildArchive(PROJECT_ID).json)
+    const archive = await exporter.inspectArchiveJson((await exporter.buildArchive(PROJECT_ID)).json)
     for (const failureStage of [
       'after-project',
       'after-character',
@@ -540,7 +548,7 @@ describe('ProjectPortabilityService', () => {
     })
     const coordinator = new ProjectPortabilityCoordinator(service, temporaryDirectory)
     const sourceFile = path.join(temporaryDirectory, 'input.yourcrush-project.json')
-    fs.writeFileSync(sourceFile, service.buildArchive(PROJECT_ID).json)
+    fs.writeFileSync(sourceFile, (await service.buildArchive(PROJECT_ID)).json)
 
     const firstPreview = await coordinator.inspectFile(sourceFile)
     const [first, duplicate] = await Promise.allSettled([
@@ -576,5 +584,234 @@ describe('ProjectPortabilityService', () => {
       code: 'PROJECT_IMPORT_TOO_LARGE',
     })
     await coordinator.dispose()
+  })
+
+  test('self-validates exports and enforces the archive byte boundary', async () => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const baseline = await service.buildArchive(PROJECT_ID)
+    const exact = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+      archiveMaxBytes: Buffer.byteLength(baseline.json),
+    })
+    await expect(exact.buildArchive(PROJECT_ID)).resolves.toMatchObject({
+      recordCounts: baseline.recordCounts,
+    })
+    const tooSmall = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+      archiveMaxBytes: Buffer.byteLength(baseline.json) - 1,
+    })
+    await expect(tooSmall.buildArchive(PROJECT_ID)).rejects.toMatchObject({
+      code: 'PROJECT_EXPORT_TOO_LARGE',
+    })
+
+    database.prepare('UPDATE projects SET status = ? WHERE id = ?').run('invalid-status', PROJECT_ID)
+    await expect(service.buildArchive(PROJECT_ID)).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_INVALID',
+    })
+  })
+
+  test('binds manifest identity to payload and canonicalizes warning messages', async () => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const original = JSON.parse((await service.buildArchive(PROJECT_ID)).json) as ProjectArchiveV1
+    for (const field of ['sourceProjectId', 'projectName'] as const) {
+      const forged = cloneArchive(original)
+      forged.manifest[field] = 'attacker-controlled'
+      await expect(service.inspectArchiveJson(JSON.stringify(forged))).rejects.toMatchObject({
+        code: 'PROJECT_IMPORT_INVALID',
+      })
+    }
+
+    const forgedWarning = cloneArchive(original)
+    forgedWarning.manifest.warnings[0].message = 'archive-controlled warning'
+    const inspected = await service.inspectArchiveJson(JSON.stringify(forgedWarning))
+    expect(inspected.manifest.warnings[0].message).not.toContain('archive-controlled')
+
+    const duplicateWarning = cloneArchive(original)
+    duplicateWarning.manifest.warnings.push({ ...duplicateWarning.manifest.warnings[0] })
+    await expect(service.inspectArchiveJson(JSON.stringify(duplicateWarning))).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_INVALID',
+    })
+  })
+
+  test('rejects enum, range, uniqueness, ownership, and cycle violations before insert', async () => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const original = JSON.parse((await service.buildArchive(PROJECT_ID)).json) as ProjectArchiveV1
+    const cases: Array<{
+      code: 'PROJECT_IMPORT_INVALID' | 'PROJECT_IMPORT_CONFLICT'
+      mutate: (archive: ProjectArchiveV1) => void
+    }> = [
+      {
+        code: 'PROJECT_IMPORT_INVALID',
+        mutate: (archive) => { archive.payload.chapters[0].status = 'unknown' },
+      },
+      {
+        code: 'PROJECT_IMPORT_INVALID',
+        mutate: (archive) => { archive.payload.narrative_memory_proposals[0].confidence = 2 },
+      },
+      {
+        code: 'PROJECT_IMPORT_INVALID',
+        mutate: (archive) => { archive.payload.projects[0].created_at = '2026-02-31' },
+      },
+      {
+        code: 'PROJECT_IMPORT_CONFLICT',
+        mutate: (archive) => {
+          archive.payload.project_skills.push({ ...archive.payload.project_skills[0] })
+        },
+      },
+      {
+        code: 'PROJECT_IMPORT_CONFLICT',
+        mutate: (archive) => {
+          const duplicate = { ...archive.payload.chapter_revisions[1], id: 'revision-duplicate' }
+          archive.payload.chapter_revisions.push(duplicate)
+        },
+      },
+      {
+        code: 'PROJECT_IMPORT_CONFLICT',
+        mutate: (archive) => {
+          const duplicate = { ...archive.payload.volumes[0], id: 'volume-duplicate' }
+          archive.payload.volumes.push(duplicate)
+        },
+      },
+      {
+        code: 'PROJECT_IMPORT_CONFLICT',
+        mutate: (archive) => {
+          const duplicate = { ...archive.payload.chapters[0], id: 'chapter-duplicate' }
+          archive.payload.chapters.push(duplicate)
+        },
+      },
+      {
+        code: 'PROJECT_IMPORT_CONFLICT',
+        mutate: (archive) => {
+          const duplicate = { ...archive.payload.chapter_versions[0], id: 'version-duplicate' }
+          archive.payload.chapter_versions.push(duplicate)
+        },
+      },
+      {
+        code: 'PROJECT_IMPORT_CONFLICT',
+        mutate: (archive) => {
+          const duplicate = { ...archive.payload.volume_outlines[0], id: 'outline-duplicate' }
+          archive.payload.volume_outlines.push(duplicate)
+        },
+      },
+      {
+        code: 'PROJECT_IMPORT_INVALID',
+        mutate: (archive) => {
+          archive.payload.arcs[0].parent_arc_id = archive.payload.arcs[0].id
+        },
+      },
+      {
+        code: 'PROJECT_IMPORT_INVALID',
+        mutate: (archive) => {
+          archive.payload.roadmap_items[0].parent_item_id = 'roadmap-child'
+        },
+      },
+      {
+        code: 'PROJECT_IMPORT_INVALID',
+        mutate: (archive) => {
+          archive.payload.chapter_revisions[0].parent_revision_id = 'revision-2'
+        },
+      },
+      {
+        code: 'PROJECT_IMPORT_INVALID',
+        mutate: (archive) => {
+          archive.payload.relations[0].source_character_id = null
+        },
+      },
+      {
+        code: 'PROJECT_IMPORT_INVALID',
+        mutate: (archive) => {
+          archive.payload.chapters.push({
+            ...archive.payload.chapters[0],
+            id: 'chapter-second',
+            chapter_number: 2,
+          })
+          archive.payload.chapter_revisions[0].chapter_id = 'chapter-second'
+        },
+      },
+    ]
+    for (const entry of cases) {
+      const archive = cloneArchive(original)
+      entry.mutate(archive)
+      refreshPayloadChecksum(archive)
+      await expect(service.inspectArchiveJson(JSON.stringify(archive))).rejects.toMatchObject({
+        code: entry.code,
+      })
+    }
+  })
+
+  test('only preserves credential-free http(s) source URIs and strips query and fragment', async () => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    for (const unsafe of [
+      'ftp://example.test/private',
+      'smb://server/share/private',
+      'ssh://example.test/private',
+      'custom:private-value',
+      'C:drive-relative-secret',
+      'https://user:password@example.test/private',
+    ]) {
+      database.prepare('UPDATE source_materials SET uri = ? WHERE id = ?').run(unsafe, MATERIAL_ID)
+      const built = await service.buildArchive(PROJECT_ID)
+      expect(built.archive.payload.source_materials[0].uri).toBeNull()
+      expect(Buffer.from(built.json, 'utf8').includes(Buffer.from(unsafe, 'utf8'))).toBe(false)
+    }
+
+    const portable = 'https://example.test/source?token=secret-token#private-fragment'
+    database.prepare('UPDATE source_materials SET uri = ? WHERE id = ?').run(portable, MATERIAL_ID)
+    const built = await service.buildArchive(PROJECT_ID)
+    expect(built.archive.payload.source_materials[0].uri).toBe('https://example.test/source')
+    expect(Buffer.from(built.json, 'utf8').includes(Buffer.from('secret-token', 'utf8'))).toBe(false)
+    expect(Buffer.from(built.json, 'utf8').includes(Buffer.from('private-fragment', 'utf8'))).toBe(false)
+  })
+
+  test('expires tokens without retaining staged entries and enforces active staging limits', async () => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const sourceFile = path.join(temporaryDirectory, 'limits.yourcrush-project.json')
+    fs.writeFileSync(sourceFile, (await service.buildArchive(PROJECT_ID)).json)
+    const coordinator = new ProjectPortabilityCoordinator(service, temporaryDirectory, {
+      tokenTtlMs: 20,
+      maxActiveTokens: 1,
+      maxStagedBytes: fs.statSync(sourceFile).size,
+    })
+    const preview = await coordinator.inspectFile(sourceFile)
+    await expect(coordinator.inspectFile(sourceFile)).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_LIMIT_REACHED',
+    })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await expect(coordinator.commitImport(preview.importToken)).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_EXPIRED',
+    })
+    const stagingRoot = path.join(temporaryDirectory, 'project-import-staging')
+    expect(
+      fs.readdirSync(stagingRoot, { recursive: true }).filter((entry) => String(entry).endsWith('.json')),
+    ).toEqual([])
+    const next = await coordinator.inspectFile(sourceFile)
+    await expect(coordinator.cancelImport(next.importToken)).resolves.toEqual({ canceled: true })
+    await coordinator.dispose()
+
+    const byteLimited = new ProjectPortabilityCoordinator(service, temporaryDirectory, {
+      maxActiveTokens: 8,
+      maxStagedBytes: fs.statSync(sourceFile).size - 1,
+    })
+    await expect(byteLimited.inspectFile(sourceFile)).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_LIMIT_REACHED',
+    })
+    await byteLimited.dispose()
   })
 })
