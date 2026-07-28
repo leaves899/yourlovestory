@@ -26,16 +26,21 @@ function columnExists(database: SqliteDatabase, table: string, column: string): 
 }
 
 function countPlaintextValues(value: unknown): number {
-  if (!value || typeof value !== 'object') return 0
-  if (Array.isArray(value)) {
-    return value.reduce((count, entry) => count + countPlaintextValues(entry), 0)
-  }
   let count = 0
-  for (const [key, entry] of Object.entries(value)) {
-    if (isPlaintextCredentialKey(key) && typeof entry === 'string' && entry.trim()) {
-      count += 1
-    } else {
-      count += countPlaintextValues(entry)
+  const pending: unknown[] = [value]
+  while (pending.length > 0) {
+    const current = pending.pop()
+    if (!current || typeof current !== 'object') continue
+    if (Array.isArray(current)) {
+      for (const entry of current) pending.push(entry)
+      continue
+    }
+    for (const [key, entry] of Object.entries(current)) {
+      if (isPlaintextCredentialKey(key) && typeof entry === 'string' && entry.trim()) {
+        count += 1
+      } else {
+        pending.push(entry)
+      }
     }
   }
   return count
@@ -45,7 +50,7 @@ function countProjectConfigPlaintext(database: SqliteDatabase): number {
   if (!columnExists(database, 'project_configs', 'settings_json')) return 0
   const rows = database
     .prepare<{ settings_json: string }>(
-      "SELECT settings_json FROM project_configs WHERE settings_json LIKE '%key%' COLLATE NOCASE OR settings_json LIKE '%token%' COLLATE NOCASE OR settings_json LIKE '%secret%' COLLATE NOCASE OR settings_json LIKE '%password%' COLLATE NOCASE",
+      "SELECT settings_json FROM project_configs WHERE settings_json LIKE '%key%' COLLATE NOCASE OR settings_json LIKE '%token%' COLLATE NOCASE OR settings_json LIKE '%secret%' COLLATE NOCASE OR settings_json LIKE '%password%' COLLATE NOCASE OR settings_json LIKE '%authorization%' COLLATE NOCASE",
     )
     .all()
   let count = 0
