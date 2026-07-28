@@ -19,7 +19,11 @@ export class DatabaseRuntimeStatus {
 
   public replace(status: DatabaseStatus): void {
     this.status = status
-    this.emit(status)
+    try {
+      this.emit(status)
+    } catch {
+      // Runtime state is authoritative; renderer notification is best effort.
+    }
   }
 
   public beginRestore(): void {

@@ -13,6 +13,7 @@ import {
   initializeDatabase,
   initializeDatabaseLifecycle,
   migrations,
+  shutdownDatabaseResources,
   type Migration,
   type SqliteDatabase,
 } from '@/main/database'
@@ -262,6 +263,7 @@ describe('database backup service', () => {
       closeDatabase: () => {
         database!.close()
         database = null
+        return { databaseClosed: true, serviceCleanupFailed: false }
       },
       relaunch,
       exit: jest.fn(),
@@ -299,7 +301,10 @@ describe('database backup service', () => {
       backupService: service,
       backupId: target.id,
       databaseAvailable: false,
-      closeDatabase: jest.fn(),
+      closeDatabase: jest.fn(() => ({
+        databaseClosed: true,
+        serviceCleanupFailed: false,
+      })),
       relaunch,
       exit: jest.fn(),
     })
@@ -339,6 +344,7 @@ describe('database backup service', () => {
       closeDatabase: () => {
         database!.close()
         database = null
+        return { databaseClosed: true, serviceCleanupFailed: false }
       },
       replaceDatabase,
       verifyDatabase: jest.fn(),
@@ -370,6 +376,7 @@ describe('database backup service', () => {
       closeDatabase: () => {
         database!.close()
         database = null
+        return { databaseClosed: true, serviceCleanupFailed: false }
       },
       replaceDatabase: jest.fn(),
       verifyDatabase,
@@ -393,6 +400,7 @@ describe('database backup service', () => {
       closeDatabase: () => {
         database!.close()
         database = null
+        return { databaseClosed: true, serviceCleanupFailed: false }
       },
       replaceDatabase: jest.fn(() => {
         throw new Error('injected replacement failure')
@@ -419,6 +427,7 @@ describe('database backup service', () => {
     const closeDatabase = jest.fn(() => {
       database!.close()
       database = null
+      return { databaseClosed: true, serviceCleanupFailed: false }
     })
 
     await expect(executeDatabaseRestore({
@@ -444,6 +453,142 @@ describe('database backup service', () => {
     )
     expect(markRecoveryRequired).toHaveBeenCalledTimes(1)
     expect(exit).not.toHaveBeenCalled()
+  })
+
+  test('continues restore when service cleanup fails but the database closes', async () => {
+    const target = await service.createBackup({ reason: 'manual' })
+    const replaceDatabase = jest.fn()
+    const verifyDatabase = jest.fn()
+    const relaunch = jest.fn()
+
+    const result = await executeDatabaseRestore({
+      backupService: service,
+      backupId: target.id,
+      closeDatabase: () => {
+        database!.close()
+        database = null
+        return { databaseClosed: true, serviceCleanupFailed: true }
+      },
+      replaceDatabase,
+      verifyDatabase,
+      relaunch,
+      exit: jest.fn(),
+    })
+
+    expect(result.outcome).toBe('restored')
+    expect(replaceDatabase).toHaveBeenCalledTimes(1)
+    expect(verifyDatabase).toHaveBeenCalledTimes(1)
+    expect(relaunch).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not replace the database when shutdown cannot confirm it closed', async () => {
+    const target = await service.createBackup({ reason: 'manual' })
+    const replaceDatabase = jest.fn()
+    const verifyDatabase = jest.fn()
+    const markRecoveryRequired = jest.fn()
+    const relaunch = jest.fn()
+    const exit = jest.fn()
+
+    await expect(executeDatabaseRestore({
+      backupService: service,
+      backupId: target.id,
+      closeDatabase: () => shutdownDatabaseResources({
+        taskManager: null,
+        assistantService: null,
+        database: {
+          close: () => {
+            throw new Error('injected database close failure')
+          },
+        },
+      }),
+      replaceDatabase,
+      verifyDatabase,
+      markRecoveryRequired,
+      relaunch,
+      exit,
+    })).rejects.toMatchObject({
+      code: 'RESTORE_FAILED',
+      message: expect.not.stringContaining('injected'),
+    })
+
+    expect(replaceDatabase).not.toHaveBeenCalled()
+    expect(verifyDatabase).not.toHaveBeenCalled()
+    expect(markRecoveryRequired).toHaveBeenCalledTimes(1)
+    expect(relaunch).toHaveBeenCalledTimes(1)
+    expect(exit).toHaveBeenCalledTimes(1)
+    expect(fs.readdirSync(path.dirname(getDatabasePath(root)))
+      .filter((entry) => entry.includes('.restore-'))).toEqual([])
+  })
+
+  test('keeps recovery available when database close and relaunch both fail', async () => {
+    const target = await service.createBackup({ reason: 'manual' })
+    const runtimeStatus = {
+      state: 'ready' as 'ready' | 'restoring' | 'recovery-required',
+    }
+    const exit = jest.fn()
+
+    await expect(executeDatabaseRestore({
+      backupService: service,
+      backupId: target.id,
+      markRestoring: () => {
+        runtimeStatus.state = 'restoring'
+      },
+      closeDatabase: () => ({
+        databaseClosed: false,
+        serviceCleanupFailed: false,
+      }),
+      markRecoveryRequired: () => {
+        runtimeStatus.state = 'recovery-required'
+      },
+      relaunch: () => {
+        throw new Error(`injected relaunch failure ${getDatabasePath(root)}`)
+      },
+      exit,
+    })).rejects.toEqual(expect.objectContaining({
+      code: 'RESTORE_FAILED',
+      message: expect.not.stringContaining(root),
+    }))
+
+    expect(runtimeStatus.state).toBe('recovery-required')
+    expect(exit).not.toHaveBeenCalled()
+    expect(await service.listBackups()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: target.id })]),
+    )
+    expect(await service.verifyBackup(target.id)).toMatchObject({ valid: true })
+    expect(fs.readdirSync(path.dirname(getDatabasePath(root)))
+      .filter((entry) => entry.includes('.restore-'))).toEqual([])
+  })
+
+  test('cleans the staged restore without closing or replacing when restoring status fails', async () => {
+    const target = await service.createBackup({ reason: 'manual' })
+    const closeDatabase = jest.fn(() => ({
+      databaseClosed: true,
+      serviceCleanupFailed: false,
+    }))
+    const replaceDatabase = jest.fn()
+    const markRecoveryRequired = jest.fn()
+
+    await expect(executeDatabaseRestore({
+      backupService: service,
+      backupId: target.id,
+      markRestoring: () => {
+        throw new Error(`injected status failure ${getDatabasePath(root)}`)
+      },
+      closeDatabase,
+      replaceDatabase,
+      markRecoveryRequired,
+      relaunch: jest.fn(),
+      exit: jest.fn(),
+    })).rejects.toEqual(expect.objectContaining({
+      code: 'RESTORE_FAILED',
+      message: expect.not.stringContaining(root),
+    }))
+
+    expect(closeDatabase).not.toHaveBeenCalled()
+    expect(replaceDatabase).not.toHaveBeenCalled()
+    expect(markRecoveryRequired).toHaveBeenCalledTimes(1)
+    expect(fs.readdirSync(path.dirname(getDatabasePath(root)))
+      .filter((entry) => entry.includes('.restore-'))).toEqual([])
   })
 })
 

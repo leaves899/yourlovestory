@@ -8,6 +8,7 @@ import {
   DatabaseRuntimeStatus,
   executeDatabaseRestore,
   initializeDatabaseLifecycle,
+  shutdownDatabaseResources,
   TaskRepository,
 } from './database'
 import type { SqliteDatabase } from './database'
@@ -155,13 +156,24 @@ async function restoreDatabaseBackup(id: string): Promise<RestoreExecutionResult
     databaseAvailable,
     markRestoring: () => databaseRuntime.beginRestore(),
     closeDatabase: () => {
-      taskManager?.dispose()
+      const taskManagerToDispose = taskManager
       taskManager = null
-      assistantService?.dispose()
+      const assistantServiceToDispose = assistantService
       assistantService = null
       workbenchService = null
-      database?.close()
-      database = null
+      const databaseToClose = database
+      const result = shutdownDatabaseResources({
+        taskManager: taskManagerToDispose,
+        assistantService: assistantServiceToDispose,
+        database: databaseToClose,
+      })
+      if (result.databaseClosed) {
+        database = null
+      }
+      if (result.serviceCleanupFailed) {
+        console.warn('[DatabaseRestore] Service cleanup was incomplete')
+      }
+      return result
     },
     relaunch: () => {
       app.relaunch()

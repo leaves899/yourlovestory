@@ -3,11 +3,12 @@ import * as fs from 'node:fs'
 import type { DatabaseBackupService, RestoreExecutionResult } from '../backup'
 import { backupError } from '../backup'
 import { replaceDatabaseFromStagedFile } from './lifecycle'
+import type { DatabaseShutdownResult } from './shutdown'
 
 export interface ExecuteDatabaseRestoreOptions {
   backupService: DatabaseBackupService
   backupId: string
-  closeDatabase: () => void
+  closeDatabase: () => DatabaseShutdownResult
   relaunch: () => void
   exit: () => void
   markRecoveryRequired?: () => void
@@ -33,16 +34,33 @@ function relaunchAndExit(options: ExecuteDatabaseRestoreOptions): void {
   try {
     options.relaunch()
   } catch {
-    options.markRecoveryRequired?.()
+    markRecoveryRequired(options)
     throw backupError('RESTORE_FAILED')
   }
-  options.exit()
+  try {
+    options.exit()
+  } catch {
+    markRecoveryRequired(options)
+    throw backupError('RESTORE_FAILED')
+  }
 }
 
 function removeStagedDatabase(filename: string): void {
-  fs.rmSync(filename, { force: true })
-  fs.rmSync(`${filename}-wal`, { force: true })
-  fs.rmSync(`${filename}-shm`, { force: true })
+  for (const candidate of [filename, `${filename}-wal`, `${filename}-shm`]) {
+    try {
+      fs.rmSync(candidate, { force: true })
+    } catch {
+      // Cleanup is best effort; recovery state and stable errors remain authoritative.
+    }
+  }
+}
+
+function markRecoveryRequired(options: ExecuteDatabaseRestoreOptions): void {
+  try {
+    options.markRecoveryRequired?.()
+  } catch {
+    // Recovery state notification must not expose or replace the stable error.
+  }
 }
 
 export async function executeDatabaseRestore(
@@ -67,8 +85,29 @@ export async function executeDatabaseRestore(
   const staged = await options.backupService.stageRestore(options.backupId)
   const replaceDatabase = options.replaceDatabase ?? replaceDatabaseFromStagedFile
   const verifyDatabase = options.verifyDatabase ?? verifyRestoredDatabase
-  options.markRestoring?.()
-  options.closeDatabase()
+  try {
+    options.markRestoring?.()
+  } catch {
+    removeStagedDatabase(staged)
+    markRecoveryRequired(options)
+    throw backupError('RESTORE_FAILED')
+  }
+
+  let shutdown: DatabaseShutdownResult
+  try {
+    shutdown = options.closeDatabase()
+  } catch {
+    shutdown = {
+      databaseClosed: false,
+      serviceCleanupFailed: true,
+    }
+  }
+  if (!shutdown.databaseClosed) {
+    removeStagedDatabase(staged)
+    markRecoveryRequired(options)
+    relaunchAndExit(options)
+    throw backupError('RESTORE_FAILED')
+  }
 
   try {
     replaceDatabase(options.backupService.getDatabasePath(), staged)
@@ -92,7 +131,7 @@ export async function executeDatabaseRestore(
           removeStagedDatabase(rollback)
         }
       } catch {
-        options.markRecoveryRequired?.()
+        markRecoveryRequired(options)
       }
       relaunchAndExit(options)
       return {
@@ -104,7 +143,7 @@ export async function executeDatabaseRestore(
         relaunching: true,
       }
     }
-    options.markRecoveryRequired?.()
+    markRecoveryRequired(options)
     relaunchAndExit(options)
     return {
       outcome: 'restore-failed-recovery-required',
