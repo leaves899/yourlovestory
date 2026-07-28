@@ -12,6 +12,20 @@ interface MockCall {
   timestamp: number
 }
 
+interface MockElectronOptions {
+  databaseState?: 'ready' | 'credential-migration-required' | 'recovery-required'
+  backups?: Array<{
+    id: string
+    filename: string
+    createdAt: string
+    reason: 'scheduled' | 'manual' | 'pre-migration' | 'pre-restore'
+    appVersion: string
+    schemaVersion: number
+    size: number
+    sha256: string
+  }>
+}
+
 interface FragmentRecord {
   id: string
   slug: string
@@ -58,7 +72,7 @@ interface ProgressRecord {
 }
 
 // 在浏览器上下文中运行的注入脚本
-function mockElectronAPIScript() {
+function mockElectronAPIScript(options: MockElectronOptions = {}) {
   const mockCalls: MockCall[] = []
   const fragmentStore: FragmentRecord[] = []
   const crushStore: CrushRecord[] = []
@@ -117,7 +131,51 @@ function mockElectronAPIScript() {
   }
 
   ;(window as any).electronAPI = {
-    listNovelProjects: async () => ({ success: true, data: [...projectStore] }),
+    getDatabaseStatus: async () => {
+      track('backup:get-status', undefined)
+      const state = options.databaseState ?? 'ready'
+      return {
+        success: true,
+        data: {
+          state,
+          integrity: state === 'ready' ? 'ok' : 'unknown',
+          schemaVersion: state === 'ready' ? 8 : null,
+          message: state === 'ready' ? null : '数据库需要恢复后才能继续使用。',
+          lastBackupAt: null,
+          backupAllowed: state === 'ready',
+          backupEligibility: state === 'ready' ? 'safe' : 'database-unavailable',
+          backupBlockedReason: state === 'ready' ? null : '数据库当前不可用。',
+        },
+      }
+    },
+    listBackups: async () => {
+      track('backup:list', undefined)
+      return { success: true, data: options.backups ?? [] }
+    },
+    createBackup: async () => ({ success: true }),
+    verifyBackup: async (id: string) => {
+      track('backup:verify', { id })
+      return {
+        success: true,
+        data: { id, valid: true, checkedAt: new Date().toISOString() },
+      }
+    },
+    restoreBackup: async (id: string, confirm: true) => {
+      track('backup:restore', { id, confirm })
+      return {
+        success: true,
+        data: {
+          outcome: 'restored',
+          backupId: id,
+          preRestoreBackupId: null,
+          relaunching: true,
+        },
+      }
+    },
+    listNovelProjects: async () => {
+      track('workbench:projects:list', undefined)
+      return { success: true, data: [...projectStore] }
+    },
     getCurrentNovelProject: async () => ({ success: true, data: null }),
     onTaskStart: () => () => undefined,
     onTaskStage: () => () => undefined,
@@ -398,6 +456,9 @@ function mockElectronAPIScript() {
  * 在 Playwright page 中注入 mock electronAPI。
  * 必须在 page.goto() 之前调用。
  */
-export async function injectMockElectronAPI(page: import('@playwright/test').Page) {
-  await page.addInitScript(mockElectronAPIScript)
+export async function injectMockElectronAPI(
+  page: import('@playwright/test').Page,
+  options: MockElectronOptions = {},
+) {
+  await page.addInitScript(mockElectronAPIScript, options)
 }

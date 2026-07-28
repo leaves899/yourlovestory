@@ -41,6 +41,16 @@ async function injectFirstChapterMock(page: import('@playwright/test').Page): Pr
     })
 
     runtime.electronAPI = {
+      getDatabaseStatus: async () => success({
+        state: 'ready',
+        integrity: 'ok',
+        schemaVersion: 8,
+        message: null,
+        lastBackupAt: null,
+        backupAllowed: true,
+        backupEligibility: 'safe',
+        backupBlockedReason: null,
+      }),
       getCrushes: emptyList,
       listNovelProjects: async () => success(project ? [project] : []),
       getCurrentNovelProject: async () => success(project),

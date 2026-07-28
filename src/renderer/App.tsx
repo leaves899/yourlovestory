@@ -1,7 +1,8 @@
-import { lazy, Suspense, useEffect } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Box, Center, Spinner, Text, VStack } from '@chakra-ui/react'
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAppStore } from './stores/appStore'
+import type { DatabaseStatus } from '../shared/backup/types'
 
 const Layout = lazy(() => import('./components/Layout'))
 const WorkbenchLayout = lazy(() => import('./components/WorkbenchLayout'))
@@ -26,6 +27,7 @@ const WorkbenchReviewPage = lazy(() => import('./pages/WorkbenchReviewPage'))
 const WorkbenchNarrativePage = lazy(() => import('./pages/WorkbenchNarrativePage'))
 const WorkbenchAssistantPage = lazy(() => import('./pages/WorkbenchAssistantPage'))
 const WorkbenchSessionsPage = lazy(() => import('./pages/WorkbenchSessionsPage'))
+const DatabaseRecoveryPage = lazy(() => import('./pages/DatabaseRecoveryPage'))
 
 function RouteFallback() {
   return (
@@ -116,11 +118,47 @@ function AppRoutes() {
   )
 }
 
+function DatabaseGate() {
+  const [status, setStatus] = useState<DatabaseStatus | null>(null)
+
+  const refresh = async () => {
+    const response = await window.electronAPI.getDatabaseStatus()
+    if (response.success && response.data) {
+      setStatus(response.data)
+      return
+    }
+    setStatus({
+      state: 'recovery-required',
+      integrity: 'unknown',
+      schemaVersion: null,
+      message: response.error?.message ?? '无法确认数据库状态。',
+      lastBackupAt: null,
+      backupAllowed: false,
+      backupEligibility: 'database-unavailable',
+      backupBlockedReason: response.error?.message ?? '无法确认数据库状态。',
+    })
+  }
+
+  useEffect(() => {
+    void refresh()
+  }, [])
+
+  if (!status) return <RouteFallback />
+  if (status.state !== 'ready') {
+    return (
+      <Suspense fallback={<RouteFallback />}>
+        <DatabaseRecoveryPage status={status} onRecheck={refresh} />
+      </Suspense>
+    )
+  }
+  return <AppRoutes />
+}
+
 function App() {
   return (
     <HashRouter>
       <Box minH="100vh">
-        <AppRoutes />
+        <DatabaseGate />
       </Box>
     </HashRouter>
   )
