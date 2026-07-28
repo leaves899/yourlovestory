@@ -80,13 +80,15 @@ export function safeError(error: unknown, fallback?: string): string {
   return sanitizeErrorMessage(error, fallback)
 }
 
-export function assertTrustedCredentialSender(event: IpcMainInvokeEvent): void {
+export function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const senderUrl = event.senderFrame?.url ?? event.sender?.getURL()
   if (!senderUrl && process.env.NODE_ENV === 'test') return
   if (senderUrl?.startsWith('file://')) return
   if (senderUrl?.startsWith('http://localhost:3000/')) return
   throw new Error('untrusted IPC sender')
 }
+
+export const assertTrustedCredentialSender = assertTrustedIpcSender
 
 export function parseProjectIdParams(value: unknown): { project_id: string } {
   if (!isRecord(value)) throw new Error('project input is required')

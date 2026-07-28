@@ -3,6 +3,11 @@ import type { ChapterGenerationService } from '../../shared/chapterGeneration'
 import type { NarrativeWorkbenchService } from '../../shared/narrativeWorkbench'
 import type { SqliteDatabase } from '../database'
 import type { AssistantService } from '../assistant'
+import type {
+  BackupService,
+  DatabaseStatus,
+  RestoreExecutionResult,
+} from '../backup'
 import { registerAssistantIPC } from '../assistant'
 import type { CredentialService } from '../security/credentialService'
 import { LlmCredentialController } from '../security/llmCredentialController'
@@ -10,6 +15,7 @@ import type { TaskManager } from '../tasks'
 import type { WorkbenchService } from '../workbench'
 import { registerWorkbenchIPC } from '../workbench'
 import { registerAppIPC } from './app.ipc'
+import { registerBackupIPC } from './backup.ipc'
 import { registerChapterIPC, registerChapterPolishIPC } from './chapters.ipc'
 import { registerCredentialIPC } from './credentials.ipc'
 import { registerCrushIPC } from './crushes.ipc'
@@ -34,6 +40,9 @@ export interface IpcSetupOptions {
   database?: SqliteDatabase
   credentialController?: LlmCredentialController
   audit?: IpcAuditSink
+  backupService?: BackupService
+  databaseStatus?: DatabaseStatus
+  restoreBackup?: (id: string) => Promise<RestoreExecutionResult>
 }
 
 export function setupIPC(options: IpcSetupOptions = {}): void {
@@ -92,4 +101,15 @@ export function setupIPC(options: IpcSetupOptions = {}): void {
   })
   registerCredentialIPC(ipc, credentialController)
   registerAppIPC(ipc, app)
+  registerBackupIPC(ipc, {
+    backupService: options.backupService,
+    getStatus: () => options.databaseStatus ?? {
+      state: 'recovery-required',
+      integrity: 'unknown',
+      schemaVersion: null,
+      message: 'Database status is unavailable',
+      lastBackupAt: null,
+    },
+    restoreBackup: options.restoreBackup,
+  })
 }

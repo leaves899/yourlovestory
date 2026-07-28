@@ -81,6 +81,12 @@ import type {
   LegacyFragmentSnapshot,
 } from '../shared/novelProject'
 import type { Foreshadow } from '../shared/narrativeWorkbench'
+import type {
+  BackupRecord,
+  BackupVerificationResult,
+  DatabaseStatus,
+  RestoreExecutionResult,
+} from '../shared/backup/types'
 
 interface TaskEventMap {
   'task:start': TaskStartEvent
@@ -171,6 +177,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testLlmCredential: (target: { scope: 'app' } | { scope: 'project'; projectId: string }) =>
     ipcRenderer.invoke('llmCredential:test', target),
   deleteAllLlmCredentials: () => ipcRenderer.invoke('llmCredential:deleteAll'),
+
+  // 数据安全
+  listBackups: (): Promise<{ success: boolean; data?: BackupRecord[]; error?: string }> =>
+    ipcRenderer.invoke('backup:list'),
+  createBackup: (): Promise<{ success: boolean; data?: BackupRecord; error?: string }> =>
+    ipcRenderer.invoke('backup:create'),
+  verifyBackup: (
+    id: string,
+  ): Promise<{ success: boolean; data?: BackupVerificationResult; error?: string }> =>
+    ipcRenderer.invoke('backup:verify', { id }),
+  restoreBackup: (
+    id: string,
+    confirm: true,
+  ): Promise<{ success: boolean; data?: RestoreExecutionResult; error?: string }> =>
+    ipcRenderer.invoke('backup:restore', { id, confirm }),
+  getDatabaseStatus: (): Promise<{ success: boolean; data?: DatabaseStatus; error?: string }> =>
+    ipcRenderer.invoke('backup:get-status'),
 
   // 应用
   getAppInfo: () => ipcRenderer.invoke('app:info'),
