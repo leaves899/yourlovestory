@@ -12,6 +12,31 @@ export interface IpcAuditEvent {
 
 export type IpcAuditSink = (event: IpcAuditEvent) => void
 
+const DATABASE_RECOVERY_REQUIRED_RESPONSE = {
+  success: false,
+  error: {
+    code: 'DATABASE_RECOVERY_REQUIRED',
+    message: '数据库需要恢复后才能继续使用。',
+  },
+} as const
+
+export function createDatabaseGuardedRegistrar(
+  registrar: IpcRegistrar,
+  isBusinessAvailable: () => boolean,
+  allowWhenUnavailable: (channel: string) => boolean,
+): IpcRegistrar {
+  return {
+    handle(channel, handler): void {
+      registrar.handle(channel, async (event, ...args: unknown[]) => {
+        if (!isBusinessAvailable() && !allowWhenUnavailable(channel)) {
+          return DATABASE_RECOVERY_REQUIRED_RESPONSE
+        }
+        return handler(event, ...args)
+      })
+    },
+  }
+}
+
 interface IpcHandlerOptions<Input> {
   parse?: (value: unknown) => Input
   authorize?: (event: IpcMainInvokeEvent, value: unknown) => void

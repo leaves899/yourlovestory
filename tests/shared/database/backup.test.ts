@@ -414,22 +414,35 @@ describe('database backup service', () => {
   test('does not exit when scheduling the relaunch fails', async () => {
     const target = await service.createBackup({ reason: 'manual' })
     const exit = jest.fn()
+    const markRestoring = jest.fn()
+    const markRecoveryRequired = jest.fn()
+    const closeDatabase = jest.fn(() => {
+      database!.close()
+      database = null
+    })
 
     await expect(executeDatabaseRestore({
       backupService: service,
       backupId: target.id,
-      closeDatabase: () => {
-        database!.close()
-        database = null
-      },
+      closeDatabase,
       replaceDatabase: jest.fn(),
       verifyDatabase: jest.fn(),
+      markRestoring,
+      markRecoveryRequired,
       relaunch: () => {
         throw new Error('injected relaunch failure')
       },
       exit,
-    })).rejects.toMatchObject({ code: 'RESTORE_FAILED' })
+    })).rejects.toEqual(expect.objectContaining({
+      code: 'RESTORE_FAILED',
+      message: expect.not.stringContaining('injected relaunch failure'),
+    }))
 
+    expect(markRestoring).toHaveBeenCalledTimes(1)
+    expect(markRestoring.mock.invocationCallOrder[0]).toBeLessThan(
+      closeDatabase.mock.invocationCallOrder[0]!,
+    )
+    expect(markRecoveryRequired).toHaveBeenCalledTimes(1)
     expect(exit).not.toHaveBeenCalled()
   })
 })
@@ -520,12 +533,14 @@ describe('managed database lifecycle', () => {
   test('keeps the application gated and ordinary backups blocked when credential migration is pending', async () => {
     const legacy = initializeDatabase(root, { migrations: [first] })
     legacy.close()
+    const vacuumDatabase = jest.fn()
 
     const result = await initializeDatabaseLifecycle({
       userDataPath: root,
       appVersion: 'test-version',
       candidateMigrations: [first, seventh, eighth],
       migrateCredentials: () => ({ pending: 1, failed: 0 }),
+      vacuumDatabase,
     })
 
     expect(result.success).toBe(true)
@@ -541,6 +556,7 @@ describe('managed database lifecycle', () => {
         code: 'BACKUP_NOT_ALLOWED',
       })
       expect(await result.backupService.listBackups()).toEqual([])
+      expect(vacuumDatabase).not.toHaveBeenCalled()
     } finally {
       result.database.close()
     }
@@ -560,6 +576,9 @@ describe('managed database lifecycle', () => {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run('config-1', 'project-1', 'Default', 'openai', 'https://example.invalid', 'model', secret)
     legacy.close()
+    const vacuumDatabase = jest.fn((candidate: SqliteDatabase) => {
+      candidate.exec('VACUUM')
+    })
 
     const result = await initializeDatabaseLifecycle({
       userDataPath: root,
@@ -568,11 +587,13 @@ describe('managed database lifecycle', () => {
         candidate.prepare('UPDATE llm_configs SET api_key = ? WHERE id = ?').run('', 'config-1')
         return { pending: 0, failed: 0 }
       },
+      vacuumDatabase,
     })
 
     expect(result.success).toBe(true)
     if (!result.success) return
     try {
+      expect(vacuumDatabase).toHaveBeenCalledTimes(1)
       const backup = (await result.backupService.listBackups())[0]
       expect(backup).toBeDefined()
       const backupPath = path.join(root, 'backups', 'database', backup.filename)
@@ -590,6 +611,43 @@ describe('managed database lifecycle', () => {
       )).not.toContain(secret)
     } finally {
       result.database.close()
+    }
+  })
+
+  test('does not vacuum again when migration 8 was already applied', async () => {
+    const initial = await initializeDatabaseLifecycle({
+      userDataPath: root,
+      appVersion: 'test-version',
+      candidateMigrations: [first, seventh, eighth],
+      migrateCredentials: () => ({ pending: 0, failed: 0 }),
+    })
+    expect(initial.success).toBe(true)
+    if (!initial.success) return
+    initial.database.close()
+
+    const vacuumDatabase = jest.fn()
+    const restarted = await initializeDatabaseLifecycle({
+      userDataPath: root,
+      appVersion: 'test-version',
+      candidateMigrations: [first, seventh, eighth],
+      migrateCredentials: () => ({ pending: 0, failed: 0 }),
+      vacuumDatabase,
+    })
+
+    expect(restarted.success).toBe(true)
+    if (!restarted.success) return
+    try {
+      expect(vacuumDatabase).not.toHaveBeenCalled()
+      expect(restarted.status).toMatchObject({
+        state: 'ready',
+        schemaVersion: 8,
+      })
+      expect(restarted.migrationBackup).toBeNull()
+      expect(await restarted.backupService.listBackups()).toEqual(
+        expect.arrayContaining([expect.objectContaining({ reason: 'scheduled' })]),
+      )
+    } finally {
+      restarted.database.close()
     }
   })
 

@@ -31,6 +31,7 @@ export interface DatabaseLifecycleOptions<T extends CredentialMigrationResult> {
   migrateCredentials: (database: SqliteDatabase) => T
   candidateMigrations?: readonly Migration[]
   now?: () => Date
+  vacuumDatabase?: (database: SqliteDatabase) => void
 }
 
 export interface DatabaseLifecycleSuccess<T extends CredentialMigrationResult> {
@@ -168,6 +169,9 @@ export async function initializeDatabaseLifecycle<T extends CredentialMigrationR
       'ok',
     )
   }
+  const credentialCleanupPendingAtStartup = pending.some(
+    (migration) => migration.version === 8,
+  )
 
   let migrationBackup: InternalMigrationSnapshot | null = null
   if (pending.length > 0 && existedBeforeOpen) {
@@ -217,9 +221,16 @@ export async function initializeDatabaseLifecycle<T extends CredentialMigrationR
     if (!inspectPlaintextCredentialState(database).safeForUserBackup) {
       throw new Error('Credential cleanup did not reach a backup-safe state')
     }
-    // DROP COLUMN can leave deleted credential bytes in SQLite free pages. Rebuild
-    // the file before any user-visible snapshot can be created.
-    database.exec('VACUUM')
+    if (credentialCleanupPendingAtStartup) {
+      // DROP COLUMN can leave deleted credential bytes in SQLite free pages.
+      // Rebuild once, immediately after v8, before the first visible backup.
+      const vacuumDatabase = options.vacuumDatabase
+        ?? ((candidate: SqliteDatabase) => candidate.exec('VACUUM'))
+      vacuumDatabase(database)
+      if (!inspectPlaintextCredentialState(database).safeForUserBackup) {
+        throw new Error('Credential cleanup became unsafe after database vacuum')
+      }
+    }
     const schemaVersion = inspectDatabase(database)
     if (migrationBackup) {
       backupService.finalizeInternalMigrationSnapshot(migrationBackup, 'success')

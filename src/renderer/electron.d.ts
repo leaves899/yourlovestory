@@ -166,6 +166,7 @@ interface ElectronAPI {
     confirm: true,
   ) => Promise<{ success: boolean; data?: RestoreExecutionResult; error?: BackupError }>
   getDatabaseStatus: () => Promise<{ success: boolean; data?: DatabaseStatus; error?: BackupError }>
+  onDatabaseStatusChanged: (listener: (status: DatabaseStatus) => void) => () => void
 
   // 应用
   getAppInfo: () => Promise<any>

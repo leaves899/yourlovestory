@@ -13,7 +13,11 @@ interface MockCall {
 }
 
 interface MockElectronOptions {
-  databaseState?: 'ready' | 'credential-migration-required' | 'recovery-required'
+  databaseState?:
+    | 'ready'
+    | 'credential-migration-required'
+    | 'restoring'
+    | 'recovery-required'
   backups?: Array<{
     id: string
     filename: string
@@ -78,6 +82,17 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
   const crushStore: CrushRecord[] = []
   const progressStore: Record<string, ProgressRecord> = {}
   const projectStore: Array<Record<string, unknown>> = []
+  let databaseState = options.databaseState ?? 'ready'
+  const databaseStatusListeners = new Set<(status: {
+    state: NonNullable<MockElectronOptions['databaseState']>
+    integrity: 'ok' | 'unknown'
+    schemaVersion: number | null
+    message: string | null
+    lastBackupAt: null
+    backupAllowed: boolean
+    backupEligibility: 'safe' | 'database-unavailable'
+    backupBlockedReason: string | null
+  }) => void>()
   const PHASE_NAMES = ['陌生人', '认识', '暧昧', '表白', '热恋']
   const PHASE_THRESHOLDS = [60, 70, -1, -1, -1]
 
@@ -130,23 +145,35 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
     }
   }
 
+  function currentDatabaseStatus() {
+    const ready = databaseState === 'ready'
+    return {
+      state: databaseState,
+      integrity: ready ? 'ok' as const : 'unknown' as const,
+      schemaVersion: ready ? 8 : null,
+      message: ready
+        ? null
+        : databaseState === 'restoring'
+          ? '数据库正在恢复，业务功能已暂停。'
+          : '数据库需要恢复后才能继续使用。',
+      lastBackupAt: null,
+      backupAllowed: ready,
+      backupEligibility: ready ? 'safe' as const : 'database-unavailable' as const,
+      backupBlockedReason: ready ? null : '数据库当前不可用。',
+    }
+  }
+
   ;(window as any).electronAPI = {
     getDatabaseStatus: async () => {
       track('backup:get-status', undefined)
-      const state = options.databaseState ?? 'ready'
       return {
         success: true,
-        data: {
-          state,
-          integrity: state === 'ready' ? 'ok' : 'unknown',
-          schemaVersion: state === 'ready' ? 8 : null,
-          message: state === 'ready' ? null : '数据库需要恢复后才能继续使用。',
-          lastBackupAt: null,
-          backupAllowed: state === 'ready',
-          backupEligibility: state === 'ready' ? 'safe' : 'database-unavailable',
-          backupBlockedReason: state === 'ready' ? null : '数据库当前不可用。',
-        },
+        data: currentDatabaseStatus(),
       }
+    },
+    onDatabaseStatusChanged: (listener: (status: ReturnType<typeof currentDatabaseStatus>) => void) => {
+      databaseStatusListeners.add(listener)
+      return () => databaseStatusListeners.delete(listener)
     },
     listBackups: async () => {
       track('backup:list', undefined)
@@ -185,9 +212,18 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
     onTaskEnd: () => () => undefined,
     onTaskError: () => () => undefined,
     onAssistantEvent: () => () => undefined,
-    listTasks: async () => ({ success: true, data: [] }),
-    listRecoverableTasks: async () => ({ success: true, data: [] }),
-    listAssistantSessions: async () => ({ success: true, data: [] }),
+    listTasks: async () => {
+      track('task:list', undefined)
+      return { success: true, data: [] }
+    },
+    listRecoverableTasks: async () => {
+      track('task:recoverable', undefined)
+      return { success: true, data: [] }
+    },
+    listAssistantSessions: async () => {
+      track('assistant:session:list', undefined)
+      return { success: true, data: [] }
+    },
     // 碎片日记
     recordFragment: async (params: any) => {
       track('fragment:record', params)
@@ -450,6 +486,20 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
   ;(window as any).__mockCrushStore = crushStore
   ;(window as any).__mockProgressStore = progressStore
   ;(window as any).__mockGenerateDayResponse = null
+  const databaseStatusControls = window as typeof window & {
+    __emitDatabaseStatus: (
+      state: NonNullable<MockElectronOptions['databaseState']>,
+    ) => void
+    __databaseStatusSubscriberCount: () => number
+  }
+  databaseStatusControls.__emitDatabaseStatus = (
+    state: NonNullable<MockElectronOptions['databaseState']>,
+  ) => {
+    databaseState = state
+    const status = currentDatabaseStatus()
+    databaseStatusListeners.forEach((listener) => listener(status))
+  }
+  databaseStatusControls.__databaseStatusSubscriberCount = () => databaseStatusListeners.size
 }
 
 /**

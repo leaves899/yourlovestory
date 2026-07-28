@@ -89,6 +89,8 @@ import type {
   RestoreExecutionResult,
 } from '../shared/backup/types'
 
+const DATABASE_STATUS_CHANGED_CHANNEL = 'backup:status-changed'
+
 interface TaskEventMap {
   'task:start': TaskStartEvent
   'task:stage': TaskStageEvent
@@ -195,6 +197,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('backup:restore', { id, confirm }),
   getDatabaseStatus: (): Promise<{ success: boolean; data?: DatabaseStatus; error?: BackupError }> =>
     ipcRenderer.invoke('backup:get-status'),
+  onDatabaseStatusChanged: (listener: (status: DatabaseStatus) => void): (() => void) => {
+    const wrapped = (_event: IpcRendererEvent, status: DatabaseStatus): void => {
+      listener(status)
+    }
+    ipcRenderer.on(DATABASE_STATUS_CHANGED_CHANNEL, wrapped)
+    return () => ipcRenderer.removeListener(DATABASE_STATUS_CHANGED_CHANNEL, wrapped)
+  },
 
   // 应用
   getAppInfo: () => ipcRenderer.invoke('app:info'),

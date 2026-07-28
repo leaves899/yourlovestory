@@ -76,12 +76,15 @@ export function registerBackupIPC(
     return { success: true, data: await dependencies.restoreBackup(input.id) }
   }, { parse: parseRestore, authorize, formatError })
 
-  ipc.register('backup:get-status', async () => ({
-    success: true,
-    data: {
-      ...dependencies.getStatus(),
-      lastBackupAt: (await dependencies.backupService?.listBackups())?.[0]?.createdAt
-        ?? dependencies.getStatus().lastBackupAt,
-    },
-  }), { parse: parseNoInput, authorize, formatError })
+  ipc.register('backup:get-status', async () => {
+    const status = dependencies.getStatus()
+    return {
+      success: true,
+      data: {
+        ...status,
+        lastBackupAt: (await dependencies.backupService?.listBackups())?.[0]?.createdAt
+          ?? status.lastBackupAt,
+      },
+    }
+  }, { parse: parseNoInput, authorize, formatError })
 }

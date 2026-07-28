@@ -11,6 +11,7 @@ export interface ExecuteDatabaseRestoreOptions {
   relaunch: () => void
   exit: () => void
   markRecoveryRequired?: () => void
+  markRestoring?: () => void
   databaseAvailable?: boolean
   replaceDatabase?: (databasePath: string, stagedPath: string) => void
   verifyDatabase?: (filename: string) => void
@@ -32,6 +33,7 @@ function relaunchAndExit(options: ExecuteDatabaseRestoreOptions): void {
   try {
     options.relaunch()
   } catch {
+    options.markRecoveryRequired?.()
     throw backupError('RESTORE_FAILED')
   }
   options.exit()
@@ -65,6 +67,7 @@ export async function executeDatabaseRestore(
   const staged = await options.backupService.stageRestore(options.backupId)
   const replaceDatabase = options.replaceDatabase ?? replaceDatabaseFromStagedFile
   const verifyDatabase = options.verifyDatabase ?? verifyRestoredDatabase
+  options.markRestoring?.()
   options.closeDatabase()
 
   try {

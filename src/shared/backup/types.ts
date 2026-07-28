@@ -56,6 +56,7 @@ export interface DatabaseStatus {
   state:
     | 'ready'
     | 'credential-migration-required'
+    | 'restoring'
     | 'recovery-required'
     | 'migration-rolled-back'
   integrity: 'ok' | 'failed' | 'unknown'
@@ -66,6 +67,8 @@ export interface DatabaseStatus {
   backupEligibility: DatabaseBackupEligibility
   backupBlockedReason: string | null
 }
+
+export const DATABASE_STATUS_CHANGED_CHANNEL = 'backup:status-changed'
 
 export type BackupErrorCode =
   | 'BACKUP_NOT_FOUND'

@@ -28,9 +28,11 @@ jest.mock('electron', () => ({
 }))
 
 import { setupIPC } from '@/main/ipc'
+import { DatabaseRuntimeStatus } from '@/main/database'
 import type { ChapterGenerationService } from '@/shared/chapterGeneration'
 import type { TaskManager } from '@/main/tasks'
 import type { LlmCredentialController } from '@/main/security/llmCredentialController'
+import type { DatabaseStatus } from '@/shared/backup/types'
 
 const EXPECTED_CHANNELS = [
   'app:checkUpdate',
@@ -237,7 +239,7 @@ describe('modular IPC registration', () => {
     setupIPC({
       backupService,
       restoreBackup,
-      databaseStatus: {
+      getDatabaseStatus: () => ({
         state: 'ready',
         integrity: 'ok',
         schemaVersion: 8,
@@ -246,7 +248,7 @@ describe('modular IPC registration', () => {
         backupAllowed: true,
         backupEligibility: 'safe',
         backupBlockedReason: null,
-      },
+      }),
       audit,
     })
 
@@ -284,5 +286,93 @@ describe('modular IPC registration', () => {
     })
     expect(restoreBackup).not.toHaveBeenCalled()
     expect(audit).toHaveBeenCalledWith({ channel: 'backup:restore', outcome: 'failed' })
+  })
+
+  it('publishes live restore status and gates database-backed IPC after services close', async () => {
+    const initialStatus: DatabaseStatus = {
+      state: 'ready',
+      integrity: 'ok',
+      schemaVersion: 8,
+      message: null,
+      lastBackupAt: null,
+      backupAllowed: true,
+      backupEligibility: 'safe',
+      backupBlockedReason: null,
+    }
+    const emitted: DatabaseStatus[] = []
+    const runtimeStatus = new DatabaseRuntimeStatus(initialStatus, (status) => emitted.push(status))
+    const taskManager = {
+      listByProject: jest.fn(() => [{ id: 'task-1' }]),
+    } as unknown as TaskManager
+    const backupService = {
+      listBackups: jest.fn(async () => []),
+      createBackup: jest.fn(),
+      verifyBackup: jest.fn(async () => ({ valid: true })),
+      restoreBackup: jest.fn(),
+      pruneBackups: jest.fn(),
+    }
+    const restoreBackup = jest.fn(async () => ({
+      outcome: 'restored' as const,
+      backupId: 'backup-1',
+      preRestoreBackupId: null,
+      relaunching: true as const,
+    }))
+    const trustedEvent = { senderFrame: { url: 'file:///app/index.html' } }
+
+    setupIPC({
+      taskManager,
+      backupService,
+      getDatabaseStatus: () => runtimeStatus.get(),
+      restoreBackup,
+    })
+
+    await expect(invoke('task:list', { projectId: 'project-1' })).resolves.toEqual({
+      success: true,
+      data: [{ id: 'task-1' }],
+    })
+    runtimeStatus.beginRestore()
+    expect(emitted.at(-1)).toMatchObject({
+      state: 'restoring',
+      backupAllowed: false,
+    })
+    await expect(invoke('task:list', { projectId: 'project-1' })).resolves.toMatchObject({
+      success: false,
+      error: { code: 'DATABASE_RECOVERY_REQUIRED' },
+    })
+    expect(taskManager.listByProject).toHaveBeenCalledTimes(1)
+    await expect(invoke('backup:list', undefined, trustedEvent)).resolves.toEqual({
+      success: true,
+      data: [],
+    })
+    await expect(invoke('backup:verify', { id: 'backup-1' }, trustedEvent)).resolves.toMatchObject({
+      success: true,
+      data: { valid: true },
+    })
+    await expect(invoke('backup:restore', {
+      id: 'backup-1',
+      confirm: true,
+    }, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'DATABASE_RECOVERY_REQUIRED' },
+    })
+
+    runtimeStatus.requireRecovery()
+    expect(emitted.at(-1)).toMatchObject({
+      state: 'recovery-required',
+      integrity: 'unknown',
+      backupAllowed: false,
+    })
+    await expect(invoke('backup:get-status', undefined, trustedEvent)).resolves.toMatchObject({
+      success: true,
+      data: { state: 'recovery-required', backupAllowed: false },
+    })
+    await expect(invoke('backup:restore', {
+      id: 'backup-1',
+      confirm: true,
+    }, trustedEvent)).resolves.toMatchObject({
+      success: true,
+      data: { outcome: 'restored' },
+    })
+    expect(restoreBackup).toHaveBeenCalledWith('backup-1')
   })
 })

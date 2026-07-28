@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Box, Center, Spinner, Text, VStack } from '@chakra-ui/react'
 import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAppStore } from './stores/appStore'
@@ -120,9 +120,12 @@ function AppRoutes() {
 
 function DatabaseGate() {
   const [status, setStatus] = useState<DatabaseStatus | null>(null)
+  const statusEventRevision = useRef(0)
 
   const refresh = async () => {
+    const revisionBeforeRequest = statusEventRevision.current
     const response = await window.electronAPI.getDatabaseStatus()
+    if (statusEventRevision.current !== revisionBeforeRequest) return
     if (response.success && response.data) {
       setStatus(response.data)
       return
@@ -140,7 +143,12 @@ function DatabaseGate() {
   }
 
   useEffect(() => {
+    const unsubscribe = window.electronAPI.onDatabaseStatusChanged((nextStatus) => {
+      statusEventRevision.current += 1
+      setStatus(nextStatus)
+    })
     void refresh()
+    return unsubscribe
   }, [])
 
   if (!status) return <RouteFallback />

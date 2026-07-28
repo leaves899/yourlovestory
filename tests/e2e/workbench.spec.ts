@@ -68,6 +68,7 @@ async function injectWorkbenchMock(page: import('@playwright/test').Page): Promi
         backupEligibility: 'safe',
         backupBlockedReason: null,
       }),
+      onDatabaseStatusChanged: () => () => undefined,
       getCrushes: async () => success([]),
       listNovelProjects: async () => success(projects),
       getCurrentNovelProject: async () => success(currentProject),

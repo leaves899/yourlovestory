@@ -28,7 +28,11 @@ import { registerRevisionIPC } from './revisions.ipc'
 import { registerSettingsIPC } from './settings.ipc'
 import { registerSkillIPC } from './skills.ipc'
 import { registerTaskIPC } from './tasks.ipc'
-import { createIpcRegistry, type IpcAuditSink } from './shared'
+import {
+  createDatabaseGuardedRegistrar,
+  createIpcRegistry,
+  type IpcAuditSink,
+} from './shared'
 
 export interface IpcSetupOptions {
   taskManager?: TaskManager
@@ -41,13 +45,39 @@ export interface IpcSetupOptions {
   credentialController?: LlmCredentialController
   audit?: IpcAuditSink
   backupService?: BackupService
-  databaseStatus?: DatabaseStatus
+  getDatabaseStatus?: () => DatabaseStatus
   restoreBackup?: (id: string) => Promise<RestoreExecutionResult>
 }
 
 export function setupIPC(options: IpcSetupOptions = {}): void {
   const userDataPath = app.getPath('userData')
-  const ipc = createIpcRegistry(ipcMain, options.audit)
+  const fallbackStatus: DatabaseStatus = {
+    state: 'recovery-required',
+    integrity: 'unknown',
+    schemaVersion: null,
+    message: 'Database status is unavailable',
+    lastBackupAt: null,
+    backupAllowed: false,
+    backupEligibility: 'database-unavailable',
+    backupBlockedReason: 'Database status is unavailable',
+  }
+  const getDatabaseStatus = options.getDatabaseStatus ?? (() => fallbackStatus)
+  const enforceDatabaseStatus = options.getDatabaseStatus !== undefined
+  const recoveryChannels = new Set([
+    'app:checkUpdate',
+    'app:info',
+    'app:quit',
+    'backup:get-status',
+    'backup:list',
+    'backup:verify',
+  ])
+  const registrar = createDatabaseGuardedRegistrar(
+    ipcMain,
+    () => !enforceDatabaseStatus || getDatabaseStatus().state === 'ready',
+    (channel) => recoveryChannels.has(channel)
+      || (channel === 'backup:restore' && getDatabaseStatus().state !== 'restoring'),
+  )
+  const ipc = createIpcRegistry(registrar, options.audit)
   const narrativeWorkbenchService = options.narrativeWorkbenchService
     ?? options.workbenchService?.narrative
 
@@ -67,12 +97,13 @@ export function setupIPC(options: IpcSetupOptions = {}): void {
         })
       : undefined)
 
-  registerWorkbenchIPC(options.workbenchService, invalidateCredentialRuntimes)
+  registerWorkbenchIPC(options.workbenchService, invalidateCredentialRuntimes, registrar)
   registerAssistantIPC(
     options.assistantService,
     credentialController
       ? (projectId, input) => credentialController.runtimeConfig(projectId, input)
       : undefined,
+    registrar,
   )
 
   registerTaskIPC(ipc, options.taskManager)
@@ -103,16 +134,7 @@ export function setupIPC(options: IpcSetupOptions = {}): void {
   registerAppIPC(ipc, app)
   registerBackupIPC(ipc, {
     backupService: options.backupService,
-    getStatus: () => options.databaseStatus ?? {
-      state: 'recovery-required',
-      integrity: 'unknown',
-      schemaVersion: null,
-      message: 'Database status is unavailable',
-      lastBackupAt: null,
-      backupAllowed: false,
-      backupEligibility: 'database-unavailable',
-      backupBlockedReason: 'Database status is unavailable',
-    },
+    getStatus: getDatabaseStatus,
     restoreBackup: options.restoreBackup,
   })
 }

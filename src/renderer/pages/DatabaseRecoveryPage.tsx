@@ -137,7 +137,9 @@ export default function DatabaseRecoveryPage({
                       size="sm"
                       colorScheme="red"
                       onClick={() => void restore(backup)}
-                      isDisabled={isBusy || status.state === 'credential-migration-required'}
+                      isDisabled={isBusy
+                        || status.state === 'credential-migration-required'
+                        || status.state === 'restoring'}
                       isLoading={busyId === backup.id}
                       data-testid={`recovery-restore-${backup.id}`}
                     >

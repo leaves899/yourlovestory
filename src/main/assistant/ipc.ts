@@ -1,9 +1,10 @@
-import { ipcMain } from 'electron'
+import { ipcMain as electronIpcMain } from 'electron'
 import type { LlmConfigInput } from '../../agent/llm'
 import { normalizeLlmBaseUrl } from '../../agent/llm/config'
 import { isJsonValue, type JsonObject } from '../database'
 import type { ChatSessionType } from '../database'
 import type { AssistantService } from './service'
+import type { IpcRegistrar } from '../ipc/shared'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -62,8 +63,10 @@ function parseSessionType(value: unknown): ChatSessionType | undefined {
 export function registerAssistantIPC(
   service: AssistantService | undefined,
   resolveLlmConfig?: (projectId: string, input: LlmConfigInput) => LlmConfigInput,
+  registrar: IpcRegistrar = electronIpcMain,
 ): void {
   if (!service) return
+  const ipcMain = registrar
 
   ipcMain.handle('assistant:session:create', async (_, value: unknown) => {
     if (!isRecord(value)) throw new Error('assistant session input is required')

@@ -1,4 +1,5 @@
-import { ipcMain } from 'electron'
+import { ipcMain as electronIpcMain } from 'electron'
+import type { IpcRegistrar } from '../ipc/shared'
 import { IPC_CHANNELS } from '../../shared/ipc/channels'
 import type {
   ChapterOutline,
@@ -969,8 +970,10 @@ function success<T>(data: T): WorkbenchResponse<T> {
 export function registerWorkbenchIPC(
   service: NovelProjectService | undefined,
   onProjectConfigChanged?: () => void,
+  registrar: IpcRegistrar = electronIpcMain,
 ): void {
   if (!service) return
+  const ipcMain = registrar
 
   ipcMain.handle('novelProject:list', async () => success<Project[]>(service.listProjects()))
   ipcMain.handle('novelProject:current', async () => success(service.getCurrentProject()))

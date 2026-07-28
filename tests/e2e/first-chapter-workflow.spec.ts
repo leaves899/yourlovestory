@@ -51,6 +51,7 @@ async function injectFirstChapterMock(page: import('@playwright/test').Page): Pr
         backupEligibility: 'safe',
         backupBlockedReason: null,
       }),
+      onDatabaseStatusChanged: () => () => undefined,
       getCrushes: emptyList,
       listNovelProjects: async () => success(project ? [project] : []),
       getCurrentNovelProject: async () => success(project),

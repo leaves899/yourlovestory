@@ -4,6 +4,8 @@ import path from 'path'
 import { setupIPC } from './ipc'
 import {
   ChatRepository,
+  DATABASE_STATUS_CHANGED_CHANNEL,
+  DatabaseRuntimeStatus,
   executeDatabaseRestore,
   initializeDatabaseLifecycle,
   TaskRepository,
@@ -11,7 +13,6 @@ import {
 import type { SqliteDatabase } from './database'
 import {
   DatabaseBackupService,
-  type DatabaseStatus,
   type RestoreExecutionResult,
 } from './backup'
 import { createProjectSessionAgentFactory } from '../agent/agent'
@@ -40,7 +41,7 @@ let workbenchService: WorkbenchService | null = null
 let assistantService: AssistantService | null = null
 let credentialService: CredentialService | null = null
 let backupService: DatabaseBackupService | null = null
-let databaseStatus: DatabaseStatus = {
+const databaseRuntime = new DatabaseRuntimeStatus({
   state: 'recovery-required',
   integrity: 'unknown',
   schemaVersion: null,
@@ -49,7 +50,11 @@ let databaseStatus: DatabaseStatus = {
   backupAllowed: false,
   backupEligibility: 'database-unavailable',
   backupBlockedReason: '数据库尚未初始化。',
-}
+}, (status) => {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send(DATABASE_STATUS_CHANGED_CHANNEL, status)
+  }
+})
 
 const e2eUserDataPath = process.env.YOURCRUSH_E2E_USER_DATA
 if (process.env.NODE_ENV === 'test' && e2eUserDataPath) {
@@ -148,6 +153,7 @@ async function restoreDatabaseBackup(id: string): Promise<RestoreExecutionResult
     backupService,
     backupId: id,
     databaseAvailable,
+    markRestoring: () => databaseRuntime.beginRestore(),
     closeDatabase: () => {
       taskManager?.dispose()
       taskManager = null
@@ -161,17 +167,7 @@ async function restoreDatabaseBackup(id: string): Promise<RestoreExecutionResult
       app.relaunch()
     },
     exit: () => app.exit(0),
-    markRecoveryRequired: () => {
-      databaseStatus = {
-        ...databaseStatus,
-        state: 'recovery-required',
-        integrity: 'unknown',
-        message: '数据库恢复未完成，请从恢复中心重试。',
-        backupAllowed: false,
-        backupEligibility: 'database-unavailable',
-        backupBlockedReason: '数据库恢复未完成。',
-      }
-    },
+    markRecoveryRequired: () => databaseRuntime.requireRecovery(),
   })
 }
 
@@ -190,14 +186,14 @@ app.whenReady().then(async () => {
     ),
   })
   backupService = lifecycle.backupService
-  databaseStatus = lifecycle.status
+  databaseRuntime.replace(lifecycle.status)
   createWindow()
 
   if (!lifecycle.success) {
     console.error('[DatabaseStartup]', lifecycle.status.state, lifecycle.status.message)
     setupIPC({
       backupService,
-      databaseStatus,
+      getDatabaseStatus: () => databaseRuntime.get(),
       restoreBackup: restoreDatabaseBackup,
     })
     return
@@ -216,7 +212,7 @@ app.whenReady().then(async () => {
       credentialService,
       database,
       backupService,
-      databaseStatus,
+      getDatabaseStatus: () => databaseRuntime.get(),
       restoreBackup: restoreDatabaseBackup,
     })
     return
@@ -292,7 +288,7 @@ app.whenReady().then(async () => {
     database,
     credentialController: llmCredentialController,
     backupService,
-    databaseStatus,
+    getDatabaseStatus: () => databaseRuntime.get(),
     restoreBackup: restoreDatabaseBackup,
   })
 
