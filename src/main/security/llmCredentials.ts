@@ -2,6 +2,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { createHash } from 'node:crypto'
 import type { SqliteDatabase } from '../database'
+import { inspectPlaintextCredentialState } from '../backup/credentialSafety'
 import { getSettings, updateSettings } from '../../shared/persistence/settingsStore'
 import { sanitizeSensitiveData } from '../../shared/security/sanitizeSensitiveData'
 import {
@@ -502,8 +503,18 @@ export function migrateLegacyLlmCredentials(
   const report: CredentialMigrationReport = { migrated: 0, pending: 0, failed: 0, issues: [] }
   const availability = credentialService.availability()
   if (!availability.available) {
-    // Keep the final schema migration blocked so legacy plaintext is retained
-    // for a later verified migration, never discarded by an unavailable backend.
+    const settingsContainPlaintext = [userDataPath, appPath].some((root) => {
+      if (!fs.existsSync(settingsFile(root))) return false
+      const settings = getSettings(root) as Record<string, unknown>
+      return Boolean(nonEmptyString(settings.apiKey) || nonEmptyString(settings.api_key))
+    })
+    const databaseContainsPlaintext = !settingsContainPlaintext
+      && inspectPlaintextCredentialState(database).plaintextCredentialCount > 0
+    if (!settingsContainPlaintext && !databaseContainsPlaintext) {
+      return report
+    }
+    // Block only an actual plaintext migration. A new empty database must be
+    // able to complete schema cleanup even when a Linux keyring is unavailable.
     report.pending += 1
     report.issues.push({ source: 'settings', identifier: 'app-default', code: availability.error!.code, message: availability.error!.message })
     return report
