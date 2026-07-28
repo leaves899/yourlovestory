@@ -12,9 +12,15 @@ import {
 import { LlmCredentialController } from '../../../src/main/security/llmCredentialController'
 import {
   projectArchiveIntegritySha256,
+  stableStringify,
   type ProjectArchiveCollection,
   type ProjectArchiveV1,
 } from '../../../src/shared/projectPortability'
+import {
+  DEFAULT_PORTABLE_CONFIGURATION_LIMITS,
+  inspectPortableConfiguration,
+  sanitizePortableConfiguration,
+} from '../../../src/shared/security/configCredentialSafety'
 import {
   ARCHIVE_TABLES,
   isArchiveTimestampColumn,
@@ -545,6 +551,133 @@ describe('ProjectPortabilityService', () => {
     expect(database.prepare<{ settings_json: string }>(
       'SELECT settings_json FROM project_configs WHERE project_id = ?',
     ).get(PROJECT_ID)?.settings_json).toBe(JSON.stringify(settings))
+  })
+
+  test('classifies compound credential names without stripping ordinary configuration', async () => {
+    const retained = {
+      maxTokens: 4096,
+      tokenBudget: 8192,
+      tokenLimit: 2048,
+      secretName: 'release-channel',
+      passwordPolicy: 'strict',
+      privateKeyAlgorithm: 'ed25519',
+      authorizationMode: 'oauth',
+    }
+    database.prepare('UPDATE project_configs SET settings_json = ? WHERE project_id = ?')
+      .run(JSON.stringify({
+        ...retained,
+        xApiKey: 'secret-1',
+        'x-api-key': 'secret-2',
+        clientSecret: 'secret-3',
+        githubToken: 'secret-4',
+        sessionToken: 'secret-5',
+      }), PROJECT_ID)
+    database.prepare('UPDATE project_skills SET config_json = ? WHERE project_id = ?')
+      .run(JSON.stringify({
+        enabled: true,
+        bearerToken: 'secret-6',
+        dbPassword: 'secret-7',
+        proxyAuthorization: 'secret-8',
+        privateKey: 'secret-9',
+        nestedPrivateKey: 'secret-10',
+      }), PROJECT_ID)
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+
+    const built = await service.buildArchive(PROJECT_ID)
+
+    for (let index = 1; index <= 10; index += 1) {
+      expect(built.json).not.toContain(`secret-${index}`)
+    }
+    expect(built.archive.payload.project_configs[0].settings_json).toEqual(retained)
+    expect(built.archive.payload.project_skills[0].config).toEqual({ enabled: true })
+    expect(built.archive.manifest.warnings).toContainEqual(expect.objectContaining({
+      code: 'credentials-excluded',
+      count: 11,
+    }))
+
+    const archive = cloneArchive(built.archive)
+    archive.payload.project_configs[0].settings_json = {
+      xApiKey: 'attacker-1',
+      clientSecret: 'attacker-2',
+      githubToken: 'attacker-3',
+      sessionToken: 'attacker-4',
+      bearerToken: 'attacker-5',
+    }
+    archive.payload.project_skills[0].config = {
+      'x-api-key': 'attacker-6',
+      dbPassword: 'attacker-7',
+      proxyAuthorization: 'attacker-8',
+      privateKey: 'attacker-9',
+      nestedPrivateKey: 'attacker-10',
+    }
+    refreshArchiveIntegrity(archive)
+    await expect(service.inspectArchiveJson(JSON.stringify(archive))).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_INVALID',
+    })
+    expect(database.prepare<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM projects',
+    ).get()?.count).toBe(1)
+  })
+
+  test('uses the compound credential classifier for Phase A backup safety', () => {
+    database.prepare('UPDATE project_configs SET settings_json = ? WHERE project_id = ?')
+      .run(JSON.stringify({
+        clientSecret: 'secret-1',
+        githubToken: 'secret-2',
+        proxyAuthorization: 'secret-3',
+      }), PROJECT_ID)
+
+    expect(inspectPlaintextCredentialState(database)).toMatchObject({
+      safeForUserBackup: false,
+      plaintextCredentialCount: 3,
+    })
+
+    database.prepare('UPDATE project_configs SET settings_json = ? WHERE project_id = ?')
+      .run('{}', PROJECT_ID)
+    expect(inspectPlaintextCredentialState(database)).toMatchObject({
+      safeForUserBackup: true,
+      plaintextCredentialCount: 0,
+    })
+  })
+
+  test.each([
+    ['settings_json', '__proto__'],
+    ['settings_json', 'prototype'],
+    ['settings_json', 'constructor'],
+    ['skill config', '__proto__'],
+    ['skill config', 'prototype'],
+    ['skill config', 'constructor'],
+  ] as const)('rejects dangerous raw keys in %s: %s', async (container, dangerousKey) => {
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const archive = cloneArchive((await service.buildArchive(PROJECT_ID)).archive)
+    const dangerousJson = `{"${dangerousKey}":{"polluted":true},"ordinary":"retained"}`
+    if (container === 'settings_json') {
+      database.prepare('UPDATE project_configs SET settings_json = ? WHERE project_id = ?')
+        .run(dangerousJson, PROJECT_ID)
+      archive.payload.project_configs[0].settings_json = JSON.parse(dangerousJson)
+    } else {
+      database.prepare('UPDATE project_skills SET config_json = ? WHERE project_id = ?')
+        .run(dangerousJson, PROJECT_ID)
+      archive.payload.project_skills[0].config = JSON.parse(dangerousJson)
+    }
+
+    await expect(service.buildArchive(PROJECT_ID)).rejects.toMatchObject({
+      code: 'PROJECT_EXPORT_FAILED',
+    })
+    refreshArchiveIntegrity(archive)
+    await expect(service.inspectArchiveJson(JSON.stringify(archive))).rejects.toMatchObject({
+      code: 'PROJECT_IMPORT_INVALID',
+    })
+    expect(Object.prototype.hasOwnProperty.call(Object.prototype, 'polluted')).toBe(false)
+    expect(database.prepare<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM projects',
+    ).get()?.count).toBe(1)
   })
 
   test('rejects recomputed archives that reintroduce credential state before preview or writes', async () => {
@@ -1126,6 +1259,100 @@ describe('ProjectPortabilityService', () => {
     expect(database.prepare<{ uri: string | null }>(
       'SELECT uri FROM source_materials WHERE project_id = ?',
     ).get(imported.projectId)?.uri).toBe(uri)
+  })
+
+  test('enforces default configuration depth and object-size limits on export and import', async () => {
+    const nested = (levels: number): unknown => {
+      let value: unknown = 'leaf'
+      for (let index = 0; index < levels; index += 1) value = { nested: value }
+      return value
+    }
+    const objectWithProperties = (count: number): Record<string, number> =>
+      Object.fromEntries(
+        Array.from({ length: count }, (_, index) => [`property${index}`, index]),
+      )
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+
+    database.prepare('UPDATE project_configs SET settings_json = ? WHERE project_id = ?')
+      .run(JSON.stringify(nested(6)), PROJECT_ID)
+    await expect(service.buildArchive(PROJECT_ID)).resolves.toBeDefined()
+    database.prepare('UPDATE project_configs SET settings_json = ? WHERE project_id = ?')
+      .run(JSON.stringify(objectWithProperties(2_000)), PROJECT_ID)
+    await expect(service.buildArchive(PROJECT_ID)).resolves.toBeDefined()
+
+    for (const overLimit of [nested(7), objectWithProperties(2_001)]) {
+      database.prepare('UPDATE project_configs SET settings_json = ? WHERE project_id = ?')
+        .run(JSON.stringify(overLimit), PROJECT_ID)
+      await expect(service.buildArchive(PROJECT_ID)).rejects.toMatchObject({
+        code: 'PROJECT_EXPORT_FAILED',
+      })
+    }
+
+    database.prepare('UPDATE project_configs SET settings_json = ? WHERE project_id = ?')
+      .run('{}', PROJECT_ID)
+    const base = (await service.buildArchive(PROJECT_ID)).archive
+    for (const overLimit of [nested(7), objectWithProperties(2_001)]) {
+      const archive = cloneArchive(base)
+      archive.payload.project_configs[0].settings_json = JSON.parse(JSON.stringify(overLimit))
+      refreshArchiveIntegrity(archive)
+      await expect(service.inspectArchiveJson(JSON.stringify(archive))).rejects.toMatchObject({
+        code: 'PROJECT_IMPORT_INVALID',
+      })
+    }
+    expect(database.prepare<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM projects',
+    ).get()?.count).toBe(1)
+  })
+
+  test('applies configurable array, key, string, and total-node walker limits', () => {
+    const limits = {
+      ...DEFAULT_PORTABLE_CONFIGURATION_LIMITS,
+      maxDepth: 2,
+      maxArrayLength: 2,
+      maxObjectProperties: 2,
+      maxKeyLength: 4,
+      maxStringLength: 4,
+      maxNodes: 4,
+    }
+
+    expect(sanitizePortableConfiguration({ safe: ['one', 'two'] }, limits).value)
+      .toEqual({ safe: ['one', 'two'] })
+    expect(inspectPortableConfiguration({ safe: ['one', 'two'] }, limits).safe).toBe(true)
+    for (const invalid of [
+      { safe: ['one', 'two', 'tri'] },
+      { toolong: true },
+      { safe: '12345' },
+      { safe: [['one']] },
+      { safe: ['one', { more: true }] },
+    ]) {
+      expect(() => sanitizePortableConfiguration(invalid, limits)).toThrow(
+        'Portable configuration is invalid',
+      )
+      expect(() => inspectPortableConfiguration(invalid, limits)).toThrow(
+        'Portable configuration is invalid',
+      )
+    }
+  })
+
+  test('keeps the inspected payload byte-stable after integrity verification', async () => {
+    database.prepare('UPDATE project_configs SET settings_json = ? WHERE project_id = ?')
+      .run(JSON.stringify({
+        llmBaseUrl: 'https://example.test/v1',
+        retained: { enabled: true },
+      }), PROJECT_ID)
+    const service = new ProjectPortabilityService(database, {
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+    })
+    const archive = cloneArchive((await service.buildArchive(PROJECT_ID)).archive)
+    const payloadBefore = stableStringify(archive.payload)
+
+    const inspected = await service.inspectArchiveJson(JSON.stringify(archive))
+
+    expect(stableStringify(inspected.payload)).toBe(payloadBefore)
   })
 
   test('round-trips production-shaped SQLite defaults as canonical UTC timestamps', async () => {
