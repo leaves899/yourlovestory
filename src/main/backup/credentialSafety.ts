@@ -1,4 +1,5 @@
 import type { SqliteDatabase } from '../database'
+import { isPlaintextCredentialKey } from '../../shared/security/configCredentialSafety'
 
 export interface PlaintextCredentialInspection {
   safeForUserBackup: boolean
@@ -6,16 +7,6 @@ export interface PlaintextCredentialInspection {
   legacyCredentialColumnPresent: boolean
   credentialCleanupMigrationApplied: boolean
 }
-
-const PLAINTEXT_KEYS = new Set([
-  'apikey',
-  'authorization',
-  'token',
-  'accesstoken',
-  'refreshtoken',
-  'secret',
-  'password',
-])
 
 function tableExists(database: SqliteDatabase, table: string): boolean {
   const result = database
@@ -41,8 +32,7 @@ function countPlaintextValues(value: unknown): number {
   }
   let count = 0
   for (const [key, entry] of Object.entries(value)) {
-    const normalized = key.replace(/[^a-z0-9]/gi, '').toLowerCase()
-    if (PLAINTEXT_KEYS.has(normalized) && typeof entry === 'string' && entry.trim()) {
+    if (isPlaintextCredentialKey(key) && typeof entry === 'string' && entry.trim()) {
       count += 1
     } else {
       count += countPlaintextValues(entry)
