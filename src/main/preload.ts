@@ -88,6 +88,12 @@ import type {
   DatabaseStatus,
   RestoreExecutionResult,
 } from '../shared/backup/types'
+import type {
+  ProjectExportResult,
+  ProjectImportPreview,
+  ProjectImportResult,
+  ProjectPortabilityError,
+} from '../shared/projectPortability'
 
 const DATABASE_STATUS_CHANGED_CHANNEL = 'backup:status-changed'
 
@@ -204,6 +210,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on(DATABASE_STATUS_CHANGED_CHANNEL, wrapped)
     return () => ipcRenderer.removeListener(DATABASE_STATUS_CHANGED_CHANNEL, wrapped)
   },
+  exportProject: (
+    projectId: string,
+  ): Promise<{ success: boolean; data?: ProjectExportResult; error?: ProjectPortabilityError }> =>
+    ipcRenderer.invoke('projectPortability:export', { projectId }),
+  inspectProjectImport: (): Promise<{
+    success: boolean
+    data?: { canceled: true } | { canceled: false; preview: ProjectImportPreview }
+    error?: ProjectPortabilityError
+  }> => ipcRenderer.invoke('projectPortability:inspectImport'),
+  commitProjectImport: (
+    importToken: string,
+    confirm: true,
+  ): Promise<{ success: boolean; data?: ProjectImportResult; error?: ProjectPortabilityError }> =>
+    ipcRenderer.invoke('projectPortability:commitImport', { importToken, confirm }),
+  cancelProjectImport: (
+    importToken: string,
+  ): Promise<{ success: boolean; data?: { canceled: true }; error?: ProjectPortabilityError }> =>
+    ipcRenderer.invoke('projectPortability:cancelImport', { importToken }),
 
   // 应用
   getAppInfo: () => ipcRenderer.invoke('app:info'),

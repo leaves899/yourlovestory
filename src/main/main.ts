@@ -34,6 +34,10 @@ import { CredentialService } from './security/credentialService'
 import { migrateLegacyLlmCredentials } from './security/llmCredentials'
 import { LlmCredentialController } from './security/llmCredentialController'
 import { sanitizeErrorMessage } from '../shared/security/sanitizeSensitiveData'
+import {
+  ProjectPortabilityCoordinator,
+  ProjectPortabilityService,
+} from './projectPortability'
 
 let mainWindow: BrowserWindow | null = null
 let database: SqliteDatabase | null = null
@@ -42,6 +46,7 @@ let workbenchService: WorkbenchService | null = null
 let assistantService: AssistantService | null = null
 let credentialService: CredentialService | null = null
 let backupService: DatabaseBackupService | null = null
+let projectPortabilityCoordinator: ProjectPortabilityCoordinator | null = null
 const databaseRuntime = new DatabaseRuntimeStatus({
   state: 'recovery-required',
   integrity: 'unknown',
@@ -230,6 +235,13 @@ app.whenReady().then(async () => {
     return
   }
   workbenchService = createWorkbenchService(database, { projectRoot: app.getPath('userData') })
+  projectPortabilityCoordinator = new ProjectPortabilityCoordinator(
+    new ProjectPortabilityService(database, {
+      appVersion: app.getVersion(),
+      schemaVersion: lifecycle.status.schemaVersion ?? 1,
+    }),
+    app.getPath('userData'),
+  )
   const llmCredentialController = new LlmCredentialController({
     userDataPath: app.getPath('userData'),
     credentialService,
@@ -302,6 +314,7 @@ app.whenReady().then(async () => {
     backupService,
     getDatabaseStatus: () => databaseRuntime.get(),
     restoreBackup: restoreDatabaseBackup,
+    projectPortabilityCoordinator,
   })
 
   app.on('activate', () => {
@@ -318,6 +331,8 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  void projectPortabilityCoordinator?.dispose()
+  projectPortabilityCoordinator = null
   taskManager?.dispose()
   taskManager = null
   assistantService?.dispose()
