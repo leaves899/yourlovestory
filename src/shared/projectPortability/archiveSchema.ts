@@ -10,127 +10,157 @@ import { portabilityError } from './errors'
 type ColumnKind =
   | 'id'
   | 'string'
+  | 'nonEmptyString'
   | 'longString'
   | 'nullableString'
   | 'number'
   | 'integer'
   | 'nullableNumber'
+  | 'positiveInteger'
+  | 'nonNegativeInteger'
+  | 'nullablePositiveInteger'
+  | 'nullableNonNegativeInteger'
+  | 'unitNumber'
+  | 'nullableUnitNumber'
   | 'boolean'
   | 'json'
   | 'stringArray'
+  | 'date'
+  | 'nullableDate'
+  | 'nullableTemperature'
+  | 'projectStatus'
+  | 'relationEntityType'
+  | 'volumeStatus'
+  | 'outlineStatus'
+  | 'chapterStatus'
+  | 'revisionOperation'
+  | 'versionStatus'
+  | 'foreshadowStatus'
+  | 'foreshadowEventType'
+  | 'memoryType'
+  | 'memoryStatus'
+  | 'proposalStatus'
 
 export type ArchiveTableDefinition = Readonly<Record<string, ColumnKind>>
 
 export const ARCHIVE_TABLES: Record<ProjectArchiveCollection, ArchiveTableDefinition> = {
   projects: {
-    id: 'id', slug: 'string', name: 'string', description: 'longString', status: 'string',
-    version: 'integer', created_at: 'string', updated_at: 'string',
+    id: 'id', slug: 'nonEmptyString', name: 'nonEmptyString', description: 'longString',
+    status: 'projectStatus', version: 'positiveInteger', created_at: 'date', updated_at: 'date',
   },
   project_configs: {
     project_id: 'id', default_llm_config_id: 'nullableString', genre: 'string', tone: 'string',
-    target_words: 'nullableNumber', context_budget: 'nullableNumber', settings_json: 'json',
-    version: 'integer', created_at: 'string', updated_at: 'string',
+    target_words: 'nullablePositiveInteger', context_budget: 'nullablePositiveInteger',
+    settings_json: 'json', version: 'positiveInteger', created_at: 'date', updated_at: 'date',
   },
   llm_configs: {
     id: 'id', project_id: 'id', name: 'string', provider: 'string', base_url: 'string',
-    model: 'string', context_budget: 'nullableNumber', max_output_tokens: 'nullableNumber',
-    temperature: 'nullableNumber', streaming_enabled: 'boolean', is_default: 'boolean',
-    created_at: 'string', updated_at: 'string',
+    model: 'nonEmptyString', context_budget: 'nullablePositiveInteger',
+    max_output_tokens: 'nullablePositiveInteger', temperature: 'nullableTemperature',
+    streaming_enabled: 'boolean', is_default: 'boolean', created_at: 'date', updated_at: 'date',
   },
   characters: {
     id: 'id', project_id: 'id', name: 'string', role: 'string', crush_slug: 'nullableString',
-    profile_json: 'json', notes: 'longString', sort_order: 'integer', version: 'integer',
-    created_at: 'string', updated_at: 'string',
+    profile_json: 'json', notes: 'longString', sort_order: 'nonNegativeInteger',
+    version: 'positiveInteger', created_at: 'date', updated_at: 'date',
   },
   worldview_entries: {
     id: 'id', project_id: 'id', category: 'string', title: 'string', content: 'longString',
-    metadata_json: 'json', sort_order: 'integer', version: 'integer',
-    created_at: 'string', updated_at: 'string',
+    metadata_json: 'json', sort_order: 'nonNegativeInteger', version: 'positiveInteger',
+    created_at: 'date', updated_at: 'date',
   },
   organizations: {
     id: 'id', project_id: 'id', name: 'string', description: 'longString', metadata_json: 'json',
-    sort_order: 'integer', version: 'integer', created_at: 'string', updated_at: 'string',
+    sort_order: 'nonNegativeInteger', version: 'positiveInteger',
+    created_at: 'date', updated_at: 'date',
   },
   relations: {
     id: 'id', project_id: 'id', source_character_id: 'nullableString',
     target_character_id: 'nullableString', relation_type: 'string', description: 'longString',
-    strength: 'nullableNumber', metadata_json: 'json', source_entity_type: 'string',
-    source_entity_id: 'id', target_entity_type: 'string', target_entity_id: 'id',
-    version: 'integer', created_at: 'string', updated_at: 'string',
+    strength: 'nullableUnitNumber', metadata_json: 'json',
+    source_entity_type: 'relationEntityType', source_entity_id: 'id',
+    target_entity_type: 'relationEntityType', target_entity_id: 'id',
+    version: 'positiveInteger', created_at: 'date', updated_at: 'date',
   },
   source_materials: {
     id: 'id', project_id: 'id', title: 'string', material_type: 'string',
     uri: 'nullableString', content: 'longString', metadata_json: 'json',
-    character_id: 'nullableString', fragment_id: 'nullableString', version: 'integer',
-    created_at: 'string', updated_at: 'string',
+    character_id: 'nullableString', fragment_id: 'nullableString', version: 'positiveInteger',
+    created_at: 'date', updated_at: 'date',
   },
   arcs: {
     id: 'id', project_id: 'id', parent_arc_id: 'nullableString', name: 'string',
-    synopsis: 'longString', status: 'string', sort_order: 'integer', metadata_json: 'json',
-    created_at: 'string', updated_at: 'string',
+    synopsis: 'longString', status: 'nonEmptyString', sort_order: 'nonNegativeInteger',
+    metadata_json: 'json', created_at: 'date', updated_at: 'date',
   },
   volumes: {
-    id: 'id', project_id: 'id', volume_number: 'integer', title: 'string',
-    synopsis: 'longString', status: 'string', sort_order: 'integer',
-    target_words: 'nullableNumber', version: 'integer', created_at: 'string', updated_at: 'string',
+    id: 'id', project_id: 'id', volume_number: 'positiveInteger', title: 'nonEmptyString',
+    synopsis: 'longString', status: 'volumeStatus', sort_order: 'nonNegativeInteger',
+    target_words: 'nullablePositiveInteger', version: 'positiveInteger',
+    created_at: 'date', updated_at: 'date',
   },
   volume_outlines: {
-    id: 'id', project_id: 'id', volume_id: 'id', status: 'string', summary: 'longString',
+    id: 'id', project_id: 'id', volume_id: 'id', status: 'outlineStatus', summary: 'longString',
     theme: 'longString', main_conflict: 'longString', key_turning_points_json: 'stringArray',
     ending: 'longString', outline_json: 'json', source_material_ids_json: 'stringArray',
-    metadata_json: 'json', version: 'integer', created_at: 'string', updated_at: 'string',
+    metadata_json: 'json', version: 'positiveInteger', created_at: 'date', updated_at: 'date',
   },
   chapter_outlines: {
-    id: 'id', project_id: 'id', volume_id: 'id', chapter_number: 'integer',
-    sort_order: 'integer', title: 'string', summary: 'longString', purpose: 'longString',
+    id: 'id', project_id: 'id', volume_id: 'id', chapter_number: 'positiveInteger',
+    sort_order: 'nonNegativeInteger', title: 'nonEmptyString', summary: 'longString',
+    purpose: 'longString',
     opening: 'longString', conflict: 'longString', key_events_json: 'stringArray',
-    ending: 'longString', ending_hook: 'longString', status: 'string', outline_json: 'json',
-    source_material_ids_json: 'stringArray', metadata_json: 'json', version: 'integer',
-    created_at: 'string', updated_at: 'string',
+    ending: 'longString', ending_hook: 'longString', status: 'outlineStatus',
+    outline_json: 'json', source_material_ids_json: 'stringArray', metadata_json: 'json',
+    version: 'positiveInteger', created_at: 'date', updated_at: 'date',
   },
   chapters: {
-    id: 'id', project_id: 'id', arc_id: 'nullableString', chapter_number: 'integer',
-    title: 'string', status: 'string', synopsis: 'longString', content: 'longString',
-    target_words: 'nullableNumber', actual_words: 'nullableNumber', version: 'integer',
-    created_at: 'string', updated_at: 'string',
+    id: 'id', project_id: 'id', arc_id: 'nullableString', chapter_number: 'positiveInteger',
+    title: 'string', status: 'chapterStatus', synopsis: 'longString', content: 'longString',
+    target_words: 'nullablePositiveInteger', actual_words: 'nullableNonNegativeInteger',
+    version: 'positiveInteger', created_at: 'date', updated_at: 'date',
   },
   chapter_revisions: {
-    id: 'id', chapter_id: 'id', revision_number: 'integer', content: 'longString',
+    id: 'id', chapter_id: 'id', revision_number: 'positiveInteger', content: 'longString',
     summary: 'longString', reason: 'longString', is_current: 'boolean',
-    created_at: 'string', parent_revision_id: 'nullableString', operation: 'string',
+    created_at: 'date', parent_revision_id: 'nullableString', operation: 'revisionOperation',
     blocks_json: 'json',
   },
   chapter_versions: {
-    id: 'id', chapter_id: 'id', task_id: 'nullableString', version_number: 'integer',
-    content: 'longString', summary: 'longString', fact_check_json: 'json', status: 'string',
-    is_current: 'boolean', created_at: 'string', reviewed_at: 'nullableString',
-    confirmed_at: 'nullableString',
+    id: 'id', chapter_id: 'id', task_id: 'nullableString', version_number: 'positiveInteger',
+    content: 'longString', summary: 'longString', fact_check_json: 'json',
+    status: 'versionStatus', is_current: 'boolean', created_at: 'date',
+    reviewed_at: 'nullableDate', confirmed_at: 'nullableDate',
   },
   foreshadows: {
-    id: 'id', project_id: 'id', title: 'string', description: 'longString', status: 'string',
+    id: 'id', project_id: 'id', title: 'nonEmptyString', description: 'longString',
+    status: 'foreshadowStatus',
     planned_payoff_chapter_id: 'nullableString', actual_payoff_chapter_id: 'nullableString',
-    importance: 'integer', metadata_json: 'json', created_at: 'string', updated_at: 'string',
+    importance: 'nonNegativeInteger', metadata_json: 'json',
+    created_at: 'date', updated_at: 'date',
   },
   foreshadow_events: {
-    id: 'id', foreshadow_id: 'id', chapter_id: 'nullableString', event_type: 'string',
-    note: 'longString', created_at: 'string',
+    id: 'id', foreshadow_id: 'id', chapter_id: 'nullableString',
+    event_type: 'foreshadowEventType', note: 'longString', created_at: 'date',
   },
   narrative_memories: {
-    id: 'id', project_id: 'id', memory_type: 'string', title: 'string', content: 'longString',
-    source_chapter_id: 'nullableString', importance: 'integer', metadata_json: 'json',
-    created_at: 'string', updated_at: 'string', status: 'string',
+    id: 'id', project_id: 'id', memory_type: 'memoryType', title: 'nonEmptyString',
+    content: 'longString', source_chapter_id: 'nullableString',
+    importance: 'nonNegativeInteger', metadata_json: 'json', created_at: 'date',
+    updated_at: 'date', status: 'memoryStatus',
     source_version_id: 'nullableString', evidence_json: 'stringArray',
   },
   narrative_memory_proposals: {
     id: 'id', project_id: 'id', source_chapter_id: 'nullableString',
-    source_version_id: 'nullableString', memory_type: 'string', title: 'string',
-    content: 'longString', confidence: 'number', evidence_json: 'stringArray', status: 'string',
-    metadata_json: 'json', created_at: 'string', updated_at: 'string',
+    source_version_id: 'nullableString', memory_type: 'memoryType', title: 'nonEmptyString',
+    content: 'longString', confidence: 'unitNumber', evidence_json: 'stringArray',
+    status: 'proposalStatus', metadata_json: 'json', created_at: 'date', updated_at: 'date',
   },
   roadmap_items: {
     id: 'id', project_id: 'id', parent_item_id: 'nullableString', title: 'string',
-    description: 'longString', item_type: 'string', status: 'string', priority: 'integer',
-    sort_order: 'integer', metadata_json: 'json', created_at: 'string', updated_at: 'string',
+    description: 'longString', item_type: 'nonEmptyString', status: 'nonEmptyString',
+    priority: 'nonNegativeInteger', sort_order: 'nonNegativeInteger', metadata_json: 'json',
+    created_at: 'date', updated_at: 'date',
   },
   project_skills: {
     skillName: 'string', enabled: 'boolean', config: 'json',
@@ -169,10 +199,18 @@ function jsonSchema(Type: TypeBoxRuntime['Type'], depth: number): TSchema {
 function buildArchiveSchema(runtime: TypeBoxRuntime): TSchema {
   const { Type } = runtime
   const json = jsonSchema(Type, 6)
+  const literalUnion = (values: readonly string[]): TSchema =>
+    Type.Union(values.map((value) => Type.Literal(value)))
+  const date = Type.String({
+    minLength: 10,
+    maxLength: 64,
+    pattern: '^\\d{4}-\\d{2}-\\d{2}(?:T.*)?$',
+  })
   const schemaForKind = (kind: ColumnKind): TSchema => {
     switch (kind) {
       case 'id': return Type.String({ minLength: 1, maxLength: 256 })
       case 'string': return Type.String({ maxLength: 8_192 })
+      case 'nonEmptyString': return Type.String({ minLength: 1, maxLength: 8_192 })
       case 'longString': return Type.String({ maxLength: 2_000_000 })
       case 'nullableString':
         return Type.Union([Type.Null(), Type.String({ maxLength: 16_384 })])
@@ -180,10 +218,51 @@ function buildArchiveSchema(runtime: TypeBoxRuntime): TSchema {
       case 'integer': return Type.Integer({ minimum: -2_147_483_648, maximum: 2_147_483_647 })
       case 'nullableNumber':
         return Type.Union([Type.Null(), Type.Number({ minimum: -1e15, maximum: 1e15 })])
+      case 'positiveInteger':
+        return Type.Integer({ minimum: 1, maximum: 2_147_483_647 })
+      case 'nonNegativeInteger':
+        return Type.Integer({ minimum: 0, maximum: 2_147_483_647 })
+      case 'nullablePositiveInteger':
+        return Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: 2_147_483_647 })])
+      case 'nullableNonNegativeInteger':
+        return Type.Union([Type.Null(), Type.Integer({ minimum: 0, maximum: 2_147_483_647 })])
+      case 'unitNumber': return Type.Number({ minimum: 0, maximum: 1 })
+      case 'nullableUnitNumber':
+        return Type.Union([Type.Null(), Type.Number({ minimum: 0, maximum: 1 })])
+      case 'nullableTemperature':
+        return Type.Union([Type.Null(), Type.Number({ minimum: 0, maximum: 2 })])
       case 'boolean': return Type.Boolean()
       case 'json': return json
       case 'stringArray':
         return Type.Array(Type.String({ maxLength: 256 }), { maxItems: 20_000, uniqueItems: true })
+      case 'date': return date
+      case 'nullableDate': return Type.Union([Type.Null(), date])
+      case 'projectStatus': return literalUnion(['active', 'archived'])
+      case 'relationEntityType': return literalUnion(['character', 'organization', 'worldview'])
+      case 'volumeStatus':
+        return literalUnion(['planned', 'drafting', 'active', 'completed', 'archived'])
+      case 'outlineStatus': return literalUnion(['draft', 'confirmed', 'locked'])
+      case 'chapterStatus': return literalUnion(['planned', 'drafting', 'review', 'completed'])
+      case 'revisionOperation':
+        return literalUnion(['manual', 'paragraph_revision', 'polish', 'fallback'])
+      case 'versionStatus': return literalUnion(['review', 'approved', 'rejected'])
+      case 'foreshadowStatus':
+        return literalUnion([
+          'suggested', 'planned', 'planted', 'active', 'revealed',
+          'paid_off', 'resolved', 'abandoned',
+        ])
+      case 'foreshadowEventType':
+        return literalUnion([
+          'suggested', 'planned', 'planted', 'activated', 'revealed',
+          'paid_off', 'resolved', 'abandoned', 'note',
+        ])
+      case 'memoryType':
+        return literalUnion([
+          'fact', 'event', 'relationship', 'character',
+          'worldview', 'emotion', 'theme', 'custom',
+        ])
+      case 'memoryStatus': return literalUnion(['proposed', 'approved', 'rejected', 'archived'])
+      case 'proposalStatus': return literalUnion(['proposed', 'approved', 'rejected'])
     }
   }
   const payloadProperties = Object.fromEntries(
@@ -215,7 +294,7 @@ function buildArchiveSchema(runtime: TypeBoxRuntime): TSchema {
     manifest: Type.Object({
       format: Type.Literal(PROJECT_ARCHIVE_FORMAT),
       formatVersion: Type.Literal(PROJECT_ARCHIVE_VERSION),
-      exportedAt: Type.String({ minLength: 1, maxLength: 64 }),
+      exportedAt: date,
       appVersion: Type.String({ minLength: 1, maxLength: 128 }),
       databaseSchemaVersion: Type.Integer({ minimum: 1, maximum: 1_000_000 }),
       sourceProjectId: Type.String({ minLength: 1, maxLength: 256 }),
@@ -275,10 +354,37 @@ function isBoundedJson(value: unknown, depth = 0): boolean {
     && Object.values(value).every((item) => isBoundedJson(item, depth + 1))
 }
 
+function isValidArchiveDate(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 64) return false
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/.exec(value)
+  if (!match || Number.isNaN(Date.parse(value))) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const normalized = new Date(Date.UTC(year, month - 1, day))
+  return normalized.getUTCFullYear() === year
+    && normalized.getUTCMonth() === month - 1
+    && normalized.getUTCDate() === day
+}
+
 function checkColumn(kind: ColumnKind, value: unknown): boolean {
+  const isIntegerBetween = (minimum: number, maximum: number): boolean =>
+    typeof value === 'number'
+    && Number.isInteger(value)
+    && value >= minimum
+    && value <= maximum
+  const isNumberBetween = (minimum: number, maximum: number): boolean =>
+    typeof value === 'number'
+    && Number.isFinite(value)
+    && value >= minimum
+    && value <= maximum
+  const isOneOf = (values: readonly string[]): boolean =>
+    typeof value === 'string' && values.includes(value)
   switch (kind) {
     case 'id': return typeof value === 'string' && value.length >= 1 && value.length <= 256
     case 'string': return typeof value === 'string' && value.length <= 8_192
+    case 'nonEmptyString':
+      return typeof value === 'string' && value.length >= 1 && value.length <= 8_192
     case 'longString': return typeof value === 'string' && value.length <= 2_000_000
     case 'nullableString':
       return value === null || (typeof value === 'string' && value.length <= 16_384)
@@ -292,6 +398,15 @@ function checkColumn(kind: ColumnKind, value: unknown): boolean {
     case 'nullableNumber':
       return value === null
         || (typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e15)
+    case 'positiveInteger': return isIntegerBetween(1, 2_147_483_647)
+    case 'nonNegativeInteger': return isIntegerBetween(0, 2_147_483_647)
+    case 'nullablePositiveInteger':
+      return value === null || isIntegerBetween(1, 2_147_483_647)
+    case 'nullableNonNegativeInteger':
+      return value === null || isIntegerBetween(0, 2_147_483_647)
+    case 'unitNumber': return isNumberBetween(0, 1)
+    case 'nullableUnitNumber': return value === null || isNumberBetween(0, 1)
+    case 'nullableTemperature': return value === null || isNumberBetween(0, 2)
     case 'boolean': return typeof value === 'boolean'
     case 'json': return isBoundedJson(value)
     case 'stringArray':
@@ -299,6 +414,34 @@ function checkColumn(kind: ColumnKind, value: unknown): boolean {
         && value.length <= 20_000
         && value.every((item) => typeof item === 'string' && item.length <= 256)
         && new Set(value).size === value.length
+    case 'date': return isValidArchiveDate(value)
+    case 'nullableDate': return value === null || isValidArchiveDate(value)
+    case 'projectStatus': return isOneOf(['active', 'archived'])
+    case 'relationEntityType': return isOneOf(['character', 'organization', 'worldview'])
+    case 'volumeStatus':
+      return isOneOf(['planned', 'drafting', 'active', 'completed', 'archived'])
+    case 'outlineStatus': return isOneOf(['draft', 'confirmed', 'locked'])
+    case 'chapterStatus': return isOneOf(['planned', 'drafting', 'review', 'completed'])
+    case 'revisionOperation':
+      return isOneOf(['manual', 'paragraph_revision', 'polish', 'fallback'])
+    case 'versionStatus': return isOneOf(['review', 'approved', 'rejected'])
+    case 'foreshadowStatus':
+      return isOneOf([
+        'suggested', 'planned', 'planted', 'active', 'revealed',
+        'paid_off', 'resolved', 'abandoned',
+      ])
+    case 'foreshadowEventType':
+      return isOneOf([
+        'suggested', 'planned', 'planted', 'activated', 'revealed',
+        'paid_off', 'resolved', 'abandoned', 'note',
+      ])
+    case 'memoryType':
+      return isOneOf([
+        'fact', 'event', 'relationship', 'character',
+        'worldview', 'emotion', 'theme', 'custom',
+      ])
+    case 'memoryStatus': return isOneOf(['proposed', 'approved', 'rejected', 'archived'])
+    case 'proposalStatus': return isOneOf(['proposed', 'approved', 'rejected'])
   }
 }
 
@@ -322,9 +465,7 @@ function manuallyCheckArchive(value: unknown): value is ProjectArchiveV1 {
   if (
     manifest.format !== PROJECT_ARCHIVE_FORMAT
     || manifest.formatVersion !== PROJECT_ARCHIVE_VERSION
-    || typeof manifest.exportedAt !== 'string'
-    || manifest.exportedAt.length < 1
-    || manifest.exportedAt.length > 64
+    || !isValidArchiveDate(manifest.exportedAt)
     || typeof manifest.appVersion !== 'string'
     || manifest.appVersion.length < 1
     || manifest.appVersion.length > 128
