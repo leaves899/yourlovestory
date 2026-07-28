@@ -126,7 +126,25 @@ describe('CredentialService', () => {
     const database = { prepare: () => ({ all: () => [] }) } as never
     const report = migrateLegacyLlmCredentials(root, root, database, service)
     expect(report.migrated).toBe(0)
+    expect(report.pending).toBe(1)
     expect(fs.readFileSync(path.join(root, 'settings.json'), 'utf8')).toContain(TEST_SECRET)
+  })
+
+  it('does not block an empty database when secure storage is unavailable', () => {
+    safeStorage.available = false
+    const database = {
+      prepare: () => ({
+        get: () => ({ count: 0 }),
+        all: () => [],
+      }),
+    } as never
+
+    expect(migrateLegacyLlmCredentials(root, root, database, service)).toMatchObject({
+      migrated: 0,
+      pending: 0,
+      failed: 0,
+      issues: [],
+    })
   })
 
   it.each([

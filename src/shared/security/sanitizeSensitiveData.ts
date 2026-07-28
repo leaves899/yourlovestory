@@ -18,12 +18,16 @@ const sensitiveKeys = new Set([
 const bearerPattern = /\bBearer\s+[A-Za-z0-9._~+/=:-]+/gi
 const keyPattern = /\b(?:sk-(?:[A-Za-z0-9_-]{8,})|sk-ant-[A-Za-z0-9_-]+|AIza[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})\b/g
 const queryPattern = /([?&](?:api[_-]?key|apikey|token|access[_-]?token|refresh[_-]?token|secret|key)=)[^&#\s]*/gi
+const windowsPathPattern = /\b[A-Za-z]:\\(?:[^\\\r\n]+\\)*[^\\\r\n]*/g
+const unixHomePathPattern = /\/(?:Users|home)\/[^/\s]+(?:\/[^\s]*)?/g
 
 function redactString(value: string): string {
   return value
     .replace(bearerPattern, 'Bearer ' + REDACTED)
     .replace(keyPattern, REDACTED)
     .replace(queryPattern, `$1${REDACTED}`)
+    .replace(windowsPathPattern, '[LOCAL_PATH]')
+    .replace(unixHomePathPattern, '[LOCAL_PATH]')
 }
 
 function isSensitiveKey(key: string): boolean {

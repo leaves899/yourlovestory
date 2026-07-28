@@ -100,6 +100,13 @@ import type {
   RendererAssistantSessionView,
   RendererChatSession,
 } from './types/assistant'
+import type {
+  BackupRecord,
+  BackupError,
+  BackupVerificationResult,
+  DatabaseStatus,
+  RestoreExecutionResult,
+} from '../shared/backup/types'
 
 interface ElectronAPI {
   // 日常写作
@@ -147,6 +154,19 @@ interface ElectronAPI {
     target: { scope: 'app' } | { scope: 'project'; projectId: string },
   ) => Promise<{ success: boolean; data?: { message: string }; error?: { code: string; message: string; retryable: boolean } }>
   deleteAllLlmCredentials: () => Promise<{ success: boolean; data?: { deleted: number; failed: number; referencesCleared: boolean; remaining: number }; error?: { code: string; message: string; retryable: boolean } }>
+
+  // 数据安全
+  listBackups: () => Promise<{ success: boolean; data?: BackupRecord[]; error?: BackupError }>
+  createBackup: () => Promise<{ success: boolean; data?: BackupRecord; error?: BackupError }>
+  verifyBackup: (
+    id: string,
+  ) => Promise<{ success: boolean; data?: BackupVerificationResult; error?: BackupError }>
+  restoreBackup: (
+    id: string,
+    confirm: true,
+  ) => Promise<{ success: boolean; data?: RestoreExecutionResult; error?: BackupError }>
+  getDatabaseStatus: () => Promise<{ success: boolean; data?: DatabaseStatus; error?: BackupError }>
+  onDatabaseStatusChanged: (listener: (status: DatabaseStatus) => void) => () => void
 
   // 应用
   getAppInfo: () => Promise<any>

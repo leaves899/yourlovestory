@@ -12,6 +12,31 @@ export interface IpcAuditEvent {
 
 export type IpcAuditSink = (event: IpcAuditEvent) => void
 
+const DATABASE_RECOVERY_REQUIRED_RESPONSE = {
+  success: false,
+  error: {
+    code: 'DATABASE_RECOVERY_REQUIRED',
+    message: '数据库需要恢复后才能继续使用。',
+  },
+} as const
+
+export function createDatabaseGuardedRegistrar(
+  registrar: IpcRegistrar,
+  isBusinessAvailable: () => boolean,
+  allowWhenUnavailable: (channel: string) => boolean,
+): IpcRegistrar {
+  return {
+    handle(channel, handler): void {
+      registrar.handle(channel, async (event, ...args: unknown[]) => {
+        if (!isBusinessAvailable() && !allowWhenUnavailable(channel)) {
+          return DATABASE_RECOVERY_REQUIRED_RESPONSE
+        }
+        return handler(event, ...args)
+      })
+    },
+  }
+}
+
 interface IpcHandlerOptions<Input> {
   parse?: (value: unknown) => Input
   authorize?: (event: IpcMainInvokeEvent, value: unknown) => void
@@ -80,13 +105,15 @@ export function safeError(error: unknown, fallback?: string): string {
   return sanitizeErrorMessage(error, fallback)
 }
 
-export function assertTrustedCredentialSender(event: IpcMainInvokeEvent): void {
+export function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const senderUrl = event.senderFrame?.url ?? event.sender?.getURL()
   if (!senderUrl && process.env.NODE_ENV === 'test') return
   if (senderUrl?.startsWith('file://')) return
   if (senderUrl?.startsWith('http://localhost:3000/')) return
   throw new Error('untrusted IPC sender')
 }
+
+export const assertTrustedCredentialSender = assertTrustedIpcSender
 
 export function parseProjectIdParams(value: unknown): { project_id: string } {
   if (!isRecord(value)) throw new Error('project input is required')

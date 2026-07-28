@@ -2,8 +2,20 @@ import { app, BrowserWindow, safeStorage } from 'electron'
 import * as fs from 'fs'
 import path from 'path'
 import { setupIPC } from './ipc'
-import { ChatRepository, initializeDatabase, migrations, runMigrations, TaskRepository } from './database'
+import {
+  ChatRepository,
+  DATABASE_STATUS_CHANGED_CHANNEL,
+  DatabaseRuntimeStatus,
+  executeDatabaseRestore,
+  initializeDatabaseLifecycle,
+  shutdownDatabaseResources,
+  TaskRepository,
+} from './database'
 import type { SqliteDatabase } from './database'
+import {
+  DatabaseBackupService,
+  type RestoreExecutionResult,
+} from './backup'
 import { createProjectSessionAgentFactory } from '../agent/agent'
 import {
   createChapterGenerationTaskRunner,
@@ -29,6 +41,21 @@ let taskManager: TaskManager | null = null
 let workbenchService: WorkbenchService | null = null
 let assistantService: AssistantService | null = null
 let credentialService: CredentialService | null = null
+let backupService: DatabaseBackupService | null = null
+const databaseRuntime = new DatabaseRuntimeStatus({
+  state: 'recovery-required',
+  integrity: 'unknown',
+  schemaVersion: null,
+  message: '数据库尚未初始化。',
+  lastBackupAt: null,
+  backupAllowed: false,
+  backupEligibility: 'database-unavailable',
+  backupBlockedReason: '数据库尚未初始化。',
+}, (status) => {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send(DATABASE_STATUS_CHANGED_CHANNEL, status)
+  }
+})
 
 const e2eUserDataPath = process.env.YOURCRUSH_E2E_USER_DATA
 if (process.env.NODE_ENV === 'test' && e2eUserDataPath) {
@@ -120,27 +147,87 @@ function createWindow() {
   })
 }
 
-app.whenReady().then(() => {
+async function restoreDatabaseBackup(id: string): Promise<RestoreExecutionResult> {
+  if (!backupService) throw new Error('Database restore is not available')
+  const databaseAvailable = database !== null
+  return executeDatabaseRestore({
+    backupService,
+    backupId: id,
+    databaseAvailable,
+    markRestoring: () => databaseRuntime.beginRestore(),
+    closeDatabase: () => {
+      const taskManagerToDispose = taskManager
+      taskManager = null
+      const assistantServiceToDispose = assistantService
+      assistantService = null
+      workbenchService = null
+      const databaseToClose = database
+      const result = shutdownDatabaseResources({
+        taskManager: taskManagerToDispose,
+        assistantService: assistantServiceToDispose,
+        database: databaseToClose,
+      })
+      if (result.databaseClosed) {
+        database = null
+      }
+      if (result.serviceCleanupFailed) {
+        console.warn('[DatabaseRestore] Service cleanup was incomplete')
+      }
+      return result
+    },
+    relaunch: () => {
+      app.relaunch()
+    },
+    exit: () => app.exit(0),
+    markRecoveryRequired: () => databaseRuntime.requireRecovery(),
+  })
+}
+
+app.whenReady().then(async () => {
   // 启动时执行数据迁移
   migrateData()
-  // Keep the destructive schema cleanup until after a verified safeStorage migration.
-  database = initializeDatabase(app.getPath('userData'), {
-    migrations: migrations.filter((migration) => migration.version < 8),
-  })
   credentialService = new CredentialService(app.getPath('userData'), safeStorage)
-  const credentialMigration = migrateLegacyLlmCredentials(
-    app.getPath('userData'),
-    app.getAppPath(),
-    database,
-    credentialService,
-  )
+  const lifecycle = await initializeDatabaseLifecycle({
+    userDataPath: app.getPath('userData'),
+    appVersion: app.getVersion(),
+    migrateCredentials: (candidateDatabase) => migrateLegacyLlmCredentials(
+      app.getPath('userData'),
+      app.getAppPath(),
+      candidateDatabase,
+      credentialService!,
+    ),
+  })
+  backupService = lifecycle.backupService
+  databaseRuntime.replace(lifecycle.status)
+  createWindow()
+
+  if (!lifecycle.success) {
+    console.error('[DatabaseStartup]', lifecycle.status.state, lifecycle.status.message)
+    setupIPC({
+      backupService,
+      getDatabaseStatus: () => databaseRuntime.get(),
+      restoreBackup: restoreDatabaseBackup,
+    })
+    return
+  }
+
+  database = lifecycle.database
+  const credentialMigration = lifecycle.credentialMigration
   if (credentialMigration.pending > 0) {
     console.warn('[CredentialMigration] pending', {
       pending: credentialMigration.pending,
       failed: credentialMigration.failed,
     })
-  } else {
-    runMigrations(database)
+  }
+  if (lifecycle.status.state !== 'ready') {
+    setupIPC({
+      credentialService,
+      database,
+      backupService,
+      getDatabaseStatus: () => databaseRuntime.get(),
+      restoreBackup: restoreDatabaseBackup,
+    })
+    return
   }
   workbenchService = createWorkbenchService(database, { projectRoot: app.getPath('userData') })
   const llmCredentialController = new LlmCredentialController({
@@ -154,8 +241,6 @@ app.whenReady().then(() => {
       taskManager?.dispose()
     },
   })
-
-  createWindow()
   const agentFactory = createProjectSessionAgentFactory({
     resolveCredential: async (credentialId, config) => {
       const binding = credentialService!.getCredentialBinding(credentialId)
@@ -214,6 +299,9 @@ app.whenReady().then(() => {
     credentialService,
     database,
     credentialController: llmCredentialController,
+    backupService,
+    getDatabaseStatus: () => databaseRuntime.get(),
+    restoreBackup: restoreDatabaseBackup,
   })
 
   app.on('activate', () => {

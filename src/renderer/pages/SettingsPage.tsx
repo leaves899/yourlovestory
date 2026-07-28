@@ -34,6 +34,11 @@ import {
 } from '../../shared/relationship/phase_prompts'
 import type { RelationshipPhase } from '../../shared/relationship/models'
 import { useAppStore } from '../stores/appStore'
+import type {
+  BackupRecord,
+  BackupVerificationResult,
+  DatabaseStatus,
+} from '../../shared/backup/types'
 
 const PHASE_COLORS: Record<RelationshipPhase, string> = {
   0: 'ink',
@@ -50,6 +55,12 @@ function SettingsPage() {
   const [storagePath, setStoragePath] = useState('')
   const [backupEnabled, setBackupEnabled] = useState(false)
   const [backupPath, setBackupPath] = useState('')
+  const [backups, setBackups] = useState<BackupRecord[]>([])
+  const [databaseStatus, setDatabaseStatus] = useState<DatabaseStatus | null>(null)
+  const [backupBusy, setBackupBusy] = useState(false)
+  const [verificationById, setVerificationById] = useState<
+    Record<string, BackupVerificationResult>
+  >({})
 
   // API 配置
   const [provider, setProvider] = useState('anthropic')
@@ -110,6 +121,30 @@ function SettingsPage() {
         setCredentialError(response.data.error?.message ?? null)
       }
     }).catch(() => setCredentialError('无法检查系统安全存储。'))
+  }, [])
+
+  const loadDataSafety = async () => {
+    const [statusResult, backupResult] = await Promise.all([
+      window.electronAPI.getDatabaseStatus(),
+      window.electronAPI.listBackups(),
+    ])
+    if (statusResult.success && statusResult.data) setDatabaseStatus(statusResult.data)
+    if (backupResult.success && backupResult.data) setBackups(backupResult.data)
+  }
+
+  useEffect(() => {
+    void loadDataSafety().catch(() => {
+      setDatabaseStatus((current) => current ?? {
+        state: 'recovery-required',
+        integrity: 'unknown',
+        schemaVersion: null,
+        message: '无法读取数据库状态。',
+        lastBackupAt: null,
+        backupAllowed: false,
+        backupEligibility: 'database-unavailable',
+        backupBlockedReason: '无法读取数据库状态。',
+      })
+    })
   }, [])
 
   // 加载关系进度
@@ -229,6 +264,66 @@ function SettingsPage() {
     }
   }
 
+  const createDatabaseBackup = async () => {
+    setBackupBusy(true)
+    try {
+      const result = await window.electronAPI.createBackup()
+      if (!result.success) throw new Error(result.error?.message ?? '创建备份失败')
+      await loadDataSafety()
+      toast({ title: '数据库备份已创建', status: 'success', duration: 3000 })
+    } catch (error: unknown) {
+      toast({
+        title: '创建备份失败',
+        description: error instanceof Error ? error.message : '请重试。',
+        status: 'error',
+        duration: 4000,
+      })
+    } finally {
+      setBackupBusy(false)
+    }
+  }
+
+  const verifyDatabaseBackup = async (id: string) => {
+    setBackupBusy(true)
+    try {
+      const result = await window.electronAPI.verifyBackup(id)
+      if (!result.success || !result.data) {
+        throw new Error(result.error?.message ?? '校验备份失败')
+      }
+      const verification = result.data
+      setVerificationById((current) => ({ ...current, [id]: verification }))
+    } catch (error: unknown) {
+      toast({
+        title: '校验备份失败',
+        description: error instanceof Error ? error.message : '请重试。',
+        status: 'error',
+        duration: 4000,
+      })
+    } finally {
+      setBackupBusy(false)
+    }
+  }
+
+  const restoreDatabaseBackup = async (backup: BackupRecord) => {
+    if (!window.confirm(
+      `确定恢复 ${new Date(backup.createdAt).toLocaleString()} 的数据库备份吗？应用将安全重启。`,
+    )) return
+    setBackupBusy(true)
+    try {
+      const result = await window.electronAPI.restoreBackup(backup.id, true)
+      if (!result.success) throw new Error(result.error?.message ?? '恢复备份失败')
+      toast({ title: '数据库已恢复，应用正在重启', status: 'success', duration: 3000 })
+    } catch (error: unknown) {
+      toast({
+        title: '恢复备份失败',
+        description: error instanceof Error ? error.message : '当前应用不会退出，请重试。',
+        status: 'error',
+        duration: 5000,
+      })
+      setBackupBusy(false)
+    }
+  }
+
   const models: Record<string, string[]> = {
     anthropic: ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
     openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
@@ -248,6 +343,7 @@ function SettingsPage() {
           <Tab>AI 配置</Tab>
           <Tab>提示词</Tab>
           <Tab>阶段提示词</Tab>
+          <Tab>数据安全</Tab>
           <Tab>外观</Tab>
         </TabList>
 
@@ -439,6 +535,91 @@ function SettingsPage() {
                   )
                 })}
               </Accordion>
+            </Stack>
+          </TabPanel>
+
+          {/* 数据安全 */}
+          <TabPanel>
+            <Stack spacing={6}>
+              <InkPanel>
+                <HStack justify="space-between" align="start">
+                  <Box>
+                    <Heading size="sm">数据库状态</Heading>
+                    <Text mt={2} fontSize="sm" color="ink.600">
+                      完整性：{databaseStatus?.integrity ?? 'unknown'}
+                      {databaseStatus?.schemaVersion === null
+                        ? ''
+                        : ` · Schema ${databaseStatus?.schemaVersion ?? 0}`}
+                    </Text>
+                    {databaseStatus?.message && (
+                      <Text mt={2} fontSize="sm" color="red.500">
+                        {databaseStatus.message}
+                      </Text>
+                    )}
+                  </Box>
+                  <Badge colorScheme={databaseStatus?.state === 'ready' ? 'green' : 'red'}>
+                    {databaseStatus?.state ?? 'unknown'}
+                  </Badge>
+                </HStack>
+                <Button
+                  mt={4}
+                  size="sm"
+                  colorScheme="cinnabar"
+                  isLoading={backupBusy}
+                  isDisabled={databaseStatus?.state !== 'ready'}
+                  onClick={() => void createDatabaseBackup()}
+                >
+                  立即备份
+                </Button>
+              </InkPanel>
+
+              <InkPanel>
+                <Heading size="sm" mb={4}>数据库备份</Heading>
+                <Stack spacing={3}>
+                  {backups.length === 0 && (
+                    <Text fontSize="sm" color="ink.500">暂无可用备份。</Text>
+                  )}
+                  {backups.map((backup) => {
+                    const verification = verificationById[backup.id]
+                    return (
+                      <Box key={backup.id} borderWidth="1px" borderRadius="md" p={4}>
+                        <HStack justify="space-between" align="start">
+                          <Box>
+                            <Text fontWeight="semibold">
+                              {new Date(backup.createdAt).toLocaleString()}
+                            </Text>
+                            <Text fontSize="sm" color="ink.500">
+                              {backup.reason} · {(backup.size / 1024).toFixed(1)} KB
+                              {verification
+                                ? ` · ${verification.valid ? '校验通过' : '校验失败'}`
+                                : ' · 尚未校验'}
+                            </Text>
+                          </Box>
+                          <HStack>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              isDisabled={backupBusy}
+                              onClick={() => void verifyDatabaseBackup(backup.id)}
+                            >
+                              校验
+                            </Button>
+                            <Button
+                              size="xs"
+                              colorScheme="red"
+                              variant="outline"
+                              isDisabled={backupBusy}
+                              onClick={() => void restoreDatabaseBackup(backup)}
+                            >
+                              恢复
+                            </Button>
+                          </HStack>
+                        </HStack>
+                      </Box>
+                    )
+                  })}
+                </Stack>
+              </InkPanel>
             </Stack>
           </TabPanel>
 

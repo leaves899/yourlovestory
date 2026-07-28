@@ -53,4 +53,14 @@ describe('sanitizeSensitiveData', () => {
     expect(serialized).not.toContain('"cipher"')
     expect(serialized).toContain('"title":"safe"')
   })
+
+  it('redacts user-specific local paths from errors', () => {
+    const output = sanitizeSensitiveData(
+      new Error('EPERM opening C:\\Users\\Alice\\AppData\\Roaming\\yourcrush\\data.sqlite'),
+    )
+    const serialized = JSON.stringify(output)
+    expect(serialized).toContain('[LOCAL_PATH]')
+    expect(serialized).not.toContain('Alice')
+    expect(serialized).not.toContain('data.sqlite')
+  })
 })

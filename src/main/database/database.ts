@@ -39,6 +39,10 @@ class BetterSqliteDatabaseAdapter implements SqliteDatabase {
     return () => transaction()
   }
 
+  public async backup(filename: string): Promise<void> {
+    await this.nativeDatabase.backup(filename)
+  }
+
   public close(): void {
     this.nativeDatabase.close()
   }
@@ -59,23 +63,35 @@ function ensureDatabaseDirectory(filename: string): void {
   fs.mkdirSync(path.dirname(filename), { recursive: true })
 }
 
-function configureDatabase(database: SqliteDatabase, busyTimeoutMs: number): void {
+export function configureDatabase(database: SqliteDatabase, busyTimeoutMs: number): void {
   database.pragma('foreign_keys = ON')
   database.pragma('journal_mode = WAL')
   database.pragma(`busy_timeout = ${busyTimeoutMs}`)
+}
+
+export function openDatabase(
+  userDataPath: string,
+  options: Omit<InitializeDatabaseOptions, 'migrations'> = {},
+): SqliteDatabase {
+  const filename = options.filename ?? getDatabasePath(userDataPath)
+  const busyTimeoutMs = options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS
+  ensureDatabaseDirectory(filename)
+  const nativeDatabase = new Database(filename, { timeout: busyTimeoutMs })
+  const database = new BetterSqliteDatabaseAdapter(nativeDatabase)
+  try {
+    configureDatabase(database, busyTimeoutMs)
+    return database
+  } catch (error: unknown) {
+    nativeDatabase.close()
+    throw error
+  }
 }
 
 export function initializeDatabase(
   userDataPath: string,
   options: InitializeDatabaseOptions = {},
 ): SqliteDatabase {
-  const filename = options.filename ?? getDatabasePath(userDataPath)
-  const busyTimeoutMs = options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS
-  ensureDatabaseDirectory(filename)
-
-  const nativeDatabase = new Database(filename, { timeout: busyTimeoutMs })
-  const database = new BetterSqliteDatabaseAdapter(nativeDatabase)
-  configureDatabase(database, busyTimeoutMs)
+  const database = openDatabase(userDataPath, options)
   runMigrations(database, options.migrations)
   return database
 }

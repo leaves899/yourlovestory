@@ -41,6 +41,36 @@ function ensureMigrationsTable(database: SqliteDatabase): void {
   `)
 }
 
+export function getAppliedMigrations(database: SqliteDatabase): AppliedMigration[] {
+  const table = database
+    .prepare<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+    )
+    .get()
+  if (!table?.count) return []
+  return database
+    .prepare<AppliedMigration>(
+      'SELECT version, name, applied_at FROM schema_migrations ORDER BY version',
+    )
+    .all()
+}
+
+export function getPendingMigrations(
+  database: SqliteDatabase,
+  candidateMigrations: readonly Migration[] = migrations,
+): Migration[] {
+  validateMigrationOrder(candidateMigrations)
+  const applied = getAppliedMigrations(database)
+  const appliedByVersion = new Map(applied.map((migration) => [migration.version, migration]))
+  for (const migration of candidateMigrations) {
+    const existing = appliedByVersion.get(migration.version)
+    if (existing && existing.name !== migration.name) {
+      throw new Error(`Migration ${migration.version} name does not match the recorded migration`)
+    }
+  }
+  return candidateMigrations.filter((migration) => !appliedByVersion.has(migration.version))
+}
+
 function validateMigrationOrder(candidateMigrations: readonly Migration[]): void {
   let previousVersion = 0
   for (const migration of candidateMigrations) {
@@ -58,9 +88,7 @@ export function runMigrations(
   validateMigrationOrder(candidateMigrations)
   ensureMigrationsTable(database)
 
-  const applied = database
-    .prepare<AppliedMigration>('SELECT version, name, applied_at FROM schema_migrations ORDER BY version')
-    .all()
+  const applied = getAppliedMigrations(database)
   const appliedByVersion = new Map(applied.map((migration) => [migration.version, migration]))
 
   for (const migration of candidateMigrations) {

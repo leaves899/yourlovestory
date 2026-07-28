@@ -81,6 +81,15 @@ import type {
   LegacyFragmentSnapshot,
 } from '../shared/novelProject'
 import type { Foreshadow } from '../shared/narrativeWorkbench'
+import type {
+  BackupRecord,
+  BackupError,
+  BackupVerificationResult,
+  DatabaseStatus,
+  RestoreExecutionResult,
+} from '../shared/backup/types'
+
+const DATABASE_STATUS_CHANGED_CHANNEL = 'backup:status-changed'
 
 interface TaskEventMap {
   'task:start': TaskStartEvent
@@ -171,6 +180,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testLlmCredential: (target: { scope: 'app' } | { scope: 'project'; projectId: string }) =>
     ipcRenderer.invoke('llmCredential:test', target),
   deleteAllLlmCredentials: () => ipcRenderer.invoke('llmCredential:deleteAll'),
+
+  // 数据安全
+  listBackups: (): Promise<{ success: boolean; data?: BackupRecord[]; error?: BackupError }> =>
+    ipcRenderer.invoke('backup:list'),
+  createBackup: (): Promise<{ success: boolean; data?: BackupRecord; error?: BackupError }> =>
+    ipcRenderer.invoke('backup:create'),
+  verifyBackup: (
+    id: string,
+  ): Promise<{ success: boolean; data?: BackupVerificationResult; error?: BackupError }> =>
+    ipcRenderer.invoke('backup:verify', { id }),
+  restoreBackup: (
+    id: string,
+    confirm: true,
+  ): Promise<{ success: boolean; data?: RestoreExecutionResult; error?: BackupError }> =>
+    ipcRenderer.invoke('backup:restore', { id, confirm }),
+  getDatabaseStatus: (): Promise<{ success: boolean; data?: DatabaseStatus; error?: BackupError }> =>
+    ipcRenderer.invoke('backup:get-status'),
+  onDatabaseStatusChanged: (listener: (status: DatabaseStatus) => void): (() => void) => {
+    const wrapped = (_event: IpcRendererEvent, status: DatabaseStatus): void => {
+      listener(status)
+    }
+    ipcRenderer.on(DATABASE_STATUS_CHANGED_CHANNEL, wrapped)
+    return () => ipcRenderer.removeListener(DATABASE_STATUS_CHANGED_CHANNEL, wrapped)
+  },
 
   // 应用
   getAppInfo: () => ipcRenderer.invoke('app:info'),
