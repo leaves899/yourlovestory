@@ -36,6 +36,11 @@ const EXPECTED_CHANNELS = [
   'app:checkUpdate',
   'app:info',
   'app:quit',
+  'backup:create',
+  'backup:get-status',
+  'backup:list',
+  'backup:restore',
+  'backup:verify',
   'chapter:blocks',
   'chapter:diff:revisions',
   'chapter:diff:versions',
@@ -217,5 +222,64 @@ describe('modular IPC registration', () => {
       { senderFrame: { url: 'file:///app/index.html' } },
     )
     expect(JSON.stringify(failure)).not.toContain(secret)
+  })
+
+  it('validates and authorizes backup operations through the shared registry', async () => {
+    const audit = jest.fn()
+    const backupService = {
+      listBackups: jest.fn(async () => []),
+      createBackup: jest.fn(),
+      verifyBackup: jest.fn(),
+      restoreBackup: jest.fn(),
+      pruneBackups: jest.fn(),
+    }
+    const restoreBackup = jest.fn()
+    setupIPC({
+      backupService,
+      restoreBackup,
+      databaseStatus: {
+        state: 'ready',
+        integrity: 'ok',
+        schemaVersion: 8,
+        message: null,
+        lastBackupAt: null,
+      },
+      audit,
+    })
+
+    await expect(invoke('backup:list', { path: 'C:\\arbitrary.sqlite' })).resolves.toMatchObject({
+      success: false,
+      error: 'This operation does not accept input',
+    })
+    await expect(invoke('backup:verify', { id: '' })).resolves.toMatchObject({
+      success: false,
+      error: 'id is required',
+    })
+    await expect(invoke('backup:restore', { id: 'backup-1', confirm: false })).resolves.toMatchObject({
+      success: false,
+      error: 'Explicit restore confirmation is required',
+    })
+    await expect(invoke('backup:restore', {
+      id: 'backup-1',
+      confirm: true,
+      path: 'C:\\arbitrary.sqlite',
+    }, {
+      senderFrame: { url: 'file:///app/index.html' },
+    })).resolves.toMatchObject({
+      success: false,
+      error: 'Restore input contains unsupported fields',
+    })
+    await expect(invoke('backup:restore', {
+      id: 'backup-1',
+      confirm: true,
+      path: 'C:\\arbitrary.sqlite',
+    }, {
+      senderFrame: { url: 'https://untrusted.example/' },
+    })).resolves.toMatchObject({
+      success: false,
+      error: 'untrusted IPC sender',
+    })
+    expect(restoreBackup).not.toHaveBeenCalled()
+    expect(audit).toHaveBeenCalledWith({ channel: 'backup:restore', outcome: 'failed' })
   })
 })
