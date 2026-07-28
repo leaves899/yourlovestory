@@ -2,8 +2,18 @@ import { app, BrowserWindow, safeStorage } from 'electron'
 import * as fs from 'fs'
 import path from 'path'
 import { setupIPC } from './ipc'
-import { ChatRepository, initializeDatabase, migrations, runMigrations, TaskRepository } from './database'
+import {
+  ChatRepository,
+  executeDatabaseRestore,
+  initializeDatabaseLifecycle,
+  TaskRepository,
+} from './database'
 import type { SqliteDatabase } from './database'
+import {
+  DatabaseBackupService,
+  type DatabaseStatus,
+  type RestoreExecutionResult,
+} from './backup'
 import { createProjectSessionAgentFactory } from '../agent/agent'
 import {
   createChapterGenerationTaskRunner,
@@ -29,6 +39,14 @@ let taskManager: TaskManager | null = null
 let workbenchService: WorkbenchService | null = null
 let assistantService: AssistantService | null = null
 let credentialService: CredentialService | null = null
+let backupService: DatabaseBackupService | null = null
+let databaseStatus: DatabaseStatus = {
+  state: 'recovery-required',
+  integrity: 'unknown',
+  schemaVersion: null,
+  message: '数据库尚未初始化。',
+  lastBackupAt: null,
+}
 
 const e2eUserDataPath = process.env.YOURCRUSH_E2E_USER_DATA
 if (process.env.NODE_ENV === 'test' && e2eUserDataPath) {
@@ -120,27 +138,64 @@ function createWindow() {
   })
 }
 
-app.whenReady().then(() => {
+async function restoreDatabaseBackup(id: string): Promise<RestoreExecutionResult> {
+  if (!backupService) throw new Error('Database restore is not available')
+  const databaseAvailable = database !== null
+  return executeDatabaseRestore({
+    backupService,
+    backupId: id,
+    databaseAvailable,
+    closeDatabase: () => {
+      taskManager?.dispose()
+      taskManager = null
+      assistantService?.dispose()
+      assistantService = null
+      workbenchService = null
+      database?.close()
+      database = null
+    },
+    relaunch: () => {
+      app.relaunch()
+      app.exit(0)
+    },
+  })
+}
+
+app.whenReady().then(async () => {
   // 启动时执行数据迁移
   migrateData()
-  // Keep the destructive schema cleanup until after a verified safeStorage migration.
-  database = initializeDatabase(app.getPath('userData'), {
-    migrations: migrations.filter((migration) => migration.version < 8),
-  })
   credentialService = new CredentialService(app.getPath('userData'), safeStorage)
-  const credentialMigration = migrateLegacyLlmCredentials(
-    app.getPath('userData'),
-    app.getAppPath(),
-    database,
-    credentialService,
-  )
+  const lifecycle = await initializeDatabaseLifecycle({
+    userDataPath: app.getPath('userData'),
+    appVersion: app.getVersion(),
+    migrateCredentials: (candidateDatabase) => migrateLegacyLlmCredentials(
+      app.getPath('userData'),
+      app.getAppPath(),
+      candidateDatabase,
+      credentialService!,
+    ),
+  })
+  backupService = lifecycle.backupService
+  databaseStatus = lifecycle.status
+  createWindow()
+
+  if (!lifecycle.success) {
+    console.error('[DatabaseStartup]', lifecycle.status.state, lifecycle.status.message)
+    setupIPC({
+      backupService,
+      databaseStatus,
+      restoreBackup: restoreDatabaseBackup,
+    })
+    return
+  }
+
+  database = lifecycle.database
+  const credentialMigration = lifecycle.credentialMigration
   if (credentialMigration.pending > 0) {
     console.warn('[CredentialMigration] pending', {
       pending: credentialMigration.pending,
       failed: credentialMigration.failed,
     })
-  } else {
-    runMigrations(database)
   }
   workbenchService = createWorkbenchService(database, { projectRoot: app.getPath('userData') })
   const llmCredentialController = new LlmCredentialController({
@@ -154,8 +209,6 @@ app.whenReady().then(() => {
       taskManager?.dispose()
     },
   })
-
-  createWindow()
   const agentFactory = createProjectSessionAgentFactory({
     resolveCredential: async (credentialId, config) => {
       const binding = credentialService!.getCredentialBinding(credentialId)
@@ -214,6 +267,9 @@ app.whenReady().then(() => {
     credentialService,
     database,
     credentialController: llmCredentialController,
+    backupService,
+    databaseStatus,
+    restoreBackup: restoreDatabaseBackup,
   })
 
   app.on('activate', () => {
