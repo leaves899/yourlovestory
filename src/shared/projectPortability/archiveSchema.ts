@@ -19,9 +19,7 @@ type ColumnKind =
   | 'positiveInteger'
   | 'nonNegativeInteger'
   | 'nullablePositiveInteger'
-  | 'nullableNonNegativeInteger'
   | 'unitNumber'
-  | 'nullableUnitNumber'
   | 'boolean'
   | 'json'
   | 'stringArray'
@@ -42,6 +40,7 @@ type ColumnKind =
   | 'proposalStatus'
 
 export type ArchiveTableDefinition = Readonly<Record<string, ColumnKind>>
+const SAFE_NUMERIC_MAX = 1e15
 
 export const ARCHIVE_TABLES: Record<ProjectArchiveCollection, ArchiveTableDefinition> = {
   projects: {
@@ -50,7 +49,7 @@ export const ARCHIVE_TABLES: Record<ProjectArchiveCollection, ArchiveTableDefini
   },
   project_configs: {
     project_id: 'id', default_llm_config_id: 'nullableString', genre: 'string', tone: 'string',
-    target_words: 'nullablePositiveInteger', context_budget: 'nullablePositiveInteger',
+    target_words: 'nullableNumber', context_budget: 'nullableNumber',
     settings_json: 'json', version: 'positiveInteger', created_at: 'date', updated_at: 'date',
   },
   llm_configs: {
@@ -61,23 +60,23 @@ export const ARCHIVE_TABLES: Record<ProjectArchiveCollection, ArchiveTableDefini
   },
   characters: {
     id: 'id', project_id: 'id', name: 'string', role: 'string', crush_slug: 'nullableString',
-    profile_json: 'json', notes: 'longString', sort_order: 'nonNegativeInteger',
+    profile_json: 'json', notes: 'longString', sort_order: 'number',
     version: 'positiveInteger', created_at: 'date', updated_at: 'date',
   },
   worldview_entries: {
     id: 'id', project_id: 'id', category: 'string', title: 'string', content: 'longString',
-    metadata_json: 'json', sort_order: 'nonNegativeInteger', version: 'positiveInteger',
+    metadata_json: 'json', sort_order: 'number', version: 'positiveInteger',
     created_at: 'date', updated_at: 'date',
   },
   organizations: {
     id: 'id', project_id: 'id', name: 'string', description: 'longString', metadata_json: 'json',
-    sort_order: 'nonNegativeInteger', version: 'positiveInteger',
+    sort_order: 'number', version: 'positiveInteger',
     created_at: 'date', updated_at: 'date',
   },
   relations: {
     id: 'id', project_id: 'id', source_character_id: 'nullableString',
     target_character_id: 'nullableString', relation_type: 'string', description: 'longString',
-    strength: 'nullableUnitNumber', metadata_json: 'json',
+    strength: 'nullableNumber', metadata_json: 'json',
     source_entity_type: 'relationEntityType', source_entity_id: 'id',
     target_entity_type: 'relationEntityType', target_entity_id: 'id',
     version: 'positiveInteger', created_at: 'date', updated_at: 'date',
@@ -90,7 +89,7 @@ export const ARCHIVE_TABLES: Record<ProjectArchiveCollection, ArchiveTableDefini
   },
   arcs: {
     id: 'id', project_id: 'id', parent_arc_id: 'nullableString', name: 'string',
-    synopsis: 'longString', status: 'nonEmptyString', sort_order: 'nonNegativeInteger',
+    synopsis: 'longString', status: 'nonEmptyString', sort_order: 'number',
     metadata_json: 'json', created_at: 'date', updated_at: 'date',
   },
   volumes: {
@@ -115,9 +114,9 @@ export const ARCHIVE_TABLES: Record<ProjectArchiveCollection, ArchiveTableDefini
     version: 'positiveInteger', created_at: 'date', updated_at: 'date',
   },
   chapters: {
-    id: 'id', project_id: 'id', arc_id: 'nullableString', chapter_number: 'positiveInteger',
+    id: 'id', project_id: 'id', arc_id: 'nullableString', chapter_number: 'number',
     title: 'string', status: 'chapterStatus', synopsis: 'longString', content: 'longString',
-    target_words: 'nullablePositiveInteger', actual_words: 'nullableNonNegativeInteger',
+    target_words: 'nullableNumber', actual_words: 'nullableNumber',
     version: 'positiveInteger', created_at: 'date', updated_at: 'date',
   },
   chapter_revisions: {
@@ -136,7 +135,7 @@ export const ARCHIVE_TABLES: Record<ProjectArchiveCollection, ArchiveTableDefini
     id: 'id', project_id: 'id', title: 'nonEmptyString', description: 'longString',
     status: 'foreshadowStatus',
     planned_payoff_chapter_id: 'nullableString', actual_payoff_chapter_id: 'nullableString',
-    importance: 'nonNegativeInteger', metadata_json: 'json',
+    importance: 'number', metadata_json: 'json',
     created_at: 'date', updated_at: 'date',
   },
   foreshadow_events: {
@@ -146,7 +145,7 @@ export const ARCHIVE_TABLES: Record<ProjectArchiveCollection, ArchiveTableDefini
   narrative_memories: {
     id: 'id', project_id: 'id', memory_type: 'memoryType', title: 'nonEmptyString',
     content: 'longString', source_chapter_id: 'nullableString',
-    importance: 'nonNegativeInteger', metadata_json: 'json', created_at: 'date',
+    importance: 'number', metadata_json: 'json', created_at: 'date',
     updated_at: 'date', status: 'memoryStatus',
     source_version_id: 'nullableString', evidence_json: 'stringArray',
   },
@@ -159,12 +158,20 @@ export const ARCHIVE_TABLES: Record<ProjectArchiveCollection, ArchiveTableDefini
   roadmap_items: {
     id: 'id', project_id: 'id', parent_item_id: 'nullableString', title: 'string',
     description: 'longString', item_type: 'nonEmptyString', status: 'nonEmptyString',
-    priority: 'nonNegativeInteger', sort_order: 'nonNegativeInteger', metadata_json: 'json',
+    priority: 'number', sort_order: 'number', metadata_json: 'json',
     created_at: 'date', updated_at: 'date',
   },
   project_skills: {
     skillName: 'string', enabled: 'boolean', config: 'json',
   },
+}
+
+export function isArchiveTimestampColumn(
+  table: ProjectArchiveCollection,
+  column: string,
+): boolean {
+  const kind = ARCHIVE_TABLES[table][column]
+  return kind === 'date' || kind === 'nullableDate'
 }
 
 type TypeBoxRuntime = typeof import('typebox')
@@ -202,9 +209,9 @@ function buildArchiveSchema(runtime: TypeBoxRuntime): TSchema {
   const literalUnion = (values: readonly string[]): TSchema =>
     Type.Union(values.map((value) => Type.Literal(value)))
   const date = Type.String({
-    minLength: 10,
-    maxLength: 64,
-    pattern: '^\\d{4}-\\d{2}-\\d{2}(?:T.*)?$',
+    minLength: 24,
+    maxLength: 24,
+    pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$',
   })
   const schemaForKind = (kind: ColumnKind): TSchema => {
     switch (kind) {
@@ -214,23 +221,26 @@ function buildArchiveSchema(runtime: TypeBoxRuntime): TSchema {
       case 'longString': return Type.String({ maxLength: 2_000_000 })
       case 'nullableString':
         return Type.Union([Type.Null(), Type.String({ maxLength: 16_384 })])
-      case 'number': return Type.Number({ minimum: -1e15, maximum: 1e15 })
-      case 'integer': return Type.Integer({ minimum: -2_147_483_648, maximum: 2_147_483_647 })
+      case 'number': return Type.Number({ minimum: -SAFE_NUMERIC_MAX, maximum: SAFE_NUMERIC_MAX })
+      case 'integer':
+        return Type.Integer({ minimum: -SAFE_NUMERIC_MAX, maximum: SAFE_NUMERIC_MAX })
       case 'nullableNumber':
-        return Type.Union([Type.Null(), Type.Number({ minimum: -1e15, maximum: 1e15 })])
+        return Type.Union([
+          Type.Null(),
+          Type.Number({ minimum: -SAFE_NUMERIC_MAX, maximum: SAFE_NUMERIC_MAX }),
+        ])
       case 'positiveInteger':
-        return Type.Integer({ minimum: 1, maximum: 2_147_483_647 })
+        return Type.Integer({ minimum: 1, maximum: SAFE_NUMERIC_MAX })
       case 'nonNegativeInteger':
-        return Type.Integer({ minimum: 0, maximum: 2_147_483_647 })
+        return Type.Integer({ minimum: 0, maximum: SAFE_NUMERIC_MAX })
       case 'nullablePositiveInteger':
-        return Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: 2_147_483_647 })])
-      case 'nullableNonNegativeInteger':
-        return Type.Union([Type.Null(), Type.Integer({ minimum: 0, maximum: 2_147_483_647 })])
+        return Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: SAFE_NUMERIC_MAX })])
       case 'unitNumber': return Type.Number({ minimum: 0, maximum: 1 })
-      case 'nullableUnitNumber':
-        return Type.Union([Type.Null(), Type.Number({ minimum: 0, maximum: 1 })])
       case 'nullableTemperature':
-        return Type.Union([Type.Null(), Type.Number({ minimum: 0, maximum: 2 })])
+        return Type.Union([
+          Type.Null(),
+          Type.Number({ minimum: 0, maximum: SAFE_NUMERIC_MAX }),
+        ])
       case 'boolean': return Type.Boolean()
       case 'json': return json
       case 'stringArray':
@@ -355,16 +365,12 @@ function isBoundedJson(value: unknown, depth = 0): boolean {
 }
 
 function isValidArchiveDate(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > 64) return false
-  const match = /^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/.exec(value)
-  if (!match || Number.isNaN(Date.parse(value))) return false
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const normalized = new Date(Date.UTC(year, month - 1, day))
-  return normalized.getUTCFullYear() === year
-    && normalized.getUTCMonth() === month - 1
-    && normalized.getUTCDate() === day
+  if (
+    typeof value !== 'string'
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+  ) return false
+  const parsed = new Date(value)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value
 }
 
 function checkColumn(kind: ColumnKind, value: unknown): boolean {
@@ -390,23 +396,16 @@ function checkColumn(kind: ColumnKind, value: unknown): boolean {
       return value === null || (typeof value === 'string' && value.length <= 16_384)
     case 'number':
       return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e15
-    case 'integer':
-      return Number.isInteger(value)
-        && typeof value === 'number'
-        && value >= -2_147_483_648
-        && value <= 2_147_483_647
+    case 'integer': return isIntegerBetween(-SAFE_NUMERIC_MAX, SAFE_NUMERIC_MAX)
     case 'nullableNumber':
       return value === null
         || (typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e15)
-    case 'positiveInteger': return isIntegerBetween(1, 2_147_483_647)
-    case 'nonNegativeInteger': return isIntegerBetween(0, 2_147_483_647)
+    case 'positiveInteger': return isIntegerBetween(1, SAFE_NUMERIC_MAX)
+    case 'nonNegativeInteger': return isIntegerBetween(0, SAFE_NUMERIC_MAX)
     case 'nullablePositiveInteger':
-      return value === null || isIntegerBetween(1, 2_147_483_647)
-    case 'nullableNonNegativeInteger':
-      return value === null || isIntegerBetween(0, 2_147_483_647)
+      return value === null || isIntegerBetween(1, SAFE_NUMERIC_MAX)
     case 'unitNumber': return isNumberBetween(0, 1)
-    case 'nullableUnitNumber': return value === null || isNumberBetween(0, 1)
-    case 'nullableTemperature': return value === null || isNumberBetween(0, 2)
+    case 'nullableTemperature': return value === null || isNumberBetween(0, SAFE_NUMERIC_MAX)
     case 'boolean': return typeof value === 'boolean'
     case 'json': return isBoundedJson(value)
     case 'stringArray':

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { JsonValue } from '../../shared/novelProject'
 import {
   ARCHIVE_TABLES,
+  isArchiveTimestampColumn,
   validateProjectArchive,
 } from '../../shared/projectPortability/archiveSchema'
 import {
@@ -113,11 +114,45 @@ function parseJsonColumn(value: unknown): JsonValue {
   }
 }
 
+function normalizeDatabaseTimestamp(value: unknown): string {
+  if (typeof value !== 'string') throw portabilityError('PROJECT_EXPORT_FAILED')
+  const sqliteUtc = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})$/.exec(value)
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value)
+  const explicitIso =
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+  if (!sqliteUtc && !dateOnly && !explicitIso) {
+    throw portabilityError('PROJECT_EXPORT_FAILED')
+  }
+  const dateParts = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
+  if (!dateParts) throw portabilityError('PROJECT_EXPORT_FAILED')
+  const year = Number(dateParts[1])
+  const month = Number(dateParts[2])
+  const day = Number(dateParts[3])
+  const normalizedDate = new Date(Date.UTC(year, month - 1, day))
+  if (
+    normalizedDate.getUTCFullYear() !== year
+    || normalizedDate.getUTCMonth() !== month - 1
+    || normalizedDate.getUTCDate() !== day
+  ) {
+    throw portabilityError('PROJECT_EXPORT_FAILED')
+  }
+  const candidate = sqliteUtc
+    ? `${sqliteUtc[1]}T${sqliteUtc[2]}Z`
+    : dateOnly
+      ? `${value}T00:00:00Z`
+      : value
+  const timestamp = new Date(candidate)
+  if (Number.isNaN(timestamp.getTime())) throw portabilityError('PROJECT_EXPORT_FAILED')
+  return timestamp.toISOString()
+}
+
 function toArchiveRow(row: RawRow, table: ProjectArchiveCollection): ProjectArchiveRecord {
   const result: ProjectArchiveRecord = {}
   for (const column of Object.keys(ARCHIVE_TABLES[table])) {
     const value = row[column]
-    if (JSON_COLUMNS.has(column)) result[column] = parseJsonColumn(value)
+    if (isArchiveTimestampColumn(table, column) && value !== null) {
+      result[column] = normalizeDatabaseTimestamp(value)
+    } else if (JSON_COLUMNS.has(column)) result[column] = parseJsonColumn(value)
     else if (BOOLEAN_COLUMNS.has(column)) result[column] = value === 1
     else if (value === null || typeof value === 'string' || typeof value === 'number') {
       result[column] = value
@@ -615,6 +650,12 @@ export class ProjectPortabilityService {
       }
       requireRef('relations', relation, 'source_entity_id', targetTable(sourceType))
       requireRef('relations', relation, 'target_entity_id', targetTable(targetType))
+      if (
+        sourceType === targetType
+        && relation.source_entity_id === relation.target_entity_id
+      ) {
+        throw portabilityError('PROJECT_IMPORT_INVALID')
+      }
       const sourceCharacterId = nullableStringField(relation, 'source_character_id')
       const targetCharacterId = nullableStringField(relation, 'target_character_id')
       if (
