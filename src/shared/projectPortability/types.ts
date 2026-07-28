@@ -81,7 +81,7 @@ export interface ProjectArchiveV1 {
     databaseSchemaVersion: number
     sourceProjectId: string
     projectName: string
-    payloadSha256: string
+    integritySha256: string
     exclusions: string[]
     warnings: ProjectArchiveWarning[]
   }

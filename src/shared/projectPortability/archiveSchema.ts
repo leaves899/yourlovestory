@@ -309,7 +309,7 @@ function buildArchiveSchema(runtime: TypeBoxRuntime): TSchema {
       databaseSchemaVersion: Type.Integer({ minimum: 1, maximum: 1_000_000 }),
       sourceProjectId: Type.String({ minLength: 1, maxLength: 256 }),
       projectName: Type.String({ minLength: 1, maxLength: 8_192 }),
-      payloadSha256: Type.String({ pattern: '^[a-f0-9]{64}$' }),
+      integritySha256: Type.String({ pattern: '^[a-f0-9]{64}$' }),
       exclusions: Type.Array(Type.String({ minLength: 1, maxLength: 256 }), {
         maxItems: 100,
         uniqueItems: true,
@@ -456,7 +456,7 @@ function manuallyCheckArchive(value: unknown): value is ProjectArchiveV1 {
     'databaseSchemaVersion',
     'sourceProjectId',
     'projectName',
-    'payloadSha256',
+    'integritySha256',
     'exclusions',
     'warnings',
   ]
@@ -477,8 +477,8 @@ function manuallyCheckArchive(value: unknown): value is ProjectArchiveV1 {
     || typeof manifest.projectName !== 'string'
     || manifest.projectName.length < 1
     || manifest.projectName.length > 8_192
-    || typeof manifest.payloadSha256 !== 'string'
-    || !/^[a-f0-9]{64}$/.test(manifest.payloadSha256)
+    || typeof manifest.integritySha256 !== 'string'
+    || !/^[a-f0-9]{64}$/.test(manifest.integritySha256)
     || !Array.isArray(manifest.exclusions)
     || manifest.exclusions.length > 100
     || !manifest.exclusions.every((item) => typeof item === 'string' && item.length >= 1 && item.length <= 256)

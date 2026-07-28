@@ -11,6 +11,7 @@ import {
   PROJECT_ARCHIVE_FORMAT,
   PROJECT_ARCHIVE_VERSION,
   portabilityError,
+  projectArchiveIntegritySha256,
   projectArchiveWarningMessage,
   sha256,
   stableStringify,
@@ -245,7 +246,6 @@ export class ProjectPortabilityService {
         message: projectArchiveWarningMessage('runtime-history-excluded', 0),
       },
     )
-    const payloadSha256 = sha256(stableStringify(payload))
     const archive: ProjectArchiveV1 = {
       manifest: {
         format: PROJECT_ARCHIVE_FORMAT,
@@ -255,12 +255,13 @@ export class ProjectPortabilityService {
         databaseSchemaVersion: this.options.schemaVersion,
         sourceProjectId: project.id,
         projectName: project.name,
-        payloadSha256,
+        integritySha256: '0'.repeat(64),
         exclusions: [...EXCLUSIONS],
         warnings,
       },
       payload,
     }
+    archive.manifest.integritySha256 = projectArchiveIntegritySha256(archive)
     await this.validateArchive(archive)
     const json = `${stableStringify(archive)}\n`
     const archiveMaxBytes = Math.min(
@@ -287,7 +288,7 @@ export class ProjectPortabilityService {
 
   private async validateArchive(archive: ProjectArchiveV1): Promise<void> {
     await validateProjectArchive(archive)
-    if (sha256(stableStringify(archive.payload)) !== archive.manifest.payloadSha256) {
+    if (projectArchiveIntegritySha256(archive) !== archive.manifest.integritySha256) {
       throw portabilityError('PROJECT_IMPORT_CHECKSUM_MISMATCH')
     }
     if (
