@@ -86,6 +86,48 @@ async function injectWorkbenchMock(page: import('@playwright/test').Page): Promi
         projects = projects.filter((project) => project.id !== params.project_id)
         return { success: true }
       },
+      exportProject: async () => success({
+        canceled: false,
+        fileName: 'first-project.yourcrush-project.json',
+        size: 2048,
+        sha256: 'a'.repeat(64),
+        recordCounts: { projects: 1, characters: 2 },
+        warnings: [],
+      }),
+      inspectProjectImport: async () => success({
+        canceled: false,
+        preview: {
+          importToken: 'opaque-import-token',
+          projectName: '导入的小说',
+          formatVersion: 1,
+          exportedAt: now,
+          appVersion: '0.2.0-alpha.1',
+          schemaVersion: 8,
+          recordCounts: { projects: 1, characters: 2 },
+          warnings: [{ code: 'credentials-excluded', count: 1, message: '模型凭据未导出。' }],
+          credentialsExcluded: true,
+          runtimeHistoryExcluded: true,
+          expiresAt: new Date(Date.now() + 600_000).toISOString(),
+        },
+      }),
+      cancelProjectImport: async () => success({ canceled: true }),
+      commitProjectImport: async () => {
+        const imported = {
+          ...projectOne,
+          id: 'project-imported',
+          slug: 'first-project-imported',
+          name: '导入的小说',
+        }
+        projects = [...projects, imported]
+        return success({
+          projectId: imported.id,
+          projectName: imported.name,
+          projectSlug: imported.slug,
+          recordCounts: { projects: 1, characters: 2 },
+          missingSkills: [],
+          credentialsRequireRebinding: true,
+        })
+      },
       getNovelProjectConfig: async () => success({ project_id: currentProject.id, default_llm_config_id: null, genre: '', tone: '', target_words: null, context_budget: null, settings: {}, version: 1, created_at: now, updated_at: now }),
       getLlmCredentialStatus: async () => success({
         configured: true,
@@ -183,5 +225,19 @@ test.describe('长篇创作工作台', () => {
     await page.getByRole('button', { name: '删除凭据' }).click()
     await expect(page.getByText('安全存储删除失败，请重试。')).toBeVisible()
     await expect(page.getByText('已安全保存，不会回填或显示完整 API Key。')).toBeVisible()
+  })
+
+  test('项目导出和两阶段导入流程不会暴露本机路径', async ({ page }) => {
+    await page.getByTestId('export-project-project-1').click()
+    await expect(page.getByText(/导出成功：first-project\.yourcrush-project\.json/)).toBeVisible()
+    await expect(page.getByText(/凭据和运行历史未导出/)).toBeVisible()
+
+    await page.getByTestId('import-project-button').click()
+    await expect(page.getByText('导入预览：导入的小说')).toBeVisible()
+    await expect(page.getByText(/模型配置导入后需要重新绑定凭据/)).toBeVisible()
+    await page.getByTestId('confirm-project-import').click()
+    await expect(page.getByTestId('project-list').getByText('导入的小说', { exact: true })).toBeVisible()
+    await page.getByTestId('open-imported-project').click()
+    await expect(page.getByTestId('workbench-project-switcher')).toHaveValue('project-imported')
   })
 })
