@@ -20,12 +20,14 @@ const keyPattern = /\b(?:sk-(?:[A-Za-z0-9_-]{8,})|sk-ant-[A-Za-z0-9_-]+|AIza[A-Z
 const queryPattern = /([?&](?:api[_-]?key|apikey|token|access[_-]?token|refresh[_-]?token|secret|key)=)[^&#\s]*/gi
 const windowsPathPattern = /\b[A-Za-z]:\\(?:[^\\\r\n]+\\)*[^\\\r\n]*/g
 const unixHomePathPattern = /\/(?:Users|home)\/[^/\s]+(?:\/[^\s]*)?/g
+const credentialIdPattern = /\bllm:[A-Za-z0-9:_-]+\b/g
 
 function redactString(value: string): string {
   return value
     .replace(bearerPattern, 'Bearer ' + REDACTED)
     .replace(keyPattern, REDACTED)
     .replace(queryPattern, `$1${REDACTED}`)
+    .replace(credentialIdPattern, REDACTED)
     .replace(windowsPathPattern, '[LOCAL_PATH]')
     .replace(unixHomePathPattern, '[LOCAL_PATH]')
 }

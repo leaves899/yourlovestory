@@ -3,10 +3,12 @@ import * as path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveData'
 import {
+  BackupPolicyStore,
   DatabaseBackupService,
-  DEFAULT_BACKUP_RETENTION_POLICY,
+  runStartupBackupRetention,
   type DatabaseStatus,
   type InternalMigrationSnapshot,
+  type SafeRetentionLogger,
 } from '../backup'
 import { inspectPlaintextCredentialState } from '../backup/credentialSafety'
 import { getDatabasePath, openDatabase } from './database'
@@ -32,6 +34,8 @@ export interface DatabaseLifecycleOptions<T extends CredentialMigrationResult> {
   candidateMigrations?: readonly Migration[]
   now?: () => Date
   vacuumDatabase?: (database: SqliteDatabase) => void
+  /** Injectable sanitized retention logger for tests. */
+  logSafeEvent?: SafeRetentionLogger
 }
 
 export interface DatabaseLifecycleSuccess<T extends CredentialMigrationResult> {
@@ -238,14 +242,17 @@ export async function initializeDatabaseLifecycle<T extends CredentialMigrationR
     }
     let lastBackupAt: string | null = null
     try {
-      await backupService.createScheduledBackupIfDue()
-      await backupService.pruneBackups(
-        DEFAULT_BACKUP_RETENTION_POLICY,
-        [],
-      )
-      lastBackupAt = (await backupService.listBackups())[0]?.createdAt ?? lastBackupAt
+      const retentionPolicy = new BackupPolicyStore(options.userDataPath).load().policy
+      const retention = await runStartupBackupRetention({
+        backupService,
+        policy: retentionPolicy,
+        logSafeEvent: options.logSafeEvent,
+      })
+      lastBackupAt = retention.lastBackupAt
     } catch {
       // A non-migration startup backup must not prevent the application from opening.
+      // createScheduledBackupIfDue already maps cleanup failures to structured
+      // results; this only catches unexpected create/list failures.
     }
     return {
       success: true,

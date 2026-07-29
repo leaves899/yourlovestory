@@ -31,6 +31,7 @@ export default function DatabaseRecoveryPage({
   const [backups, setBackups] = useState<BackupRecord[]>([])
   const [verification, setVerification] = useState<Record<string, BackupVerificationResult>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [diagnosticsBusy, setDiagnosticsBusy] = useState(false)
   const isBusy = busyId !== null
   const toast = useToast()
 
@@ -86,6 +87,33 @@ export default function DatabaseRecoveryPage({
         description: error instanceof Error ? error.message : '请重试。',
         status: 'error',
       })
+    }
+  }
+
+  const exportDiagnostics = async () => {
+    setDiagnosticsBusy(true)
+    try {
+      const response = await window.electronAPI.exportDiagnostics()
+      if (!response.success || !response.data) {
+        throw new Error(response.error?.message ?? '导出诊断包失败。')
+      }
+      if (response.data.canceled) {
+        toast({ title: '已取消导出诊断包', status: 'info' })
+        return
+      }
+      toast({
+        title: '诊断包已导出',
+        description: `${response.data.fileName}（${response.data.size} 字节）`,
+        status: 'success',
+      })
+    } catch (error: unknown) {
+      toast({
+        title: '导出诊断包失败',
+        description: error instanceof Error ? error.message : '请重试。',
+        status: 'error',
+      })
+    } finally {
+      setDiagnosticsBusy(false)
     }
   }
 
@@ -150,14 +178,25 @@ export default function DatabaseRecoveryPage({
               </Box>
             ))}
           </Stack>
-          <Button
-            variant="outline"
-            onClick={() => void onRecheck()}
-            isDisabled={isBusy}
-            data-testid="recovery-recheck"
-          >
-            重新检查数据库状态
-          </Button>
+          <HStack>
+            <Button
+              variant="outline"
+              onClick={() => void onRecheck()}
+              isDisabled={isBusy || diagnosticsBusy}
+              data-testid="recovery-recheck"
+            >
+              重新检查数据库状态
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void exportDiagnostics()}
+              isLoading={diagnosticsBusy}
+              isDisabled={isBusy || diagnosticsBusy}
+              data-testid="recovery-export-diagnostics"
+            >
+              导出脱敏诊断包
+            </Button>
+          </HStack>
         </Stack>
       </Box>
     </Center>

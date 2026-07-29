@@ -63,4 +63,12 @@ describe('sanitizeSensitiveData', () => {
     expect(serialized).not.toContain('Alice')
     expect(serialized).not.toContain('data.sqlite')
   })
+
+  it('redacts llm credential ids embedded in free-form strings', () => {
+    const output = sanitizeSensitiveData(
+      'restore blocked for llm:app-default-credential-id',
+    )
+    expect(output).toBe('restore blocked for [REDACTED]')
+    expect(String(output)).not.toContain('llm:app-default')
+  })
 })

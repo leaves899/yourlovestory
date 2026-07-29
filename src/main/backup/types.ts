@@ -1,4 +1,5 @@
 import type {
+  BackupCreationResult,
   BackupRecord,
   BackupRetentionPolicy,
   BackupVerificationResult,
@@ -18,11 +19,13 @@ export interface BackupService {
     policy: BackupRetentionPolicy,
     protectedBackupIds?: readonly string[],
   ): Promise<PruneResult>
-}
-
-export const DEFAULT_BACKUP_RETENTION_POLICY: BackupRetentionPolicy = {
-  maxBackups: 10,
-  maxAgeDays: 30,
+  /**
+   * Optional structured create+prune used by scheduled paths.
+   * Manual IPC may compose createBackup + pruneBackups with the same helpers.
+   */
+  createScheduledBackupIfDue?(
+    policy?: BackupRetentionPolicy,
+  ): Promise<BackupCreationResult | null>
 }
 
 export interface InternalMigrationSnapshot {

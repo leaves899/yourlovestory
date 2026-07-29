@@ -36,8 +36,13 @@ import type { RelationshipPhase } from '../../shared/relationship/models'
 import { useAppStore } from '../stores/appStore'
 import type {
   BackupRecord,
+  BackupRetentionPolicy,
   BackupVerificationResult,
   DatabaseStatus,
+} from '../../shared/backup/types'
+import {
+  DEFAULT_BACKUP_RETENTION_POLICY,
+  describeBackupCreationFeedback,
 } from '../../shared/backup/types'
 
 const PHASE_COLORS: Record<RelationshipPhase, string> = {
@@ -61,6 +66,16 @@ function SettingsPage() {
   const [verificationById, setVerificationById] = useState<
     Record<string, BackupVerificationResult>
   >({})
+  const [maxBackupsInput, setMaxBackupsInput] = useState(
+    String(DEFAULT_BACKUP_RETENTION_POLICY.maxBackups),
+  )
+  const [maxAgeDaysInput, setMaxAgeDaysInput] = useState(
+    String(DEFAULT_BACKUP_RETENTION_POLICY.maxAgeDays),
+  )
+  const [policyBusy, setPolicyBusy] = useState(false)
+  const [policyMessage, setPolicyMessage] = useState<string | null>(null)
+  const [policyError, setPolicyError] = useState<string | null>(null)
+  const [diagnosticsBusy, setDiagnosticsBusy] = useState(false)
 
   // API 配置
   const [provider, setProvider] = useState('anthropic')
@@ -124,12 +139,20 @@ function SettingsPage() {
   }, [])
 
   const loadDataSafety = async () => {
-    const [statusResult, backupResult] = await Promise.all([
+    const [statusResult, backupResult, policyResult] = await Promise.all([
       window.electronAPI.getDatabaseStatus(),
       window.electronAPI.listBackups(),
+      window.electronAPI.getBackupPolicy(),
     ])
     if (statusResult.success && statusResult.data) setDatabaseStatus(statusResult.data)
     if (backupResult.success && backupResult.data) setBackups(backupResult.data)
+    if (policyResult.success && policyResult.data) {
+      setMaxBackupsInput(String(policyResult.data.policy.maxBackups))
+      setMaxAgeDaysInput(String(policyResult.data.policy.maxAgeDays))
+      setPolicyError(null)
+    } else if (!policyResult.success) {
+      setPolicyError(policyResult.error?.message ?? '无法读取备份保留策略。')
+    }
   }
 
   useEffect(() => {
@@ -268,9 +291,25 @@ function SettingsPage() {
     setBackupBusy(true)
     try {
       const result = await window.electronAPI.createBackup()
-      if (!result.success) throw new Error(result.error?.message ?? '创建备份失败')
-      await loadDataSafety()
-      toast({ title: '数据库备份已创建', status: 'success', duration: 3000 })
+      if (!result.success || !result.data) {
+        throw new Error(result.error?.message ?? '创建备份失败')
+      }
+      // Backup is on disk whenever success+data is returned. Report that
+      // outcome immediately so a later list/status/policy refresh failure
+      // cannot reclassify a successful create as "创建备份失败".
+      const feedback = describeBackupCreationFeedback(result.data)
+      toast({
+        title: feedback.title,
+        description: feedback.description ?? undefined,
+        status: feedback.status,
+        duration: feedback.status === 'success' ? 3000 : 5000,
+      })
+      try {
+        await loadDataSafety()
+      } catch {
+        // Keep the previous list/status quietly. Never surface raw refresh
+        // errors or re-toast create failure after a successful create.
+      }
     } catch (error: unknown) {
       toast({
         title: '创建备份失败',
@@ -321,6 +360,79 @@ function SettingsPage() {
         duration: 5000,
       })
       setBackupBusy(false)
+    }
+  }
+
+  const saveBackupPolicy = async () => {
+    const maxBackups = Number(maxBackupsInput)
+    const maxAgeDays = Number(maxAgeDaysInput)
+    const policy: BackupRetentionPolicy = { maxBackups, maxAgeDays }
+    setPolicyBusy(true)
+    setPolicyMessage(null)
+    setPolicyError(null)
+    try {
+      const result = await window.electronAPI.updateBackupPolicy(policy)
+      if (!result.success || !result.data) {
+        throw new Error(result.error?.message ?? '保存备份保留策略失败')
+      }
+      setMaxBackupsInput(String(result.data.policy.maxBackups))
+      setMaxAgeDaysInput(String(result.data.policy.maxAgeDays))
+      await loadDataSafety()
+      if (!result.data.pruneCompleted) {
+        setPolicyMessage('策略已保存，但清理失败或未完成。')
+        toast({
+          title: '策略已保存',
+          description: '过期备份清理未完成，请稍后重试。',
+          status: 'warning',
+          duration: 5000,
+        })
+      } else if (result.data.prunePartialFailure) {
+        setPolicyMessage('策略已保存，但部分过期备份清理失败。')
+        toast({
+          title: '策略已保存',
+          description: '部分过期备份清理失败，请稍后重试。',
+          status: 'warning',
+          duration: 5000,
+        })
+      } else {
+        setPolicyMessage('备份保留策略已保存。')
+        toast({ title: '备份保留策略已保存', status: 'success', duration: 3000 })
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '保存备份保留策略失败'
+      setPolicyError(message)
+      toast({ title: '保存备份保留策略失败', description: message, status: 'error', duration: 4000 })
+    } finally {
+      setPolicyBusy(false)
+    }
+  }
+
+  const exportDiagnostics = async () => {
+    setDiagnosticsBusy(true)
+    try {
+      const result = await window.electronAPI.exportDiagnostics()
+      if (!result.success || !result.data) {
+        throw new Error(result.error?.message ?? '导出诊断包失败')
+      }
+      if (result.data.canceled) {
+        toast({ title: '已取消导出诊断包', status: 'info', duration: 2500 })
+        return
+      }
+      toast({
+        title: '诊断包已导出',
+        description: `${result.data.fileName}（${result.data.size} 字节）`,
+        status: 'success',
+        duration: 4000,
+      })
+    } catch (error: unknown) {
+      toast({
+        title: '导出诊断包失败',
+        description: error instanceof Error ? error.message : '请重试。',
+        status: 'error',
+        duration: 4000,
+      })
+    } finally {
+      setDiagnosticsBusy(false)
     }
   }
 
@@ -574,6 +686,61 @@ function SettingsPage() {
               </InkPanel>
 
               <InkPanel>
+                <Heading size="sm" mb={4}>备份保留策略</Heading>
+                <Text fontSize="sm" color="ink.600" mb={4}>
+                  控制自动与手动数据库备份的最大份数和最长保留天数。策略由主进程校验并持久化，默认 10 份 / 30 天。
+                </Text>
+                <Stack spacing={4} data-testid="backup-policy-form">
+                  <Box>
+                    <Text mb={2} fontSize="sm">最大备份数量（1-100）</Text>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={100}
+                      step={1}
+                      value={maxBackupsInput}
+                      onChange={(event) => setMaxBackupsInput(event.target.value)}
+                      isDisabled={policyBusy}
+                      data-testid="backup-policy-max-backups"
+                    />
+                  </Box>
+                  <Box>
+                    <Text mb={2} fontSize="sm">最大保留天数（1-3650）</Text>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={3650}
+                      step={1}
+                      value={maxAgeDaysInput}
+                      onChange={(event) => setMaxAgeDaysInput(event.target.value)}
+                      isDisabled={policyBusy}
+                      data-testid="backup-policy-max-age-days"
+                    />
+                  </Box>
+                  <Button
+                    size="sm"
+                    colorScheme="cinnabar"
+                    isLoading={policyBusy}
+                    isDisabled={backupBusy || diagnosticsBusy}
+                    onClick={() => void saveBackupPolicy()}
+                    data-testid="backup-policy-save"
+                  >
+                    保存保留策略
+                  </Button>
+                  {policyMessage && (
+                    <Text fontSize="sm" color="green.600" data-testid="backup-policy-success">
+                      {policyMessage}
+                    </Text>
+                  )}
+                  {policyError && (
+                    <Text fontSize="sm" color="red.500" data-testid="backup-policy-error">
+                      {policyError}
+                    </Text>
+                  )}
+                </Stack>
+              </InkPanel>
+
+              <InkPanel>
                 <Heading size="sm" mb={4}>数据库备份</Heading>
                 <Stack spacing={3}>
                   {backups.length === 0 && (
@@ -599,7 +766,7 @@ function SettingsPage() {
                             <Button
                               size="xs"
                               variant="outline"
-                              isDisabled={backupBusy}
+                              isDisabled={backupBusy || policyBusy}
                               onClick={() => void verifyDatabaseBackup(backup.id)}
                             >
                               校验
@@ -608,7 +775,7 @@ function SettingsPage() {
                               size="xs"
                               colorScheme="red"
                               variant="outline"
-                              isDisabled={backupBusy}
+                              isDisabled={backupBusy || policyBusy}
                               onClick={() => void restoreDatabaseBackup(backup)}
                             >
                               恢复
@@ -619,6 +786,23 @@ function SettingsPage() {
                     )
                   })}
                 </Stack>
+              </InkPanel>
+
+              <InkPanel>
+                <Heading size="sm" mb={2}>脱敏诊断包</Heading>
+                <Text fontSize="sm" color="ink.600" mb={4}>
+                  导出仅含应用版本、平台、数据库状态、备份策略与聚合统计的脱敏 JSON。默认排除正文、私密记录、凭据和本机路径。
+                </Text>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  isLoading={diagnosticsBusy}
+                  isDisabled={backupBusy || policyBusy}
+                  onClick={() => void exportDiagnostics()}
+                  data-testid="export-diagnostics"
+                >
+                  导出脱敏诊断包
+                </Button>
               </InkPanel>
             </Stack>
           </TabPanel>

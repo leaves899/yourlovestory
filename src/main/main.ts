@@ -13,9 +13,11 @@ import {
 } from './database'
 import type { SqliteDatabase } from './database'
 import {
+  BackupPolicyStore,
   DatabaseBackupService,
   type RestoreExecutionResult,
 } from './backup'
+import { DiagnosticExportCoordinator } from './diagnostics'
 import { createProjectSessionAgentFactory } from '../agent/agent'
 import {
   createChapterGenerationTaskRunner,
@@ -46,7 +48,25 @@ let workbenchService: WorkbenchService | null = null
 let assistantService: AssistantService | null = null
 let credentialService: CredentialService | null = null
 let backupService: DatabaseBackupService | null = null
+let backupPolicyStore: BackupPolicyStore | null = null
+let diagnosticExportCoordinator: DiagnosticExportCoordinator | null = null
 let projectPortabilityCoordinator: ProjectPortabilityCoordinator | null = null
+
+function createDiagnosticExportCoordinator(
+  service: DatabaseBackupService | null,
+  policyStore: BackupPolicyStore,
+): DiagnosticExportCoordinator {
+  return new DiagnosticExportCoordinator({
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    electronVersion: process.versions.electron ?? null,
+    nodeVersion: process.versions.node,
+    getDatabaseStatus: () => databaseRuntime.get(),
+    getBackupPolicy: () => policyStore.load().policy,
+    listBackups: async () => (service ? service.listBackups() : []),
+  })
+}
 const databaseRuntime = new DatabaseRuntimeStatus({
   state: 'recovery-required',
   integrity: 'unknown',
@@ -203,6 +223,11 @@ app.whenReady().then(async () => {
     ),
   })
   backupService = lifecycle.backupService
+  backupPolicyStore = new BackupPolicyStore(app.getPath('userData'))
+  diagnosticExportCoordinator = createDiagnosticExportCoordinator(
+    backupService,
+    backupPolicyStore,
+  )
   databaseRuntime.replace(lifecycle.status)
   createWindow()
 
@@ -210,6 +235,8 @@ app.whenReady().then(async () => {
     console.error('[DatabaseStartup]', lifecycle.status.state, lifecycle.status.message)
     setupIPC({
       backupService,
+      backupPolicyStore,
+      diagnosticExportCoordinator,
       getDatabaseStatus: () => databaseRuntime.get(),
       restoreBackup: restoreDatabaseBackup,
     })
@@ -229,6 +256,8 @@ app.whenReady().then(async () => {
       credentialService,
       database,
       backupService,
+      backupPolicyStore,
+      diagnosticExportCoordinator,
       getDatabaseStatus: () => databaseRuntime.get(),
       restoreBackup: restoreDatabaseBackup,
     })
@@ -312,6 +341,8 @@ app.whenReady().then(async () => {
     database,
     credentialController: llmCredentialController,
     backupService,
+    backupPolicyStore,
+    diagnosticExportCoordinator,
     getDatabaseStatus: () => databaseRuntime.get(),
     restoreBackup: restoreDatabaseBackup,
     projectPortabilityCoordinator,

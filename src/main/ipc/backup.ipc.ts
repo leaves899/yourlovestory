@@ -1,10 +1,20 @@
 import type {
   BackupError,
+  BackupPolicyStore,
   BackupService,
   DatabaseStatus,
   RestoreExecutionResult,
+  UpdateBackupPolicyResult,
 } from '../backup'
-import { backupError, toBackupError } from '../backup'
+import {
+  backupError,
+  parseBackupPolicyUpdateInput,
+  toBackupError,
+} from '../backup'
+import {
+  createBackupThenApplyRetention,
+  EMPTY_PRUNE_RESULT,
+} from '../../shared/backup/types'
 import {
   assertTrustedIpcSender,
   isRecord,
@@ -14,6 +24,7 @@ import {
 
 interface BackupIpcDependencies {
   backupService?: BackupService
+  policyStore?: BackupPolicyStore
   getStatus: () => DatabaseStatus
   restoreBackup?: (id: string) => Promise<RestoreExecutionResult>
 }
@@ -21,6 +32,11 @@ interface BackupIpcDependencies {
 function requireService(service?: BackupService): BackupService {
   if (!service) throw backupError('DATABASE_UNAVAILABLE')
   return service
+}
+
+function requirePolicyStore(store?: BackupPolicyStore): BackupPolicyStore {
+  if (!store) throw backupError('BACKUP_POLICY_IO_ERROR')
+  return store
 }
 
 function parseNoInput(value: unknown): undefined {
@@ -45,6 +61,10 @@ function parseRestore(value: unknown): { id: string; confirm: true } {
   return { id: readString(value.id, 'id'), confirm: true }
 }
 
+function parsePolicyUpdate(value: unknown) {
+  return parseBackupPolicyUpdateInput(value)
+}
+
 const formatError = (error: unknown): { success: false; error: BackupError } => ({
   success: false,
   error: toBackupError(error, 'BACKUP_INVALID'),
@@ -61,10 +81,20 @@ export function registerBackupIPC(
     data: await requireService(dependencies.backupService).listBackups(),
   }), { parse: parseNoInput, authorize, formatError })
 
-  ipc.register('backup:create', async () => ({
-    success: true,
-    data: await requireService(dependencies.backupService).createBackup({ reason: 'manual' }),
-  }), { parse: parseNoInput, authorize, formatError })
+  ipc.register('backup:create', async () => {
+    const service = requireService(dependencies.backupService)
+    const store = requirePolicyStore(dependencies.policyStore)
+    // Apply the current persisted retention policy in this process so users
+    // cannot unbounded-grow backups without restarting or re-saving policy.
+    // Cleanup failures after a successful create must still return success with
+    // a structured partial/failed cleanup outcome (never "backup create failed").
+    const policy = store.load().policy
+    const data = await createBackupThenApplyRetention(
+      () => service.createBackup({ reason: 'manual' }),
+      () => service.pruneBackups(policy),
+    )
+    return { success: true as const, data }
+  }, { parse: parseNoInput, authorize, formatError })
 
   ipc.register('backup:verify', async (_, input) => ({
     success: true,
@@ -87,4 +117,51 @@ export function registerBackupIPC(
       },
     }
   }, { parse: parseNoInput, authorize, formatError })
+
+  ipc.register('backup:get-policy', async () => {
+    const loaded = requirePolicyStore(dependencies.policyStore).load()
+    return {
+      success: true as const,
+      data: {
+        policy: loaded.policy,
+        source: loaded.source,
+        fallbackReason: loaded.fallbackReason ?? null,
+      },
+    }
+  }, { parse: parseNoInput, authorize, formatError })
+
+  ipc.register('backup:update-policy', async (_, input) => {
+    const store = requirePolicyStore(dependencies.policyStore)
+    const service = requireService(dependencies.backupService)
+    // Persist first. Prune failures after a successful write must not be
+    // reported as "policy invalid / save failed".
+    const policy = await store.save(input)
+    try {
+      const prune = await service.pruneBackups(policy)
+      const result: UpdateBackupPolicyResult = {
+        policy,
+        prune,
+        prunePartialFailure: prune.failed.length > 0,
+        pruneCompleted: true,
+      }
+      return { success: true as const, data: result }
+    } catch {
+      // Policy is already on disk. Return a typed success with a stable, path-free
+      // empty prune summary (do not invent backup IDs from underlying errors).
+      const result: UpdateBackupPolicyResult = {
+        policy,
+        prune: { ...EMPTY_PRUNE_RESULT, failed: [], deleted: [], retained: [] },
+        prunePartialFailure: false,
+        pruneCompleted: false,
+      }
+      return { success: true as const, data: result }
+    }
+  }, {
+    parse: parsePolicyUpdate,
+    authorize,
+    formatError: (error) => ({
+      success: false as const,
+      error: toBackupError(error, 'BACKUP_POLICY_INVALID'),
+    }),
+  })
 }

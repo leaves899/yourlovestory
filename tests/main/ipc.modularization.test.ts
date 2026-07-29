@@ -9,6 +9,8 @@ interface IpcHandler {
 const handlers = new Map<string, IpcHandler>()
 const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'yourcrush-ipc-modules-'))
 
+const showSaveDialog = jest.fn()
+
 jest.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: IpcHandler): void => {
@@ -25,10 +27,16 @@ jest.mock('electron', () => ({
     getVersion: (): string => 'test-version',
     quit: (): void => undefined,
   },
+  dialog: {
+    showSaveDialog: (...args: unknown[]) => showSaveDialog(...args),
+    showOpenDialog: jest.fn(),
+  },
 }))
 
 import { setupIPC } from '@/main/ipc'
 import { DatabaseRuntimeStatus } from '@/main/database'
+import { BackupOperationError, BackupPolicyStore } from '@/main/backup'
+import type { DiagnosticExportCoordinator } from '@/main/diagnostics'
 import type { ChapterGenerationService } from '@/shared/chapterGeneration'
 import type { TaskManager } from '@/main/tasks'
 import type { LlmCredentialController } from '@/main/security/llmCredentialController'
@@ -40,9 +48,11 @@ const EXPECTED_CHANNELS = [
   'app:info',
   'app:quit',
   'backup:create',
+  'backup:get-policy',
   'backup:get-status',
   'backup:list',
   'backup:restore',
+  'backup:update-policy',
   'backup:verify',
   'chapter:blocks',
   'chapter:diff:revisions',
@@ -66,6 +76,7 @@ const EXPECTED_CHANNELS = [
   'day:get',
   'day:list',
   'day:update',
+  'diagnostics:export',
   'foreshadow:events',
   'foreshadow:list',
   'foreshadow:suggest',
@@ -115,6 +126,7 @@ async function invoke<T>(channel: string, params?: unknown, event: unknown = {})
 describe('modular IPC registration', () => {
   beforeEach(() => {
     handlers.clear()
+    showSaveDialog.mockReset()
   })
 
   afterAll(() => {
@@ -438,5 +450,324 @@ describe('modular IPC registration', () => {
       data: { outcome: 'restored' },
     })
     expect(restoreBackup).toHaveBeenCalledWith('backup-1')
+  })
+
+  it('reads and updates backup policy through trusted IPC with immediate prune', async () => {
+    const trustedEvent = { senderFrame: { url: 'file:///app/index.html' } }
+    const policyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'yourcrush-policy-ipc-'))
+    const policyStore = new BackupPolicyStore(policyRoot)
+    const pruneBackups = jest.fn(async () => ({
+      deleted: ['old-backup'],
+      failed: [{ id: 'stuck-backup', error: '本地备份操作失败，请重试。' }],
+      retained: ['kept-backup'],
+      policyExceeded: false,
+    }))
+    const createBackup = jest.fn(async () => ({
+      id: 'manual-1',
+      filename: 'manual-1.sqlite',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      reason: 'manual' as const,
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+      size: 100,
+      sha256: 'a'.repeat(64),
+    }))
+    const backupService = {
+      listBackups: jest.fn(async () => []),
+      createBackup,
+      verifyBackup: jest.fn(),
+      restoreBackup: jest.fn(),
+      pruneBackups,
+    }
+
+    setupIPC({
+      backupService,
+      backupPolicyStore: policyStore,
+      getDatabaseStatus: () => ({
+        state: 'ready',
+        integrity: 'ok',
+        schemaVersion: 8,
+        message: null,
+        lastBackupAt: null,
+        backupAllowed: true,
+        backupEligibility: 'safe',
+        backupBlockedReason: null,
+      }),
+    })
+
+    await expect(invoke('backup:get-policy', undefined, trustedEvent)).resolves.toMatchObject({
+      success: true,
+      data: {
+        policy: { maxBackups: 10, maxAgeDays: 30 },
+        source: 'default',
+        fallbackReason: 'missing',
+      },
+    })
+
+    await expect(invoke('backup:update-policy', {
+      maxBackups: 4,
+      maxAgeDays: 12,
+      path: 'C:\\evil',
+    }, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'BACKUP_POLICY_INVALID' },
+    })
+    await expect(invoke('backup:update-policy', {
+      maxBackups: 4.5,
+      maxAgeDays: 12,
+    }, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'BACKUP_POLICY_INVALID' },
+    })
+    await expect(invoke('backup:update-policy', {
+      maxBackups: '4',
+      maxAgeDays: 12,
+    }, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'BACKUP_POLICY_INVALID' },
+    })
+
+    await expect(invoke('backup:update-policy', {
+      maxBackups: 4,
+      maxAgeDays: 12,
+    }, trustedEvent)).resolves.toMatchObject({
+      success: true,
+      data: {
+        policy: { maxBackups: 4, maxAgeDays: 12 },
+        prunePartialFailure: true,
+        pruneCompleted: true,
+        prune: {
+          deleted: ['old-backup'],
+          failed: [{ id: 'stuck-backup' }],
+        },
+      },
+    })
+    expect(pruneBackups).toHaveBeenCalledWith({ maxBackups: 4, maxAgeDays: 12 })
+    expect(new BackupPolicyStore(policyRoot).load()).toMatchObject({
+      policy: { maxBackups: 4, maxAgeDays: 12 },
+      source: 'file',
+    })
+
+    // Manual create must read the persisted policy and prune in this process.
+    pruneBackups.mockClear()
+    createBackup.mockClear()
+    pruneBackups.mockResolvedValueOnce({
+      deleted: [],
+      failed: [],
+      retained: ['manual-1'],
+      policyExceeded: false,
+    })
+    await expect(invoke('backup:create', undefined, trustedEvent)).resolves.toMatchObject({
+      success: true,
+      data: {
+        backup: { id: 'manual-1', reason: 'manual' },
+        outcome: 'backup-created',
+        cleanupCompleted: true,
+        cleanupPartialFailure: false,
+        warning: null,
+      },
+    })
+    expect(createBackup).toHaveBeenCalledWith({ reason: 'manual' })
+    expect(pruneBackups).toHaveBeenCalledWith({ maxBackups: 4, maxAgeDays: 12 })
+
+    // Manual create + prune partial failure: still success with structured cleanup partial.
+    pruneBackups.mockClear()
+    createBackup.mockClear()
+    createBackup.mockResolvedValueOnce({
+      id: 'manual-2',
+      filename: 'manual-2.sqlite',
+      createdAt: '2026-03-10T01:00:00.000Z',
+      reason: 'manual' as const,
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+      size: 100,
+      sha256: 'b'.repeat(64),
+    })
+    pruneBackups.mockResolvedValueOnce({
+      deleted: ['old-backup'],
+      failed: [{ id: 'stuck-backup', error: '本地备份操作失败，请重试。' }],
+      retained: ['manual-2', 'stuck-backup'],
+      policyExceeded: false,
+    })
+    await expect(invoke('backup:create', undefined, trustedEvent)).resolves.toMatchObject({
+      success: true,
+      data: {
+        backup: { id: 'manual-2' },
+        outcome: 'backup-created-policy-cleanup-partial',
+        cleanupCompleted: true,
+        cleanupPartialFailure: true,
+        warning: {
+          code: 'BACKUP_CLEANUP_PARTIAL',
+          message: '新备份已创建，但部分旧备份未清理',
+        },
+      },
+    })
+
+    // Manual create succeeds but prune throws with path-bearing Error: still success.
+    pruneBackups.mockClear()
+    createBackup.mockClear()
+    createBackup.mockResolvedValueOnce({
+      id: 'manual-3',
+      filename: 'manual-3.sqlite',
+      createdAt: '2026-03-10T02:00:00.000Z',
+      reason: 'manual' as const,
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+      size: 100,
+      sha256: 'c'.repeat(64),
+    })
+    const createPruneThrow = new Error(
+      'EPERM: operation not permitted, unlink \'C:\\Users\\Alice\\AppData\\Roaming\\yourcrush\\backups\\secret.sqlite\' private-raw-text',
+    )
+    pruneBackups.mockImplementationOnce(async () => {
+      throw createPruneThrow
+    })
+    const createWithPruneThrow = await invoke('backup:create', undefined, trustedEvent)
+    expect(createWithPruneThrow).toMatchObject({
+      success: true,
+      data: {
+        backup: { id: 'manual-3' },
+        outcome: 'backup-created-policy-cleanup-failed',
+        cleanupCompleted: false,
+        cleanupPartialFailure: false,
+        warning: {
+          code: 'BACKUP_CLEANUP_FAILED',
+          message: '新备份已创建，但旧备份清理失败或未完成',
+        },
+        prune: {
+          deleted: [],
+          failed: [],
+          retained: [],
+          policyExceeded: false,
+        },
+      },
+    })
+    expect(JSON.stringify(createWithPruneThrow)).not.toContain('Alice')
+    expect(JSON.stringify(createWithPruneThrow)).not.toContain('C:\\\\Users')
+    expect(JSON.stringify(createWithPruneThrow)).not.toContain('C:\\Users')
+    expect(JSON.stringify(createWithPruneThrow)).not.toContain('private-raw-text')
+    expect(JSON.stringify(createWithPruneThrow)).not.toContain('secret.sqlite')
+    expect(createBackup).toHaveBeenCalled()
+
+    // createBackup itself fails: true failure, no fake created backup.
+    createBackup.mockRejectedValueOnce(new BackupOperationError('BACKUP_NOT_ALLOWED'))
+    pruneBackups.mockClear()
+    await expect(invoke('backup:create', undefined, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'BACKUP_NOT_ALLOWED' },
+    })
+    expect(pruneBackups).not.toHaveBeenCalled()
+
+    // Policy is already saved; a total prune throw must not report save failure.
+    const absolutePathError = new Error(
+      'EPERM: operation not permitted, unlink \'C:\\\\Users\\\\Alice\\\\AppData\\\\Roaming\\\\yourcrush\\\\backups\\\\x.sqlite\'',
+    )
+    pruneBackups.mockImplementationOnce(async () => {
+      throw absolutePathError
+    })
+    const pruneThrowResult = await invoke('backup:update-policy', {
+      maxBackups: 5,
+      maxAgeDays: 15,
+    }, trustedEvent)
+    expect(pruneThrowResult).toMatchObject({
+      success: true,
+      data: {
+        policy: { maxBackups: 5, maxAgeDays: 15 },
+        pruneCompleted: false,
+        prunePartialFailure: false,
+        prune: {
+          deleted: [],
+          failed: [],
+          retained: [],
+          policyExceeded: false,
+        },
+      },
+    })
+    expect(JSON.stringify(pruneThrowResult)).not.toContain('C:\\\\Users')
+    expect(JSON.stringify(pruneThrowResult)).not.toContain('Alice')
+    expect(JSON.stringify(pruneThrowResult)).not.toContain('AppData')
+    expect(new BackupPolicyStore(policyRoot).load()).toMatchObject({
+      policy: { maxBackups: 5, maxAgeDays: 15 },
+      source: 'file',
+    })
+
+    await expect(invoke('backup:update-policy', {
+      maxBackups: 6,
+      maxAgeDays: 20,
+    }, {
+      senderFrame: { url: 'https://untrusted.example/' },
+    })).resolves.toMatchObject({
+      success: false,
+      error: { code: 'BACKUP_POLICY_INVALID' },
+    })
+
+    fs.rmSync(policyRoot, { recursive: true, force: true })
+  })
+
+  it('exports diagnostics without renderer paths and allows recovery mode', async () => {
+    const trustedEvent = { senderFrame: { url: 'file:///app/index.html' } }
+    const exportToFile = jest.fn(async (target: string) => ({
+      canceled: false as const,
+      fileName: path.basename(target),
+      size: 128,
+      sha256: 'c'.repeat(64),
+    }))
+    const coordinator = {
+      defaultFileName: () => 'diag.yourcrush-diagnostics.json',
+      exportToFile,
+    } as unknown as DiagnosticExportCoordinator
+    let status: DatabaseStatus = {
+      state: 'recovery-required',
+      integrity: 'failed',
+      schemaVersion: null,
+      message: '数据库需要恢复后才能继续使用。',
+      lastBackupAt: null,
+      backupAllowed: false,
+      backupEligibility: 'database-unavailable',
+      backupBlockedReason: '数据库需要恢复后才能继续使用。',
+    }
+
+    setupIPC({
+      diagnosticExportCoordinator: coordinator,
+      getDatabaseStatus: () => status,
+    })
+
+    showSaveDialog.mockResolvedValue({ canceled: true })
+    await expect(invoke('diagnostics:export', undefined, trustedEvent)).resolves.toEqual({
+      success: true,
+      data: { canceled: true },
+    })
+    expect(exportToFile).not.toHaveBeenCalled()
+
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: path.join(userDataPath, 'chosen.yourcrush-diagnostics.json'),
+    })
+    await expect(invoke('diagnostics:export', undefined, trustedEvent)).resolves.toEqual({
+      success: true,
+      data: {
+        canceled: false,
+        fileName: 'chosen.yourcrush-diagnostics.json',
+        size: 128,
+        sha256: 'c'.repeat(64),
+      },
+    })
+    expect(exportToFile).toHaveBeenCalledWith(
+      path.join(userDataPath, 'chosen.yourcrush-diagnostics.json'),
+    )
+    expect(JSON.stringify(await invoke('diagnostics:export', undefined, trustedEvent)))
+      .not.toContain(userDataPath)
+
+    await expect(invoke('diagnostics:export', { path: 'C:\\evil.json' }, trustedEvent))
+      .resolves.toMatchObject({
+        success: false,
+        error: { code: 'LOCAL_IO_ERROR' },
+      })
+
+    status = { ...status, state: 'ready', integrity: 'ok', schemaVersion: 8 }
+    await expect(invoke('backup:get-policy', undefined, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'BACKUP_POLICY_IO_ERROR' },
+    })
   })
 })
