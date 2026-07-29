@@ -1,7 +1,9 @@
 import type { LlmConfigInput } from '../../agent/llm'
 import { normalizeLlmBaseUrl } from '../../agent/llm/config'
+import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveData'
 import type { JsonObject } from '../database'
 import type { StartTaskInput, TaskManager } from '../tasks'
+import { assertNoSensitiveTaskInput } from '../tasks/sensitiveInput'
 import {
   assertTrustedIpcSender,
   isRecord,
@@ -60,6 +62,9 @@ function parseTaskStartInput(value: unknown): StartTaskInput {
     && Object.values(rawInput).every(isJsonValue)
     ? rawInput as JsonObject
     : undefined
+  if (input) {
+    assertNoSensitiveTaskInput(input, 'request')
+  }
   return {
     projectId: readString(value.projectId, 'projectId'),
     sessionId: readString(value.sessionId, 'sessionId'),
@@ -71,6 +76,10 @@ function parseTaskStartInput(value: unknown): StartTaskInput {
     input,
     systemPrompt: typeof value.systemPrompt === 'string' ? value.systemPrompt : undefined,
   }
+}
+
+function ipcErrorMessage(error: unknown, fallback: string): string {
+  return sanitizeErrorMessage(error, fallback)
 }
 
 function requireTaskManager(taskManager?: TaskManager): TaskManager {
@@ -110,8 +119,12 @@ export function registerTaskIPC(ipc: IpcRegistry, taskManager?: TaskManager): vo
     taskManager: TaskManager
     params: StartTaskInput
   }) => {
-    const handle = input.taskManager.start(input.params)
-    return { success: true, data: { taskId: handle.taskId } }
+    try {
+      const handle = input.taskManager.start(input.params)
+      return { success: true, data: { taskId: handle.taskId } }
+    } catch (error: unknown) {
+      return { success: false, errors: [ipcErrorMessage(error, '任务启动失败')] }
+    }
   }, {
     authorize,
     parse: (value) => ({
@@ -170,8 +183,7 @@ export function registerTaskIPC(ipc: IpcRegistry, taskManager?: TaskManager): vo
         ...(handle ? { data: { taskId: handle.taskId } } : {}),
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : '任务恢复失败'
-      return { success: false, errors: [message] }
+      return { success: false, errors: [ipcErrorMessage(error, '任务恢复失败')] }
     }
   }, {
     authorize,
@@ -193,8 +205,7 @@ export function registerTaskIPC(ipc: IpcRegistry, taskManager?: TaskManager): vo
         ...(handle ? { data: { taskId: handle.taskId } } : {}),
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : '人工重试失败'
-      return { success: false, errors: [message] }
+      return { success: false, errors: [ipcErrorMessage(error, '人工重试失败')] }
     }
   }, {
     authorize,

@@ -8,8 +8,11 @@ import type { SqliteDatabase } from '../types'
 import {
   DEFAULT_MAX_RECOVERY_ATTEMPTS,
   RECOVERY_METADATA_VERSION,
+  TASK_CORRUPTION_REASON,
+  UNKNOWN_PHASE_REASON,
   type ExecutionPhase,
   type RecoveryAction,
+  type RecoveryAttemptKind,
   type RecoveryClassification,
   type ShutdownKind,
 } from '../../../shared/taskRecovery'
@@ -110,18 +113,30 @@ export interface ClaimTaskInput {
   leaseToken: string
   leaseExpiresAt: string
   nowIso: string
+  kind: RecoveryAttemptKind
   /** For automatic recovery only allow these classifications. */
   allowedClassifications?: readonly RecoveryClassification[]
   /** Increment recovery attempt counter on successful claim. */
   incrementAttempt?: boolean
-  /** When true, allow claim even if attempt count reached the auto max (manual path). */
-  bypassAttemptLimit?: boolean
   runtimeSessionId?: string | null
+  /** Optional new timeout deadline applied atomically on claim. */
+  timeoutAt?: string | null
+  /** When true, clear cancel and move failed/cancelled into running/queued atomically. */
+  manualConfirmed?: boolean
 }
 
 export interface ClaimTaskResult {
   claimed: boolean
   task: Task | null
+  attemptId: string | null
+}
+
+export interface RenewLeaseInput {
+  taskId: string
+  owner: string
+  leaseToken: string
+  leaseExpiresAt: string
+  nowIso: string
 }
 
 export interface TaskStore {
@@ -132,9 +147,16 @@ export interface TaskStore {
   update(id: string, input: UpdateTaskInput): Task | null
   requestCancellation(id: string): boolean
   claimForRecovery(input: ClaimTaskInput): ClaimTaskResult
+  renewLease(input: RenewLeaseInput): boolean
   releaseLease(taskId: string, leaseToken: string, nowIso: string): boolean
+  releaseLeasesForRuntimeSessions(sessionIds: readonly string[], nowIso: string): number
   markGracefulShutdown(nowIso: string, runtimeSessionId: string | null): number
   expireLeases(nowIso: string): number
+  markTerminalNonRecoverable(
+    taskId: string,
+    reason: string,
+    nowIso: string,
+  ): Task | null
 }
 
 interface TaskRow {
@@ -212,7 +234,7 @@ const actions: readonly RecoveryAction[] = [
 
 function parseExecutionPhase(value: string): ExecutionPhase {
   if (executionPhases.includes(value as ExecutionPhase)) return value as ExecutionPhase
-  return 'queued'
+  throw new Error(UNKNOWN_PHASE_REASON)
 }
 
 function parseClassification(value: string | null): RecoveryClassification | null {
@@ -240,6 +262,14 @@ function toTask(row: TaskRow): Task {
   }
   const input = parseJsonObject(row.input_json, 'input')
   if (!input) throw new Error('Task input cannot be null')
+  let checkpoint: JsonObject | null = null
+  if (row.checkpoint_json !== null) {
+    checkpoint = parseJsonObject(row.checkpoint_json, 'checkpoint')
+  }
+  let result: JsonObject | null = null
+  if (row.result_json !== null) {
+    result = parseJsonObject(row.result_json, 'result')
+  }
   return {
     id: row.id,
     project_id: row.project_id,
@@ -250,8 +280,8 @@ function toTask(row: TaskRow): Task {
     stage: row.stage,
     progress: row.progress,
     input,
-    checkpoint: parseJsonObject(row.checkpoint_json, 'checkpoint'),
-    result: parseJsonObject(row.result_json, 'result'),
+    checkpoint,
+    result,
     error_message: row.error_message,
     cancel_requested: row.cancel_requested === 1,
     started_at: row.started_at,
@@ -331,26 +361,38 @@ export class TaskRepository implements TaskStore {
 
   public getById(id: string): Task | null {
     const row = this.database.prepare<TaskRow>('SELECT * FROM tasks WHERE id = ?').get(id)
-    return row ? toTask(row) : null
+    if (!row) return null
+    try {
+      return toTask(row)
+    } catch {
+      this.markTaskCorrupt(row.id, TASK_CORRUPTION_REASON, now())
+      const fixed = this.database.prepare<TaskRow>('SELECT * FROM tasks WHERE id = ?').get(id)
+      return fixed ? toTask(fixed) : null
+    }
   }
 
   public listByProject(projectId: string): Task[] {
-    return this.database
+    const rows = this.database
       .prepare<TaskRow>('SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at, id')
       .all(projectId)
-      .map(toTask)
+    return this.mapRowsIsolatingCorrupt(rows)
   }
 
   public listRecoveryCandidates(): Task[] {
-    return this.database
+    const rows = this.database
       .prepare<TaskRow>(
         `SELECT * FROM tasks
          WHERE status IN ('pending', 'running', 'failed')
            AND cancel_requested = 0
+           AND NOT (
+             recovery_classification = 'non-recoverable'
+             AND status = 'failed'
+             AND finished_at IS NOT NULL
+           )
          ORDER BY created_at, id`,
       )
       .all()
-      .map(toTask)
+    return this.mapRowsIsolatingCorrupt(rows)
   }
 
   public update(id: string, input: UpdateTaskInput): Task | null {
@@ -469,7 +511,8 @@ export class TaskRepository implements TaskStore {
   }
 
   /**
-   * Atomic claim using conditional UPDATE; uniqueness is determined by SQLite `changes`.
+   * Atomic claim using conditional UPDATE; attempt history is written in the same transaction.
+   * Failed claims leave the task row and attempt history unchanged (no orphan attempts).
    */
   public claimForRecovery(input: ClaimTaskInput): ClaimTaskResult {
     const allowed = input.allowedClassifications
@@ -477,45 +520,117 @@ export class TaskRepository implements TaskStore {
       ? `AND recovery_classification IN (${allowed.map(() => '?').join(', ')})`
       : ''
     const incrementAttempt = input.incrementAttempt !== false
-    const attemptClause = input.bypassAttemptLimit
+    // Auto path always enforces the recovery attempt ceiling.
+    // Manual confirmed path may claim when already at the auto ceiling so the user can continue.
+    const attemptClause = input.manualConfirmed
       ? ''
       : 'AND recovery_attempt_count < max_recovery_attempts'
-    const sql = `
-      UPDATE tasks
-      SET lease_owner = ?,
-          lease_token = ?,
-          lease_expires_at = ?,
-          status = 'running',
-          last_recovery_attempt_at = ?,
-          recovery_attempt_count = recovery_attempt_count + ${incrementAttempt ? 1 : 0},
-          runtime_session_id = COALESCE(?, runtime_session_id),
+    const manualPrep = input.manualConfirmed
+      ? `
+          cancel_requested = 0,
+          finished_at = NULL,
+          error_message = NULL,
           shutdown_kind = NULL,
-          updated_at = ?
-      WHERE id = ?
-        AND cancel_requested = 0
-        AND status IN ('pending', 'running', 'failed', 'cancelled')
-        ${attemptClause}
-        AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
-        ${classificationClause}
-    `
-    const params: Array<string | null> = [
-      input.owner,
-      input.leaseToken,
-      input.leaseExpiresAt,
-      input.nowIso,
-      input.runtimeSessionId ?? null,
-      input.nowIso,
-      input.taskId,
-      input.nowIso,
-    ]
-    if (allowed && allowed.length > 0) {
-      for (const item of allowed) params.push(item)
-    }
-    const result = this.database.prepare(sql).run(...params)
-    if (result.changes === 0) {
-      return { claimed: false, task: this.getById(input.taskId) }
-    }
-    return { claimed: true, task: this.getById(input.taskId) }
+          recovery_classification = CASE
+            WHEN recovery_classification = 'manual-retry-required' THEN 'restartable'
+            WHEN recovery_classification IS NULL THEN 'restartable'
+            ELSE recovery_classification
+          END,
+          recovery_action = 'manual-retry',
+          execution_phase = 'queued',
+          timeout_at = COALESCE(?, timeout_at),
+        `
+      : `
+          timeout_at = COALESCE(?, timeout_at),
+        `
+
+    const attemptId = randomUUID()
+    const claimAndRecord = this.database.transaction(() => {
+      const sql = `
+        UPDATE tasks
+        SET lease_owner = ?,
+            lease_token = ?,
+            lease_expires_at = ?,
+            status = 'running',
+            last_recovery_attempt_at = ?,
+            recovery_attempt_count = recovery_attempt_count + ${incrementAttempt ? 1 : 0},
+            runtime_session_id = COALESCE(?, runtime_session_id),
+            shutdown_kind = NULL,
+            ${manualPrep}
+            updated_at = ?
+        WHERE id = ?
+          AND cancel_requested = ${input.manualConfirmed ? 'cancel_requested' : '0'}
+          AND status IN ('pending', 'running', 'failed', 'cancelled')
+          ${attemptClause}
+          AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+          ${classificationClause}
+      `
+      const params: Array<string | null> = [
+        input.owner,
+        input.leaseToken,
+        input.leaseExpiresAt,
+        input.nowIso,
+        input.runtimeSessionId ?? null,
+        input.timeoutAt ?? null,
+        input.nowIso,
+        input.taskId,
+        input.nowIso,
+      ]
+      if (allowed && allowed.length > 0) {
+        for (const item of allowed) params.push(item)
+      }
+      const result = this.database.prepare(sql).run(...params)
+      if (result.changes === 0) {
+        return { claimed: false as const, task: this.getById(input.taskId), attemptId: null }
+      }
+      const task = this.getById(input.taskId)
+      if (!task) {
+        return { claimed: false as const, task: null, attemptId: null }
+      }
+      this.database
+        .prepare(
+          `INSERT INTO recovery_attempts (
+            id, task_id, recovery_root_task_id, attempt_number, kind, owner,
+            runtime_session_id, lease_token, claimed_at, started_at, finished_at, outcome, error_message
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)`,
+        )
+        .run(
+          attemptId,
+          task.id,
+          task.recovery_root_task_id ?? task.id,
+          task.recovery_attempt_count,
+          input.kind,
+          input.owner,
+          input.runtimeSessionId ?? task.runtime_session_id,
+          input.leaseToken,
+          input.nowIso,
+        )
+      return { claimed: true as const, task, attemptId }
+    })
+
+    return claimAndRecord()
+  }
+
+  public renewLease(input: RenewLeaseInput): boolean {
+    const result = this.database
+      .prepare(
+        `UPDATE tasks
+         SET lease_expires_at = ?, updated_at = ?
+         WHERE id = ?
+           AND lease_owner = ?
+           AND lease_token = ?
+           AND lease_expires_at IS NOT NULL
+           AND lease_expires_at > ?`,
+      )
+      .run(
+        input.leaseExpiresAt,
+        input.nowIso,
+        input.taskId,
+        input.owner,
+        input.leaseToken,
+        input.nowIso,
+      )
+    return result.changes > 0
   }
 
   public releaseLease(taskId: string, leaseToken: string, nowIso: string): boolean {
@@ -527,6 +642,23 @@ export class TaskRepository implements TaskStore {
       )
       .run(nowIso, taskId, leaseToken)
     return result.changes > 0
+  }
+
+  public releaseLeasesForRuntimeSessions(
+    sessionIds: readonly string[],
+    nowIso: string,
+  ): number {
+    if (sessionIds.length === 0) return 0
+    const placeholders = sessionIds.map(() => '?').join(', ')
+    const result = this.database
+      .prepare(
+        `UPDATE tasks
+         SET lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+         WHERE runtime_session_id IN (${placeholders})
+           AND lease_token IS NOT NULL`,
+      )
+      .run(nowIso, ...sessionIds)
+    return result.changes
   }
 
   public markGracefulShutdown(nowIso: string, runtimeSessionId: string | null): number {
@@ -558,5 +690,74 @@ export class TaskRepository implements TaskStore {
       )
       .run(nowIso, nowIso)
     return result.changes
+  }
+
+  public markTerminalNonRecoverable(
+    taskId: string,
+    reason: string,
+    nowIso: string,
+  ): Task | null {
+    this.database
+      .prepare(
+        `UPDATE tasks
+         SET status = 'failed',
+             stage = 'failed',
+             execution_phase = 'failed',
+             recovery_classification = 'non-recoverable',
+             recovery_reason = ?,
+             recovery_action = 'none',
+             last_recovery_error = ?,
+             error_message = COALESCE(error_message, ?),
+             finished_at = COALESCE(finished_at, ?),
+             lease_owner = NULL,
+             lease_token = NULL,
+             lease_expires_at = NULL,
+             updated_at = ?
+         WHERE id = ?
+           AND status IN ('pending', 'running', 'failed')`,
+      )
+      .run(reason, reason, reason, nowIso, nowIso, taskId)
+    return this.getById(taskId)
+  }
+
+  private mapRowsIsolatingCorrupt(rows: TaskRow[]): Task[] {
+    const result: Task[] = []
+    const timestamp = now()
+    for (const row of rows) {
+      try {
+        result.push(toTask(row))
+      } catch {
+        this.markTaskCorrupt(row.id, TASK_CORRUPTION_REASON, timestamp)
+      }
+    }
+    return result
+  }
+
+  /**
+   * Fail-closed terminal write for unreadable rows. Clears bad checkpoint bytes without
+   * re-parsing them, and never embeds raw payload content into the reason.
+   */
+  private markTaskCorrupt(taskId: string, reason: string, nowIso: string): void {
+    this.database
+      .prepare(
+        `UPDATE tasks
+         SET status = 'failed',
+             stage = 'failed',
+             execution_phase = 'failed',
+             recovery_classification = 'non-recoverable',
+             recovery_reason = ?,
+             recovery_action = 'none',
+             last_recovery_error = ?,
+             error_message = ?,
+             checkpoint_json = NULL,
+             finished_at = COALESCE(finished_at, ?),
+             lease_owner = NULL,
+             lease_token = NULL,
+             lease_expires_at = NULL,
+             cancel_requested = 0,
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(reason, reason, reason, nowIso, nowIso, taskId)
   }
 }

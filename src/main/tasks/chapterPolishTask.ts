@@ -75,11 +75,11 @@ function checkpointFromJson(value: JsonObject | null): NarrativeOperationCheckpo
   ) {
     return null
   }
-  const schemaVersion = typeof value.schema_version === 'number'
-    ? value.schema_version
-    : CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION
+  if (typeof value.schema_version !== 'number') {
+    return null
+  }
   return {
-    schema_version: schemaVersion,
+    schema_version: value.schema_version,
     operation,
     source_content: typeof value.source_content === 'string' ? value.source_content : '',
     generated_content: typeof value.generated_content === 'string' ? value.generated_content : '',
@@ -157,6 +157,81 @@ interface ChapterRevisionOperationResultLike {
   error: string | null
 }
 
+function emptyDiff() {
+  return {
+    unchanged_count: 0,
+    added_count: 0,
+    removed_count: 0,
+    modified_count: 0,
+  }
+}
+
+/**
+ * Idempotent finish when a final revision already exists for this task, even if the
+ * completed checkpoint was lost. Never creates an agent or calls the model.
+ */
+function finishFromExistingRevision(
+  context: TaskRunnerContext,
+  request: ChapterPolishRequest,
+  service: NarrativeWorkbenchService,
+): TaskRunnerResult | null {
+  const existing = service.getRevisionByTaskId(context.task.id)
+  if (!existing) return null
+
+  // Entity must still belong to the target project/chapter for this task.
+  try {
+    service.getRevision(request.project_id, existing.id)
+  } catch {
+    throw new Error('已落库修订与任务目标项目不一致，任务不可恢复。')
+  }
+  if (existing.chapter_id !== request.chapter_id) {
+    throw new Error('已落库修订与任务目标章节不一致，任务不可恢复。')
+  }
+
+  context.setExecutionPhase('persisting_result')
+  const report = service.ensureReportForTask(
+    request.project_id,
+    request.chapter_id,
+    context.task.id,
+    existing.id,
+    request.mode === 'paragraph' ? 'paragraph-revision' : 'chapter-polish',
+  )
+
+  let applied = false
+  const savedCheckpoint = checkpointFromJson(context.task.checkpoint)
+  if (savedCheckpoint?.applied === true && savedCheckpoint.revision_id === existing.id) {
+    applied = true
+  }
+  if (request.auto_apply && !applied) {
+    service.applyRevision(request.project_id, existing.id)
+    applied = true
+  }
+
+  context.saveCheckpoint(checkpointToJson({
+    schema_version: CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
+    operation: request.mode === 'paragraph' ? 'paragraph_revision' : 'chapter_polish',
+    source_content: savedCheckpoint?.source_content ?? '',
+    generated_content: existing.content,
+    revision_id: existing.id,
+    status: 'completed',
+    error: null,
+    applied,
+  }))
+  context.setStage('review', 1)
+  context.setExecutionPhase('finalizing')
+  return {
+    status: 'completed',
+    result: {
+      status: 'completed',
+      revision_id: existing.id,
+      report_id: report?.id ?? null,
+      applied,
+      error: null,
+      diff: emptyDiff(),
+    },
+  }
+}
+
 export function createChapterPolishTaskRunner(
   options: ChapterPolishTaskRunnerOptions,
 ): TaskRunner {
@@ -164,9 +239,13 @@ export function createChapterPolishTaskRunner(
     execute: async (context): Promise<TaskRunnerResult> => {
       const request = readRequest(context)
       const savedCheckpoint = checkpointFromJson(context.task.checkpoint)
+
+      // Final entity first: never create agent / call model when revision is already durable.
+      const finished = finishFromExistingRevision(context, request, options.service)
+      if (finished) return finished
+
       let agent: ProjectSessionAgent | undefined
       try {
-        // Safe resume path: revision already exists for this task.
         if (savedCheckpoint?.status === 'completed' && savedCheckpoint.revision_id) {
           let applied = savedCheckpoint.applied === true
           if (request.auto_apply && !applied) {
@@ -185,12 +264,7 @@ export function createChapterPolishTaskRunner(
               report_id: null,
               applied,
               error: null,
-              diff: {
-                unchanged_count: 0,
-                added_count: 0,
-                removed_count: 0,
-                modified_count: 0,
-              },
+              diff: emptyDiff(),
             },
           }
         }

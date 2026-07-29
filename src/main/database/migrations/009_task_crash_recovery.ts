@@ -55,8 +55,42 @@ CREATE UNIQUE INDEX idx_chapter_revisions_task
   ON chapter_revisions(task_id)
   WHERE task_id IS NOT NULL;
 
+-- v8 allowed multiple postprocess_reports with the same non-null task_id.
+-- Keep all report rows; retain a single authoritative task linkage (latest by created_at/id).
+UPDATE postprocess_reports
+SET task_id = NULL
+WHERE task_id IS NOT NULL
+  AND rowid NOT IN (
+    SELECT MAX(rowid)
+    FROM postprocess_reports
+    WHERE task_id IS NOT NULL
+    GROUP BY task_id
+  );
+
 CREATE UNIQUE INDEX idx_postprocess_reports_task
   ON postprocess_reports(task_id)
   WHERE task_id IS NOT NULL;
+
+CREATE TABLE recovery_attempts (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  recovery_root_task_id TEXT NOT NULL,
+  attempt_number INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  runtime_session_id TEXT,
+  lease_token TEXT,
+  claimed_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  outcome TEXT,
+  error_message TEXT
+);
+
+CREATE INDEX idx_recovery_attempts_task
+  ON recovery_attempts(task_id, attempt_number);
+
+CREATE INDEX idx_recovery_attempts_root
+  ON recovery_attempts(recovery_root_task_id, claimed_at);
 `,
 }

@@ -8,7 +8,8 @@ import type { DatabaseShutdownResult } from './shutdown'
 export interface ExecuteDatabaseRestoreOptions {
   backupService: DatabaseBackupService
   backupId: string
-  closeDatabase: () => DatabaseShutdownResult
+  /** May return a promise so callers can quiesce active tasks before DB close. */
+  closeDatabase: () => DatabaseShutdownResult | Promise<DatabaseShutdownResult>
   relaunch: () => void
   exit: () => void
   markRecoveryRequired?: () => void
@@ -95,7 +96,7 @@ export async function executeDatabaseRestore(
 
   let shutdown: DatabaseShutdownResult
   try {
-    shutdown = options.closeDatabase()
+    shutdown = await Promise.resolve(options.closeDatabase())
   } catch {
     shutdown = {
       databaseClosed: false,

@@ -89,12 +89,68 @@ function resultToJson(
   }
 }
 
+/**
+ * Idempotent finish when a chapter version already exists for this task_id.
+ * Never creates an agent or calls the model.
+ */
+function finishFromExistingVersion(
+  context: TaskRunnerContext,
+  request: ChapterGenerationRequest,
+  service: ChapterGenerationService,
+): TaskRunnerResult | null {
+  const existing = service.getVersionByTaskId(context.task.id)
+  if (!existing) return null
+
+  try {
+    service.getVersion(request.project_id, existing.id)
+  } catch {
+    throw new Error('已落库章节版本与任务目标项目不一致，任务不可恢复。')
+  }
+  if (request.chapter_id && existing.chapter_id !== request.chapter_id) {
+    throw new Error('已落库章节版本与任务目标章节不一致，任务不可恢复。')
+  }
+
+  context.setExecutionPhase('persisting_result')
+  context.saveCheckpoint(checkpointToJson({
+    schema_version: CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
+    stage: 'review',
+    body: existing.content,
+    summary: existing.summary,
+    fact_check_text: '',
+    fact_check: existing.fact_check,
+    version_id: existing.id,
+  }))
+  context.setStage('review', 1)
+  context.setExecutionPhase('finalizing')
+  context.publishReview(
+    existing.id,
+    existing.status === 'review',
+    existing.status === 'approved' ? 'approved' : 'review',
+  )
+  return {
+    status: 'completed',
+    result: resultToJson(
+      existing.chapter_id,
+      'completed',
+      existing.id,
+      existing.status === 'approved',
+      existing.status === 'review',
+      existing.fact_check.passed,
+    ),
+  }
+}
+
 export function createChapterGenerationTaskRunner(
   options: ChapterGenerationTaskRunnerOptions,
 ): TaskRunner {
   return {
     execute: async (context) => {
       const request = readRequest(context)
+
+      // Final entity first: never create agent when version is already durable.
+      const finished = finishFromExistingVersion(context, request, options.service)
+      if (finished) return finished
+
       let agent: ProjectSessionAgent | undefined
       try {
         context.setExecutionPhase('preparing')

@@ -73,6 +73,14 @@ describe('classifyTaskRecovery', () => {
     expect(decision.classification).toBe('non-recoverable')
   })
 
+  test('task-level checkpoint schema cannot legitimize missing embedded schema', () => {
+    const decision = classifyTaskRecovery(base({
+      checkpoint: { stage: 'body', body: 'x' },
+      checkpoint_schema_version: 1,
+    }))
+    expect(decision.classification).toBe('non-recoverable')
+  })
+
   test('fails closed on future checkpoint schema version', () => {
     const decision = classifyTaskRecovery(base({
       checkpoint: { schema_version: 99, stage: 'body', body: 'x' },

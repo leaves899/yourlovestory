@@ -13,6 +13,7 @@ import {
   ChapterOutlineRepository,
   ChapterRevisionRepository,
   ChapterVersionRepository,
+  RecoveryAttemptRepository,
   RuntimeSessionRepository,
   shutdownDatabaseResources,
   TaskRepository,
@@ -57,6 +58,21 @@ let backupService: DatabaseBackupService | null = null
 let backupPolicyStore: BackupPolicyStore | null = null
 let diagnosticExportCoordinator: DiagnosticExportCoordinator | null = null
 let projectPortabilityCoordinator: ProjectPortabilityCoordinator | null = null
+let isShuttingDown = false
+let shutdownPromise: Promise<void> | null = null
+
+// Single-instance lock: a second process must not open the same DB session.
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+}
 
 function createDiagnosticExportCoordinator(
   service: DatabaseBackupService | null,
@@ -186,17 +202,18 @@ async function restoreDatabaseBackup(id: string): Promise<RestoreExecutionResult
     backupId: id,
     databaseAvailable,
     markRestoring: () => databaseRuntime.beginRestore(),
-    closeDatabase: () => {
+    closeDatabase: async () => {
       const taskManagerToDispose = taskManager
       taskManager = null
       const assistantServiceToDispose = assistantService
       assistantService = null
       workbenchService = null
       const databaseToClose = database
-      const result = shutdownDatabaseResources({
+      const result = await shutdownDatabaseResources({
         taskManager: taskManagerToDispose,
         assistantService: assistantServiceToDispose,
         database: databaseToClose,
+        awaitQuiesce: true,
       })
       if (result.databaseClosed) {
         database = null
@@ -214,7 +231,7 @@ async function restoreDatabaseBackup(id: string): Promise<RestoreExecutionResult
   })
 }
 
-app.whenReady().then(async () => {
+if (gotSingleInstanceLock) app.whenReady().then(async () => {
   // 启动时执行数据迁移
   migrateData()
   credentialService = new CredentialService(app.getPath('userData'), safeStorage)
@@ -284,8 +301,9 @@ app.whenReady().then(async () => {
     database,
     migrationIssues: credentialMigration.issues,
     invalidateRuntimes: () => {
+      // Abort in-flight agents only. Do not permanently disable TaskManager.
       assistantService?.dispose()
-      taskManager?.dispose()
+      taskManager?.invalidateActiveRuntimes()
     },
   })
   const agentFactory = createProjectSessionAgentFactory({
@@ -306,6 +324,7 @@ app.whenReady().then(async () => {
   })
   const taskRepository = new TaskRepository(database)
   const runtimeSessions = new RuntimeSessionRepository(database)
+  const recoveryAttempts = new RecoveryAttemptRepository(database)
   const projectRepository = new ProjectRepository(database)
   const chapterRepository = new ChapterRepository(database)
   const chapterOutlineRepository = new ChapterOutlineRepository(database)
@@ -330,6 +349,7 @@ app.whenReady().then(async () => {
     validateChapterGeneration: (input) =>
       assertChapterGenerationPreflight(workbenchService!, input),
     runtimeSessions,
+    recoveryAttempts,
     recoveryLookups: {
       projectExists: (projectId) => projectRepository.getById(projectId) !== null,
       targetExists: (task) => {
@@ -422,22 +442,47 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('will-quit', () => {
+async function performGracefulAppShutdown(): Promise<void> {
   void projectPortabilityCoordinator?.dispose()
   projectPortabilityCoordinator = null
-  // Persist graceful shutdown markers and release leases before closing the database.
-  // Do not schedule async writes after DB close.
-  try {
-    taskManager?.beginGracefulShutdown()
-  } catch (error: unknown) {
-    console.warn('[Shutdown] graceful task shutdown failed:', sanitizeErrorMessage(error))
-  }
-  taskManager?.dispose()
+  const manager = taskManager
+  const assistant = assistantService
+  const db = database
   taskManager = null
-  assistantService?.dispose()
   assistantService = null
   credentialService = null
   workbenchService = null
-  database?.close()
   database = null
+  // Quiesce active completions, then close DB. No async writes after close.
+  await shutdownDatabaseResources({
+    taskManager: manager,
+    assistantService: assistant,
+    database: db,
+    awaitQuiesce: true,
+  })
+}
+
+app.on('before-quit', (event) => {
+  if (isShuttingDown) return
+  if (!taskManager?.hasActiveWork() && !database) {
+    // Nothing to drain; allow default quit.
+    return
+  }
+  event.preventDefault()
+  if (shutdownPromise) return
+  isShuttingDown = true
+  shutdownPromise = performGracefulAppShutdown()
+    .catch((error: unknown) => {
+      console.warn('[Shutdown] coordinated quit failed:', sanitizeErrorMessage(error))
+    })
+    .finally(() => {
+      app.exit(0)
+    })
+})
+
+app.on('will-quit', (event) => {
+  if (shutdownPromise && !isShuttingDown) {
+    // Safety net if before-quit was skipped.
+    event.preventDefault()
+  }
 })

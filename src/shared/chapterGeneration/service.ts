@@ -282,6 +282,11 @@ export class ChapterGenerationService {
     return version
   }
 
+  /** Lookup chapter version already persisted for a task (idempotent finish path). */
+  public getVersionByTaskId(taskId: string): ChapterVersion | null {
+    return this.options.versions.getByTaskId(taskId)
+  }
+
   public confirmVersion(projectId: string, versionId: string): ChapterVersion {
     const version = this.getVersion(projectId, versionId)
     if (version.status !== 'review') {

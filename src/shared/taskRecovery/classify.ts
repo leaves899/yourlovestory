@@ -94,14 +94,16 @@ function restartable(reason: string): RecoveryDecision {
   return decision('restartable', reason, 'auto-restart', true, true)
 }
 
-function checkpointSchemaVersion(
-  checkpoint: JsonObject | null,
-  taskLevelVersion: number | null,
-): number | null {
-  if (checkpoint && typeof checkpoint.schema_version === 'number') {
-    return checkpoint.schema_version
+/**
+ * Embedded checkpoint schema must be present on the checkpoint itself.
+ * Task-level checkpoint_schema_version must not legitimise a corrupt payload.
+ */
+function embeddedCheckpointSchemaVersion(checkpoint: JsonObject | null): number | null {
+  if (!checkpoint) return null
+  if (typeof checkpoint.schema_version !== 'number' || !Number.isFinite(checkpoint.schema_version)) {
+    return null
   }
-  return taskLevelVersion
+  return checkpoint.schema_version
 }
 
 function generationStage(checkpoint: JsonObject | null): string | null {
@@ -117,11 +119,8 @@ function polishStatus(checkpoint: JsonObject | null): string | null {
 }
 
 function classifyChapterGeneration(input: ClassifyTaskInput): RecoveryDecision {
-  const schemaVersion = checkpointSchemaVersion(
-    input.checkpoint,
-    input.checkpoint_schema_version,
-  )
   if (input.checkpoint !== null) {
+    const schemaVersion = embeddedCheckpointSchemaVersion(input.checkpoint)
     if (schemaVersion === null) {
       return nonRecoverable('章节生成检查点缺少 schema version，已拒绝自动恢复。')
     }
@@ -186,11 +185,8 @@ function classifyChapterGeneration(input: ClassifyTaskInput): RecoveryDecision {
 }
 
 function classifyChapterPolish(input: ClassifyTaskInput): RecoveryDecision {
-  const schemaVersion = checkpointSchemaVersion(
-    input.checkpoint,
-    input.checkpoint_schema_version,
-  )
   if (input.checkpoint !== null) {
+    const schemaVersion = embeddedCheckpointSchemaVersion(input.checkpoint)
     if (schemaVersion === null) {
       return nonRecoverable('章节润色检查点缺少 schema version，已拒绝自动恢复。')
     }

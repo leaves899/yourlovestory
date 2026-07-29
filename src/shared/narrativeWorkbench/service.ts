@@ -593,6 +593,37 @@ export class NarrativeWorkbenchService {
     return this.options.stores.revisions.listByChapter(chapter.id)
   }
 
+  /** Lookup revision already persisted for a task (idempotent finish path). */
+  public getRevisionByTaskId(taskId: string): ChapterRevision | null {
+    return this.options.stores.revisions.getByTaskId?.(taskId) ?? null
+  }
+
+  public getReportByTaskId(taskId: string): PostprocessReport | null {
+    return this.options.stores.reports.getByTaskId?.(taskId) ?? null
+  }
+
+  /**
+   * Ensure a postprocess report is linked to the task without re-running the model.
+   * Idempotent: returns the existing report when task_id already has one.
+   */
+  public ensureReportForTask(
+    projectId: string,
+    chapterId: string,
+    taskId: string,
+    revisionId: string,
+    reportType: 'chapter-polish' | 'paragraph-revision' = 'chapter-polish',
+  ): PostprocessReport | null {
+    return this.createReport(
+      projectId,
+      chapterId,
+      taskId,
+      reportType,
+      'completed',
+      `${reportType} completed`,
+      { revision_id: revisionId },
+    )
+  }
+
   public getRevision(projectId: string, revisionId: string): ChapterRevision {
     const revision = this.options.stores.revisions.getById(revisionId)
     if (!revision) throw new EntityNotFoundError('Chapter revision', revisionId)
