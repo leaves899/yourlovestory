@@ -4,6 +4,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import {
+  BackupPolicyStore,
   DatabaseBackupService,
   type BackupRecord,
 } from '@/main/backup'
@@ -99,6 +100,101 @@ describe('database backup service', () => {
     expect(await scheduledService.createScheduledBackupIfDue()).toBeNull()
     clock.value = new Date('2026-03-02T00:00:01.000Z')
     expect(await scheduledService.createScheduledBackupIfDue()).not.toBeNull()
+  })
+
+  test('scheduled backup prune uses the supplied persistence policy not the default constant', async () => {
+    const records: BackupRecord[] = []
+    for (let index = 0; index < 5; index += 1) {
+      const dated = new DatabaseBackupService({
+        userDataPath: root,
+        databasePath: getDatabasePath(root),
+        appVersion: 'test-version',
+        getDatabase: () => database,
+        now: () => new Date(Date.UTC(2026, 2, index + 1)),
+      })
+      records.push(await dated.createBackup({ reason: 'manual' }))
+    }
+    const policyStore = new BackupPolicyStore(root)
+    await policyStore.save({ maxBackups: 2, maxAgeDays: 365 })
+    const policy = policyStore.load().policy
+    const scheduledService = new DatabaseBackupService({
+      userDataPath: root,
+      databasePath: getDatabasePath(root),
+      appVersion: 'test-version',
+      getDatabase: () => database,
+      now: () => new Date('2026-03-20T00:00:00.000Z'),
+    })
+    await scheduledService.createScheduledBackupIfDue(policy)
+    const remaining = await scheduledService.listBackups()
+    expect(remaining.length).toBeLessThanOrEqual(2)
+    expect(remaining.every((record) => records.slice(-2).some((kept) => kept.id === record.id)
+      || record.reason === 'scheduled')).toBe(true)
+  })
+
+  test('lifecycle startup scheduled backup and prune use the persisted policy', async () => {
+    database?.close()
+    database = null
+    const lifecycleRoot = path.join(root, 'lifecycle-policy')
+    fs.mkdirSync(lifecycleRoot, { recursive: true })
+    const seed = initializeDatabase(lifecycleRoot)
+    const seedService = new DatabaseBackupService({
+      userDataPath: lifecycleRoot,
+      databasePath: getDatabasePath(lifecycleRoot),
+      appVersion: 'test-version',
+      getDatabase: () => seed,
+      now: () => new Date('2026-03-01T00:00:00.000Z'),
+    })
+    for (let index = 0; index < 4; index += 1) {
+      const dated = new DatabaseBackupService({
+        userDataPath: lifecycleRoot,
+        databasePath: getDatabasePath(lifecycleRoot),
+        appVersion: 'test-version',
+        getDatabase: () => seed,
+        now: () => new Date(Date.UTC(2026, 2, index + 1)),
+      })
+      await dated.createBackup({ reason: 'manual' })
+    }
+    seed.close()
+    await new BackupPolicyStore(lifecycleRoot).save({ maxBackups: 2, maxAgeDays: 365 })
+
+    const result = await initializeDatabaseLifecycle({
+      userDataPath: lifecycleRoot,
+      appVersion: 'test-version',
+      migrateCredentials: () => ({ pending: 0, failed: 0 }),
+      now: () => new Date('2026-03-20T00:00:00.000Z'),
+    })
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    const listed = await result.backupService.listBackups()
+    expect(listed.length).toBeLessThanOrEqual(2)
+    result.database.close()
+  })
+
+  test('reports partial prune failures without claiming full success', async () => {
+    const first = await service.createBackup({ reason: 'manual' })
+    const second = await service.createBackup({ reason: 'manual' })
+    const directory = path.join(root, 'backups', 'database')
+    const firstDb = path.join(directory, first.filename)
+    const pruningService = new DatabaseBackupService({
+      userDataPath: root,
+      databasePath: getDatabasePath(root),
+      appVersion: 'test-version',
+      getDatabase: () => database,
+      removeFile: (target) => {
+        if (target === firstDb) {
+          throw new Error(`injected delete failure ${root}`)
+        }
+        fs.rmSync(target, { force: true })
+      },
+    })
+
+    const result = await pruningService.pruneBackups({ maxBackups: 1, maxAgeDays: 1 })
+    expect(result.failed.map((entry) => entry.id)).toEqual([first.id])
+    expect(result.deleted).toEqual([])
+    expect(result.retained).toContain(second.id)
+    expect(result.retained).toContain(first.id)
+    expect(result.failed[0]?.error).not.toContain(root)
+    expect(result.failed[0]?.error).toBe('本地备份操作失败，请重试。')
   })
 
   test('blocks every user-visible backup while legacy plaintext credentials remain', async () => {

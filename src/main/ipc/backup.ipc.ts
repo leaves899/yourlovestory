@@ -1,10 +1,16 @@
 import type {
   BackupError,
+  BackupPolicyStore,
   BackupService,
   DatabaseStatus,
   RestoreExecutionResult,
+  UpdateBackupPolicyResult,
 } from '../backup'
-import { backupError, toBackupError } from '../backup'
+import {
+  backupError,
+  parseBackupPolicyUpdateInput,
+  toBackupError,
+} from '../backup'
 import {
   assertTrustedIpcSender,
   isRecord,
@@ -14,6 +20,7 @@ import {
 
 interface BackupIpcDependencies {
   backupService?: BackupService
+  policyStore?: BackupPolicyStore
   getStatus: () => DatabaseStatus
   restoreBackup?: (id: string) => Promise<RestoreExecutionResult>
 }
@@ -21,6 +28,11 @@ interface BackupIpcDependencies {
 function requireService(service?: BackupService): BackupService {
   if (!service) throw backupError('DATABASE_UNAVAILABLE')
   return service
+}
+
+function requirePolicyStore(store?: BackupPolicyStore): BackupPolicyStore {
+  if (!store) throw backupError('BACKUP_POLICY_IO_ERROR')
+  return store
 }
 
 function parseNoInput(value: unknown): undefined {
@@ -43,6 +55,10 @@ function parseRestore(value: unknown): { id: string; confirm: true } {
   }
   if (value.confirm !== true) throw new Error('Explicit restore confirmation is required')
   return { id: readString(value.id, 'id'), confirm: true }
+}
+
+function parsePolicyUpdate(value: unknown) {
+  return parseBackupPolicyUpdateInput(value)
 }
 
 const formatError = (error: unknown): { success: false; error: BackupError } => ({
@@ -87,4 +103,36 @@ export function registerBackupIPC(
       },
     }
   }, { parse: parseNoInput, authorize, formatError })
+
+  ipc.register('backup:get-policy', async () => {
+    const loaded = requirePolicyStore(dependencies.policyStore).load()
+    return {
+      success: true as const,
+      data: {
+        policy: loaded.policy,
+        source: loaded.source,
+        fallbackReason: loaded.fallbackReason ?? null,
+      },
+    }
+  }, { parse: parseNoInput, authorize, formatError })
+
+  ipc.register('backup:update-policy', async (_, input) => {
+    const store = requirePolicyStore(dependencies.policyStore)
+    const service = requireService(dependencies.backupService)
+    const policy = await store.save(input)
+    const prune = await service.pruneBackups(policy)
+    const result: UpdateBackupPolicyResult = {
+      policy,
+      prune,
+      prunePartialFailure: prune.failed.length > 0,
+    }
+    return { success: true as const, data: result }
+  }, {
+    parse: parsePolicyUpdate,
+    authorize,
+    formatError: (error) => ({
+      success: false as const,
+      error: toBackupError(error, 'BACKUP_POLICY_INVALID'),
+    }),
+  })
 }

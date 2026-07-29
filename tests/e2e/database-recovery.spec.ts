@@ -32,17 +32,30 @@ test('recovery gate blocks business initialization and exposes verified restore 
   await page.getByTestId('recovery-verify-backup-1').click()
   await expect(page.getByText('校验通过')).toBeVisible()
 
+  await page.getByTestId('recovery-export-diagnostics').click()
+  let calls = await page.evaluate(() => (
+    window as typeof window & {
+      __mockCalls: Array<{ channel: string; params: unknown }>
+    }
+  ).__mockCalls)
+  expect(calls.some((call) => call.channel === 'diagnostics:export')).toBe(true)
+  expect(calls.find((call) => call.channel === 'diagnostics:export')?.params).toBeUndefined()
+
   page.once('dialog', (dialog) => dialog.dismiss())
   await page.getByTestId('recovery-restore-backup-1').click()
-  let calls = await page.evaluate(() => (
-    window as typeof window & { __mockCalls: Array<{ channel: string }> }
+  calls = await page.evaluate(() => (
+    window as typeof window & {
+      __mockCalls: Array<{ channel: string; params: unknown }>
+    }
   ).__mockCalls)
   expect(calls.some((call) => call.channel === 'backup:restore')).toBe(false)
 
   page.once('dialog', (dialog) => dialog.accept())
   await page.getByTestId('recovery-restore-backup-1').click()
   calls = await page.evaluate(() => (
-    window as typeof window & { __mockCalls: Array<{ channel: string }> }
+    window as typeof window & {
+      __mockCalls: Array<{ channel: string; params: unknown }>
+    }
   ).__mockCalls)
   expect(calls.some((call) => call.channel === 'backup:restore')).toBe(true)
 })
@@ -89,4 +102,65 @@ test('ready workbench dynamically enters recovery mode when status changes', asy
   expect(callsAfter.filter((call) =>
     /^(workbench|task|assistant):/.test(call.channel),
   )).toHaveLength(businessCallCount)
+})
+
+test('settings data safety exposes backup policy and diagnostics export without paths', async ({
+  page,
+}) => {
+  await injectMockElectronAPI(page, {
+    backupPolicy: { maxBackups: 8, maxAgeDays: 21 },
+  })
+  await page.goto('/#/settings')
+  await expect(page.getByRole('heading', { name: '设置' })).toBeVisible()
+
+  await page.getByRole('tab', { name: '数据安全' }).click()
+  await expect(page.getByTestId('backup-policy-form')).toBeVisible()
+  await expect(page.getByTestId('backup-policy-max-backups')).toHaveValue('8')
+  await expect(page.getByTestId('backup-policy-max-age-days')).toHaveValue('21')
+
+  await page.getByTestId('backup-policy-max-backups').fill('6')
+  await page.getByTestId('backup-policy-max-age-days').fill('15')
+  await page.getByTestId('backup-policy-save').click()
+  await expect(page.getByTestId('backup-policy-success')).toContainText('已保存')
+
+  const policyCalls = await page.evaluate(() => (
+    window as typeof window & {
+      __mockCalls: Array<{ channel: string; params: unknown }>
+    }
+  ).__mockCalls)
+  const updateCall = policyCalls.find((call) => call.channel === 'backup:update-policy')
+  expect(updateCall?.params).toEqual({ maxBackups: 6, maxAgeDays: 15 })
+  expect(JSON.stringify(updateCall?.params)).not.toMatch(/[A-Za-z]:\\/)
+
+  await page.getByTestId('export-diagnostics').click()
+  const afterExport = await page.evaluate(() => (
+    window as typeof window & {
+      __mockCalls: Array<{ channel: string; params: unknown }>
+    }
+  ).__mockCalls)
+  const exportCall = afterExport.find((call) => call.channel === 'diagnostics:export')
+  expect(exportCall).toBeTruthy()
+  expect(exportCall?.params).toBeUndefined()
+})
+
+test('settings diagnostics cancel and failure restore the export button', async ({ page }) => {
+  await injectMockElectronAPI(page, {
+    diagnosticsExport: { canceled: true },
+  })
+  await page.goto('/#/settings')
+  await expect(page.getByRole('heading', { name: '设置' })).toBeVisible()
+  await page.getByRole('tab', { name: '数据安全' }).click()
+  await page.getByTestId('export-diagnostics').click()
+  await expect(page.getByTestId('export-diagnostics')).toBeEnabled()
+
+  await injectMockElectronAPI(page, {
+    diagnosticsExport: {
+      error: { code: 'LOCAL_IO_ERROR', message: '无法安全保存诊断包，请重试。' },
+    },
+  })
+  await page.goto('/#/settings')
+  await expect(page.getByRole('heading', { name: '设置' })).toBeVisible()
+  await page.getByRole('tab', { name: '数据安全' }).click()
+  await page.getByTestId('export-diagnostics').click()
+  await expect(page.getByTestId('export-diagnostics')).toBeEnabled()
 })

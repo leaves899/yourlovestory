@@ -3,8 +3,8 @@ import * as path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveData'
 import {
+  BackupPolicyStore,
   DatabaseBackupService,
-  DEFAULT_BACKUP_RETENTION_POLICY,
   type DatabaseStatus,
   type InternalMigrationSnapshot,
 } from '../backup'
@@ -238,11 +238,9 @@ export async function initializeDatabaseLifecycle<T extends CredentialMigrationR
     }
     let lastBackupAt: string | null = null
     try {
-      await backupService.createScheduledBackupIfDue()
-      await backupService.pruneBackups(
-        DEFAULT_BACKUP_RETENTION_POLICY,
-        [],
-      )
+      const retentionPolicy = new BackupPolicyStore(options.userDataPath).load().policy
+      await backupService.createScheduledBackupIfDue(retentionPolicy)
+      await backupService.pruneBackups(retentionPolicy, [])
       lastBackupAt = (await backupService.listBackups())[0]?.createdAt ?? lastBackupAt
     } catch {
       // A non-migration startup backup must not prevent the application from opening.

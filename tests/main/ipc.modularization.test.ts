@@ -9,6 +9,8 @@ interface IpcHandler {
 const handlers = new Map<string, IpcHandler>()
 const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'yourcrush-ipc-modules-'))
 
+const showSaveDialog = jest.fn()
+
 jest.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: IpcHandler): void => {
@@ -25,10 +27,16 @@ jest.mock('electron', () => ({
     getVersion: (): string => 'test-version',
     quit: (): void => undefined,
   },
+  dialog: {
+    showSaveDialog: (...args: unknown[]) => showSaveDialog(...args),
+    showOpenDialog: jest.fn(),
+  },
 }))
 
 import { setupIPC } from '@/main/ipc'
 import { DatabaseRuntimeStatus } from '@/main/database'
+import { BackupPolicyStore } from '@/main/backup'
+import type { DiagnosticExportCoordinator } from '@/main/diagnostics'
 import type { ChapterGenerationService } from '@/shared/chapterGeneration'
 import type { TaskManager } from '@/main/tasks'
 import type { LlmCredentialController } from '@/main/security/llmCredentialController'
@@ -40,9 +48,11 @@ const EXPECTED_CHANNELS = [
   'app:info',
   'app:quit',
   'backup:create',
+  'backup:get-policy',
   'backup:get-status',
   'backup:list',
   'backup:restore',
+  'backup:update-policy',
   'backup:verify',
   'chapter:blocks',
   'chapter:diff:revisions',
@@ -66,6 +76,7 @@ const EXPECTED_CHANNELS = [
   'day:get',
   'day:list',
   'day:update',
+  'diagnostics:export',
   'foreshadow:events',
   'foreshadow:list',
   'foreshadow:suggest',
@@ -115,6 +126,7 @@ async function invoke<T>(channel: string, params?: unknown, event: unknown = {})
 describe('modular IPC registration', () => {
   beforeEach(() => {
     handlers.clear()
+    showSaveDialog.mockReset()
   })
 
   afterAll(() => {
@@ -438,5 +450,170 @@ describe('modular IPC registration', () => {
       data: { outcome: 'restored' },
     })
     expect(restoreBackup).toHaveBeenCalledWith('backup-1')
+  })
+
+  it('reads and updates backup policy through trusted IPC with immediate prune', async () => {
+    const trustedEvent = { senderFrame: { url: 'file:///app/index.html' } }
+    const policyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'yourcrush-policy-ipc-'))
+    const policyStore = new BackupPolicyStore(policyRoot)
+    const pruneBackups = jest.fn(async () => ({
+      deleted: ['old-backup'],
+      failed: [{ id: 'stuck-backup', error: '本地备份操作失败，请重试。' }],
+      retained: ['kept-backup'],
+      policyExceeded: false,
+    }))
+    const backupService = {
+      listBackups: jest.fn(async () => []),
+      createBackup: jest.fn(),
+      verifyBackup: jest.fn(),
+      restoreBackup: jest.fn(),
+      pruneBackups,
+    }
+
+    setupIPC({
+      backupService,
+      backupPolicyStore: policyStore,
+      getDatabaseStatus: () => ({
+        state: 'ready',
+        integrity: 'ok',
+        schemaVersion: 8,
+        message: null,
+        lastBackupAt: null,
+        backupAllowed: true,
+        backupEligibility: 'safe',
+        backupBlockedReason: null,
+      }),
+    })
+
+    await expect(invoke('backup:get-policy', undefined, trustedEvent)).resolves.toMatchObject({
+      success: true,
+      data: {
+        policy: { maxBackups: 10, maxAgeDays: 30 },
+        source: 'default',
+        fallbackReason: 'missing',
+      },
+    })
+
+    await expect(invoke('backup:update-policy', {
+      maxBackups: 4,
+      maxAgeDays: 12,
+      path: 'C:\\evil',
+    }, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'BACKUP_POLICY_INVALID' },
+    })
+    await expect(invoke('backup:update-policy', {
+      maxBackups: 4.5,
+      maxAgeDays: 12,
+    }, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'BACKUP_POLICY_INVALID' },
+    })
+    await expect(invoke('backup:update-policy', {
+      maxBackups: '4',
+      maxAgeDays: 12,
+    }, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'BACKUP_POLICY_INVALID' },
+    })
+
+    await expect(invoke('backup:update-policy', {
+      maxBackups: 4,
+      maxAgeDays: 12,
+    }, trustedEvent)).resolves.toMatchObject({
+      success: true,
+      data: {
+        policy: { maxBackups: 4, maxAgeDays: 12 },
+        prunePartialFailure: true,
+        prune: {
+          deleted: ['old-backup'],
+          failed: [{ id: 'stuck-backup' }],
+        },
+      },
+    })
+    expect(pruneBackups).toHaveBeenCalledWith({ maxBackups: 4, maxAgeDays: 12 })
+    expect(new BackupPolicyStore(policyRoot).load()).toMatchObject({
+      policy: { maxBackups: 4, maxAgeDays: 12 },
+      source: 'file',
+    })
+
+    await expect(invoke('backup:update-policy', {
+      maxBackups: 6,
+      maxAgeDays: 20,
+    }, {
+      senderFrame: { url: 'https://untrusted.example/' },
+    })).resolves.toMatchObject({
+      success: false,
+      error: { code: 'BACKUP_POLICY_INVALID' },
+    })
+
+    fs.rmSync(policyRoot, { recursive: true, force: true })
+  })
+
+  it('exports diagnostics without renderer paths and allows recovery mode', async () => {
+    const trustedEvent = { senderFrame: { url: 'file:///app/index.html' } }
+    const exportToFile = jest.fn(async (target: string) => ({
+      canceled: false as const,
+      fileName: path.basename(target),
+      size: 128,
+      sha256: 'c'.repeat(64),
+    }))
+    const coordinator = {
+      defaultFileName: () => 'diag.yourcrush-diagnostics.json',
+      exportToFile,
+    } as unknown as DiagnosticExportCoordinator
+    let status: DatabaseStatus = {
+      state: 'recovery-required',
+      integrity: 'failed',
+      schemaVersion: null,
+      message: '数据库需要恢复后才能继续使用。',
+      lastBackupAt: null,
+      backupAllowed: false,
+      backupEligibility: 'database-unavailable',
+      backupBlockedReason: '数据库需要恢复后才能继续使用。',
+    }
+
+    setupIPC({
+      diagnosticExportCoordinator: coordinator,
+      getDatabaseStatus: () => status,
+    })
+
+    showSaveDialog.mockResolvedValue({ canceled: true })
+    await expect(invoke('diagnostics:export', undefined, trustedEvent)).resolves.toEqual({
+      success: true,
+      data: { canceled: true },
+    })
+    expect(exportToFile).not.toHaveBeenCalled()
+
+    showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: path.join(userDataPath, 'chosen.yourcrush-diagnostics.json'),
+    })
+    await expect(invoke('diagnostics:export', undefined, trustedEvent)).resolves.toEqual({
+      success: true,
+      data: {
+        canceled: false,
+        fileName: 'chosen.yourcrush-diagnostics.json',
+        size: 128,
+        sha256: 'c'.repeat(64),
+      },
+    })
+    expect(exportToFile).toHaveBeenCalledWith(
+      path.join(userDataPath, 'chosen.yourcrush-diagnostics.json'),
+    )
+    expect(JSON.stringify(await invoke('diagnostics:export', undefined, trustedEvent)))
+      .not.toContain(userDataPath)
+
+    await expect(invoke('diagnostics:export', { path: 'C:\\evil.json' }, trustedEvent))
+      .resolves.toMatchObject({
+        success: false,
+        error: { code: 'LOCAL_IO_ERROR' },
+      })
+
+    status = { ...status, state: 'ready', integrity: 'ok', schemaVersion: 8 }
+    await expect(invoke('backup:get-policy', undefined, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'BACKUP_POLICY_IO_ERROR' },
+    })
   })
 })

@@ -20,11 +20,6 @@ export interface BackupService {
   ): Promise<PruneResult>
 }
 
-export const DEFAULT_BACKUP_RETENTION_POLICY: BackupRetentionPolicy = {
-  maxBackups: 10,
-  maxAgeDays: 30,
-}
-
 export interface InternalMigrationSnapshot {
   id: string
   createdAt: string

@@ -34,6 +34,41 @@ export interface BackupRetentionPolicy {
   maxAgeDays: number
 }
 
+/** Bounds for user-editable backup retention policy. */
+export const BACKUP_POLICY_BOUNDS = {
+  maxBackups: { min: 1, max: 100 },
+  maxAgeDays: { min: 1, max: 3650 },
+} as const
+
+export const DEFAULT_BACKUP_RETENTION_POLICY: BackupRetentionPolicy = {
+  maxBackups: 10,
+  maxAgeDays: 30,
+}
+
+export const BACKUP_POLICY_FILE_VERSION = 1 as const
+
+export interface BackupPolicyFileV1 {
+  version: typeof BACKUP_POLICY_FILE_VERSION
+  maxBackups: number
+  maxAgeDays: number
+}
+
+export type BackupPolicyLoadSource = 'file' | 'default'
+
+export type BackupPolicyFallbackReason = 'missing' | 'invalid' | 'io-error'
+
+export interface BackupPolicyLoadResult {
+  policy: BackupRetentionPolicy
+  source: BackupPolicyLoadSource
+  fallbackReason?: BackupPolicyFallbackReason
+}
+
+export interface UpdateBackupPolicyResult {
+  policy: BackupRetentionPolicy
+  prune: PruneResult
+  prunePartialFailure: boolean
+}
+
 export interface PruneFailure {
   id: string
   error: string
@@ -75,6 +110,8 @@ export type BackupErrorCode =
   | 'BACKUP_INVALID'
   | 'BACKUP_CHECKSUM_MISMATCH'
   | 'BACKUP_NOT_ALLOWED'
+  | 'BACKUP_POLICY_INVALID'
+  | 'BACKUP_POLICY_IO_ERROR'
   | 'DATABASE_UNAVAILABLE'
   | 'DATABASE_RECOVERY_REQUIRED'
   | 'RESTORE_FAILED'

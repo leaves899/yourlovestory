@@ -103,10 +103,18 @@ import type {
 import type {
   BackupRecord,
   BackupError,
+  BackupPolicyFallbackReason,
+  BackupPolicyLoadSource,
+  BackupRetentionPolicy,
   BackupVerificationResult,
   DatabaseStatus,
   RestoreExecutionResult,
+  UpdateBackupPolicyResult,
 } from '../shared/backup/types'
+import type {
+  DiagnosticError,
+  DiagnosticExportResult,
+} from '../shared/diagnostics'
 import type {
   ProjectExportResult,
   ProjectImportPreview,
@@ -172,6 +180,23 @@ interface ElectronAPI {
     confirm: true,
   ) => Promise<{ success: boolean; data?: RestoreExecutionResult; error?: BackupError }>
   getDatabaseStatus: () => Promise<{ success: boolean; data?: DatabaseStatus; error?: BackupError }>
+  getBackupPolicy: () => Promise<{
+    success: boolean
+    data?: {
+      policy: BackupRetentionPolicy
+      source: BackupPolicyLoadSource
+      fallbackReason: BackupPolicyFallbackReason | null
+    }
+    error?: BackupError
+  }>
+  updateBackupPolicy: (
+    policy: BackupRetentionPolicy,
+  ) => Promise<{ success: boolean; data?: UpdateBackupPolicyResult; error?: BackupError }>
+  exportDiagnostics: () => Promise<{
+    success: boolean
+    data?: DiagnosticExportResult
+    error?: DiagnosticError
+  }>
   onDatabaseStatusChanged: (listener: (status: DatabaseStatus) => void) => () => void
   exportProject: (
     projectId: string,

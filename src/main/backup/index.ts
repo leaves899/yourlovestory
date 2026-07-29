@@ -1,4 +1,5 @@
 export * from './backupService'
 export * from './credentialSafety'
 export * from './errors'
+export * from './policyStore'
 export * from './types'

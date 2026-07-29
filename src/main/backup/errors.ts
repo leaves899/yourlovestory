@@ -5,6 +5,8 @@ const MESSAGES: Record<BackupErrorCode, string> = {
   BACKUP_INVALID: '数据库备份无效，无法继续操作。',
   BACKUP_CHECKSUM_MISMATCH: '数据库备份校验失败。',
   BACKUP_NOT_ALLOWED: '当前数据库状态不允许创建或恢复备份。',
+  BACKUP_POLICY_INVALID: '备份保留策略无效，请检查最大备份数和保留天数。',
+  BACKUP_POLICY_IO_ERROR: '无法保存备份保留策略，已保留上一份有效配置。',
   DATABASE_UNAVAILABLE: '数据库当前不可用。',
   DATABASE_RECOVERY_REQUIRED: '数据库需要恢复后才能继续使用。',
   RESTORE_FAILED: '数据库恢复失败，已保留现有恢复选项。',

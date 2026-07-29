@@ -4,10 +4,12 @@ import type { NarrativeWorkbenchService } from '../../shared/narrativeWorkbench'
 import type { SqliteDatabase } from '../database'
 import type { AssistantService } from '../assistant'
 import type {
+  BackupPolicyStore,
   BackupService,
   DatabaseStatus,
   RestoreExecutionResult,
 } from '../backup'
+import type { DiagnosticExportCoordinator } from '../diagnostics'
 import { registerAssistantIPC } from '../assistant'
 import type { CredentialService } from '../security/credentialService'
 import { LlmCredentialController } from '../security/llmCredentialController'
@@ -17,6 +19,7 @@ import type { ProjectPortabilityCoordinator } from '../projectPortability'
 import { registerWorkbenchIPC } from '../workbench'
 import { registerAppIPC } from './app.ipc'
 import { registerBackupIPC } from './backup.ipc'
+import { registerDiagnosticsIPC } from './diagnostics.ipc'
 import { registerChapterIPC, registerChapterPolishIPC } from './chapters.ipc'
 import { registerCredentialIPC } from './credentials.ipc'
 import { registerCrushIPC } from './crushes.ipc'
@@ -47,6 +50,8 @@ export interface IpcSetupOptions {
   credentialController?: LlmCredentialController
   audit?: IpcAuditSink
   backupService?: BackupService
+  backupPolicyStore?: BackupPolicyStore
+  diagnosticExportCoordinator?: DiagnosticExportCoordinator
   getDatabaseStatus?: () => DatabaseStatus
   restoreBackup?: (id: string) => Promise<RestoreExecutionResult>
   projectPortabilityCoordinator?: ProjectPortabilityCoordinator
@@ -71,8 +76,10 @@ export function setupIPC(options: IpcSetupOptions = {}): void {
     'app:info',
     'app:quit',
     'backup:get-status',
+    'backup:get-policy',
     'backup:list',
     'backup:verify',
+    'diagnostics:export',
   ])
   const registrar = createDatabaseGuardedRegistrar(
     ipcMain,
@@ -137,8 +144,10 @@ export function setupIPC(options: IpcSetupOptions = {}): void {
   registerAppIPC(ipc, app)
   registerBackupIPC(ipc, {
     backupService: options.backupService,
+    policyStore: options.backupPolicyStore,
     getStatus: getDatabaseStatus,
     restoreBackup: options.restoreBackup,
   })
+  registerDiagnosticsIPC(ipc, options.diagnosticExportCoordinator)
   registerProjectPortabilityIPC(ipc, options.projectPortabilityCoordinator)
 }

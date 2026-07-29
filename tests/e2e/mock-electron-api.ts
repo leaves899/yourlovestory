@@ -28,6 +28,14 @@ interface MockElectronOptions {
     size: number
     sha256: string
   }>
+  backupPolicy?: {
+    maxBackups: number
+    maxAgeDays: number
+  }
+  diagnosticsExport?:
+    | { canceled: true }
+    | { canceled: false; fileName: string; size: number; sha256: string }
+    | { error: { code: string; message: string } }
 }
 
 interface FragmentRecord {
@@ -83,6 +91,13 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
   const progressStore: Record<string, ProgressRecord> = {}
   const projectStore: Array<Record<string, unknown>> = []
   let databaseState = options.databaseState ?? 'ready'
+  let backupPolicy = options.backupPolicy ?? { maxBackups: 10, maxAgeDays: 30 }
+  const diagnosticsExport = options.diagnosticsExport ?? {
+    canceled: false,
+    fileName: 'diag.yourcrush-diagnostics.json',
+    size: 256,
+    sha256: 'd'.repeat(64),
+  }
   const databaseStatusListeners = new Set<(status: {
     state: NonNullable<MockElectronOptions['databaseState']>
     integrity: 'ok' | 'unknown'
@@ -198,6 +213,44 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
           relaunching: true,
         },
       }
+    },
+    getBackupPolicy: async () => {
+      track('backup:get-policy', undefined)
+      return {
+        success: true,
+        data: {
+          policy: backupPolicy,
+          source: 'file' as const,
+          fallbackReason: null,
+        },
+      }
+    },
+    updateBackupPolicy: async (policy: { maxBackups: number; maxAgeDays: number }) => {
+      track('backup:update-policy', policy)
+      backupPolicy = {
+        maxBackups: policy.maxBackups,
+        maxAgeDays: policy.maxAgeDays,
+      }
+      return {
+        success: true,
+        data: {
+          policy: backupPolicy,
+          prune: {
+            deleted: [],
+            failed: [],
+            retained: [],
+            policyExceeded: false,
+          },
+          prunePartialFailure: false,
+        },
+      }
+    },
+    exportDiagnostics: async () => {
+      track('diagnostics:export', undefined)
+      if ('error' in diagnosticsExport) {
+        return { success: false, error: diagnosticsExport.error }
+      }
+      return { success: true, data: diagnosticsExport }
     },
     listNovelProjects: async () => {
       track('workbench:projects:list', undefined)
@@ -403,6 +456,29 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
       track('settings:update', params)
       return { success: true, data: params }
     },
+
+    getLlmCredentialStatus: async (target: unknown) => {
+      track('llmCredential:status', target)
+      return {
+        success: true,
+        data: {
+          configured: false,
+          storageAvailable: true,
+          backend: 'mock',
+          error: null,
+        },
+      }
+    },
+    saveLlmCredential: async () => ({ success: true, data: { configured: true } }),
+    deleteLlmCredential: async () => ({
+      success: true,
+      data: { deleted: true, referencesCleared: true, remaining: 0 },
+    }),
+    testLlmCredential: async () => ({ success: true, data: { message: 'ok' } }),
+    deleteAllLlmCredentials: async () => ({
+      success: true,
+      data: { deleted: 0, failed: 0, referencesCleared: true, remaining: 0 },
+    }),
 
     // 关系进度
     relationshipProgress: async (slug: string) => {

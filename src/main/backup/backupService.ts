@@ -99,15 +99,22 @@ export interface DatabaseBackupServiceOptions {
   appVersion: string
   getDatabase: () => SqliteDatabase | null
   now?: () => Date
+  /** Injectable for tests that simulate partial delete failures. */
+  removeFile?: (target: string) => void
 }
 
 export class DatabaseBackupService implements BackupService {
   private readonly backupDirectory: string
   private readonly now: () => Date
+  private readonly removeFile: (target: string) => void
 
   public constructor(private readonly options: DatabaseBackupServiceOptions) {
     this.backupDirectory = path.join(options.userDataPath, BACKUP_DIRECTORY)
     this.now = options.now ?? (() => new Date())
+    this.removeFile = options.removeFile
+      ?? ((target: string) => {
+        fs.rmSync(target, { force: true })
+      })
   }
 
   public async createBackup(options: CreateBackupOptions): Promise<BackupRecord> {
@@ -301,14 +308,16 @@ export class DatabaseBackupService implements BackupService {
     }
   }
 
-  public async createScheduledBackupIfDue(): Promise<BackupRecord | null> {
+  public async createScheduledBackupIfDue(
+    policy: BackupRetentionPolicy = DEFAULT_BACKUP_RETENTION_POLICY,
+  ): Promise<BackupRecord | null> {
     const latest = (await this.listBackups())
       .find((record) => record.reason === 'scheduled')
     if (latest && this.now().getTime() - Date.parse(latest.createdAt) < SCHEDULE_INTERVAL_MS) {
       return null
     }
     const backup = await this.createBackup({ reason: 'scheduled' })
-    await this.pruneBackups(DEFAULT_BACKUP_RETENTION_POLICY)
+    await this.pruneBackups(policy)
     return backup
   }
 
@@ -367,8 +376,8 @@ export class DatabaseBackupService implements BackupService {
 
     for (const record of targets) {
       try {
-        fs.rmSync(this.resolveDatabasePath(record), { force: true })
-        fs.rmSync(path.join(this.backupDirectory, metadataFilename(record.id)), { force: true })
+        this.removeFile(this.resolveDatabasePath(record))
+        this.removeFile(path.join(this.backupDirectory, metadataFilename(record.id)))
         result.deleted.push(record.id)
       } catch (error: unknown) {
         result.failed.push({
