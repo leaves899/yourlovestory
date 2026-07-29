@@ -466,6 +466,38 @@ describe('task crash recovery fault matrix', () => {
       `UPDATE tasks SET status = 'running', checkpoint_json = '{bad', execution_phase = 'model_in_flight' WHERE id = ?`,
     ).run(corrupt.id)
 
+    const corruptInput = tasks.create({
+      project_id: projectId,
+      task_type: 'chapter-generation',
+      input: {
+        sessionId: 'bad-input',
+        taskType: 'chapter-generation',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: { project_id: projectId, chapter_outline_id: outlineId },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+    })
+    database.prepare(
+      `UPDATE tasks SET status = 'running', input_json = '{bad-input', execution_phase = 'queued' WHERE id = ?`,
+    ).run(corruptInput.id)
+
+    const corruptResult = tasks.create({
+      project_id: projectId,
+      task_type: 'chapter-generation',
+      input: {
+        sessionId: 'bad-result',
+        taskType: 'chapter-generation',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: { project_id: projectId, chapter_outline_id: outlineId },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+    })
+    database.prepare(
+      `UPDATE tasks SET status = 'running', result_json = '{bad-result', execution_phase = 'persisting_result' WHERE id = ?`,
+    ).run(corruptResult.id)
+
     const unknownPhase = tasks.create({
       project_id: projectId,
       task_type: 'chapter-generation',
@@ -503,6 +535,27 @@ describe('task crash recovery fault matrix', () => {
     expect(corruptAfter.recovery_reason).toBe(TASK_CORRUPTION_REASON)
     expect(corruptAfter.checkpoint).toBeNull()
     expect(JSON.stringify(corruptAfter)).not.toContain('{bad')
+
+    for (const taskId of [corruptInput.id, corruptResult.id]) {
+      const normalized = tasks.getById(taskId)!
+      expect(normalized.status).toBe('failed')
+      expect(normalized.recovery_classification).toBe('non-recoverable')
+      expect(normalized.recovery_reason).toBe(TASK_CORRUPTION_REASON)
+      expect(normalized.input).toEqual({})
+      expect(normalized.checkpoint).toBeNull()
+      expect(normalized.result).toBeNull()
+      expect(manager.listRecoverable(projectId).some((item) => item.id === taskId)).toBe(true)
+    }
+    const normalizedBytes = database
+      .prepare<{ input_json: string; checkpoint_json: string | null; result_json: string | null }>(
+        'SELECT input_json, checkpoint_json, result_json FROM tasks WHERE id = ?',
+      )
+      .get(corruptResult.id)
+    expect(normalizedBytes).toEqual({
+      input_json: '{}',
+      checkpoint_json: null,
+      result_json: null,
+    })
 
     const unknownAfter = tasks.getById(unknownPhase.id)!
     expect(unknownAfter.recovery_classification).toBe('non-recoverable')
@@ -1884,6 +1937,121 @@ describe('task crash recovery fault matrix', () => {
     expect(finished[0]?.outcome).toBe('crashed')
   })
 
+  test('P2-1 runtime session reconciliation rolls back as one transaction', () => {
+    const { projectId } = seedProject('session-atomic')
+    const sessions = new RuntimeSessionRepository(database)
+    const attempts = new RecoveryAttemptRepository(database)
+    const tasks = new TaskRepository(database)
+    const crashed = sessions.start({
+      owner: 'old-owner',
+      appInstanceId: 'old-app',
+    })
+    const task = tasks.create({
+      project_id: projectId,
+      task_type: 'assistant',
+      input: {},
+      runtime_session_id: crashed.id,
+    })
+    tasks.update(task.id, {
+      status: 'running',
+      lease_owner: 'old-owner',
+      lease_token: 'old-token',
+      lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+    })
+    attempts.create({
+      taskId: task.id,
+      recoveryRootTaskId: task.id,
+      attemptNumber: 1,
+      kind: 'auto',
+      owner: 'old-owner',
+      runtimeSessionId: crashed.id,
+      leaseToken: 'old-token',
+      claimedAt: new Date().toISOString(),
+    })
+    database.exec(
+      `CREATE TRIGGER fail_new_runtime_session
+       BEFORE INSERT ON runtime_sessions
+       WHEN NEW.owner = 'new-owner'
+       BEGIN
+         SELECT RAISE(ABORT, 'injected runtime start failure');
+       END`,
+    )
+    const manager = new TaskManager({
+      store: tasks,
+      agentFactory: {
+        create: async () => {
+          throw new Error('not used')
+        },
+      },
+      events: { publish: () => undefined },
+      runtimeSessions: sessions,
+      recoveryAttempts: attempts,
+      ownerId: 'new-owner',
+    })
+
+    expect(() => manager.beginRuntimeSession()).toThrow(/injected runtime start failure/)
+    expect(sessions.getById(crashed.id)?.ended_at).toBeNull()
+    expect(tasks.getById(task.id)?.lease_token).toBe('old-token')
+    expect(attempts.countOpen()).toBe(1)
+
+    database.exec('DROP TRIGGER fail_new_runtime_session')
+    manager.beginRuntimeSession()
+    expect(sessions.getById(crashed.id)?.end_reason).toBe('forced')
+    expect(tasks.getById(task.id)?.lease_token).toBeNull()
+    expect(attempts.countOpen()).toBe(0)
+  })
+
+  test('P2-1 graceful session remains open on timeout and ends only after drain', async () => {
+    const { projectId, outlineId } = seedProject('session-drain')
+    const tasks = new TaskRepository(database)
+    const attempts = new RecoveryAttemptRepository(database)
+    let releaseRunner: (() => void) | null = null
+    const manager = createManager({
+      runners: {
+        'chapter-generation': {
+          execute: async () => {
+            await new Promise<void>((resolve) => {
+              releaseRunner = resolve
+            })
+            return { status: 'completed', result: { ok: true } }
+          },
+        },
+      },
+    })
+    const runtime = manager.beginRuntimeSession()!
+    const task = tasks.create({
+      project_id: projectId,
+      task_type: 'chapter-generation',
+      input: {
+        sessionId: 's',
+        taskType: 'chapter-generation',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: { project_id: projectId, chapter_outline_id: outlineId },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      runtime_session_id: runtime.id,
+    })
+    tasks.update(task.id, {
+      status: 'failed',
+      execution_phase: 'model_in_flight',
+      recovery_classification: 'manual-retry-required',
+      recovery_action: 'manual-confirm',
+    })
+    const handle = manager.manualRetry(task.id, true)!
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect((await manager.quiesceForShutdown(20)).drained).toBe(false)
+    expect(new RuntimeSessionRepository(database).getById(runtime.id)?.ended_at).toBeNull()
+    expect(attempts.countOpen()).toBe(1)
+
+    releaseRunner?.()
+    await handle.completion
+    expect((await manager.quiesceForShutdown(1_000)).drained).toBe(true)
+    expect(new RuntimeSessionRepository(database).getById(runtime.id)?.end_reason).toBe('graceful')
+    expect(attempts.countOpen()).toBe(0)
+  })
+
   test('P2-3 recovery UI excludes active current-session tasks and shows crash candidates', async () => {
     const { projectId, outlineId } = seedProject('ui-filter')
     const tasks = new TaskRepository(database)
@@ -1939,9 +2107,35 @@ describe('task crash recovery fault matrix', () => {
       shutdown_kind: 'crash',
     })
 
+    const foreign = tasks.create({
+      project_id: projectId,
+      task_type: 'chapter-generation',
+      input: {
+        sessionId: 'foreign',
+        taskType: 'chapter-generation',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: { project_id: projectId, chapter_outline_id: outlineId },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+    })
+    tasks.update(foreign.id, {
+      status: 'running',
+      execution_phase: 'queued',
+      lease_owner: 'other-owner',
+      lease_token: 'other-token',
+      lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+    })
+
     const views = manager.listRecoverable(projectId)
     expect(views.some((item) => item.id === active.taskId)).toBe(false)
     expect(views.some((item) => item.id === crashed.id)).toBe(true)
+    expect(views.some((item) => item.id === foreign.id)).toBe(false)
+
+    tasks.update(foreign.id, {
+      lease_expires_at: '2000-01-01T00:00:00.000Z',
+    })
+    expect(manager.listRecoverable(projectId).some((item) => item.id === foreign.id)).toBe(true)
 
     resolveRun?.()
     await active.completion

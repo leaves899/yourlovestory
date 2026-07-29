@@ -825,6 +825,10 @@ export class TaskRepository implements TaskStore {
         result.push(toTask(row))
       } catch {
         this.markTaskCorrupt(row.id, TASK_CORRUPTION_REASON, timestamp)
+        const fixed = this.database
+          .prepare<TaskRow>('SELECT * FROM tasks WHERE id = ?')
+          .get(row.id)
+        if (fixed) result.push(toTask(fixed))
       }
     }
     return result
@@ -846,7 +850,9 @@ export class TaskRepository implements TaskStore {
              recovery_action = 'none',
              last_recovery_error = ?,
              error_message = ?,
+             input_json = '{}',
              checkpoint_json = NULL,
+             result_json = NULL,
              finished_at = COALESCE(finished_at, ?),
              lease_owner = NULL,
              lease_token = NULL,

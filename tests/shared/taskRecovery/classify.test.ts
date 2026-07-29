@@ -140,10 +140,24 @@ describe('classifyTaskRecovery', () => {
     expect(decision.classification).toBe('non-recoverable')
   })
 
-  test('assistant tasks are never auto-recoverable', () => {
+  test('assistant tasks cannot be recovered from minimized empty prompts', () => {
     const decision = classifyTaskRecovery(base({ task_type: 'assistant' }))
     expect(decision.autoAllowed).toBe(false)
-    expect(decision.classification).toBe('manual-retry-required')
+    expect(decision.classification).toBe('non-recoverable')
+    expect(decision.manualRetryAllowed).toBe(false)
+  })
+
+  test('cancelled assistant and unknown tasks still cannot be manually replayed', () => {
+    const cancelledAssistant = classifyTaskRecovery(base({
+      task_type: 'assistant',
+      status: 'cancelled',
+      cancel_requested: true,
+    }))
+    const unknown = classifyTaskRecovery(base({ task_type: 'future-task' }))
+    expect(cancelledAssistant.manualRetryAllowed).toBe(false)
+    expect(cancelledAssistant.classification).toBe('non-recoverable')
+    expect(unknown.manualRetryAllowed).toBe(false)
+    expect(unknown.classification).toBe('non-recoverable')
   })
 
   test('attempt limit blocks automatic and manual recovery', () => {

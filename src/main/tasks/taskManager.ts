@@ -7,7 +7,6 @@ import type { ChapterGenerationStage } from '../../shared/chapterGeneration'
 import {
   buildIdempotencyKey,
   classifyTaskRecovery,
-  CRASHED_ATTEMPT_REASON,
   DEFAULT_LEASE_MS,
   DEFAULT_LEASE_RENEW_MS,
   DEFAULT_MAX_RECOVERY_ATTEMPTS,
@@ -16,6 +15,7 @@ import {
   readRequestField,
   RECOVERY_METADATA_VERSION,
   STARTUP_RECOVERY_CONCURRENCY,
+  TASK_CORRUPTION_REASON,
   TIMEOUT_RECOVERY_REASON,
   type ExecutionPhase,
   type RecoverableTaskView,
@@ -375,22 +375,7 @@ export class TaskManager {
 
   public beginRuntimeSession(): RuntimeSessionRecord | null {
     if (!this.options.runtimeSessions) return null
-    const previousOpen = this.options.runtimeSessions.listOpen()
-    // Previous open sessions without graceful end are true crash leftovers.
-    this.options.runtimeSessions.markOpenSessionsAsCrashed(this.now())
-    const crashedIds = previousOpen.map((session) => session.id)
-    if (crashedIds.length > 0) {
-      // Immediately free leases held by crashed sessions so restart can recover.
-      this.options.store.releaseLeasesForRuntimeSessions(crashedIds, this.now())
-      // Close open recovery attempts from crashed sessions so none stay permanently open.
-      this.options.recoveryAttempts?.finishOpenForRuntimeSessions(
-        crashedIds,
-        'crashed',
-        this.now(),
-        CRASHED_ATTEMPT_REASON,
-      )
-    }
-    this.runtimeSession = this.options.runtimeSessions.start({
+    this.runtimeSession = this.options.runtimeSessions.reconcileCrashedAndStart({
       owner: this.ownerId,
       appInstanceId: this.appInstanceId,
       startedAt: this.now(),
@@ -564,10 +549,7 @@ export class TaskManager {
       )
   }
 
-  /**
-   * Recovery UI excludes this manager's active completions and unexpired leases
-   * held by the current owner / active runtime session.
-   */
+  /** Recovery UI excludes local completions and every unexpired claimed lease. */
   private isRecoveryUiCandidate(task: Task, nowIso: string): boolean {
     if (
       task.status !== 'pending'
@@ -579,20 +561,9 @@ export class TaskManager {
     }
     if (this.completions.has(task.id)) return false
     if (
-      task.lease_owner === this.ownerId
-      && task.lease_token
+      task.lease_token
       && task.lease_expires_at
       && task.lease_expires_at > nowIso
-    ) {
-      return false
-    }
-    if (
-      this.runtimeSession
-      && task.runtime_session_id === this.runtimeSession.id
-      && task.lease_token
-      && task.lease_expires_at
-      && task.lease_expires_at > nowIso
-      && task.status === 'running'
     ) {
       return false
     }
@@ -759,9 +730,6 @@ export class TaskManager {
     const timestamp = this.now()
     for (const controller of this.controllers.values()) controller.abort()
     this.options.store.markGracefulShutdown(timestamp, this.runtimeSession?.id ?? null)
-    if (this.runtimeSession && this.options.runtimeSessions) {
-      this.options.runtimeSessions.end(this.runtimeSession.id, 'graceful', timestamp)
-    }
   }
 
   /**
@@ -778,6 +746,7 @@ export class TaskManager {
     const pending = [...this.completions.values()]
     if (pending.length === 0) {
       this.clearAllTimers()
+      this.endRuntimeSessionGracefully()
       return { drained: true }
     }
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined
@@ -790,6 +759,7 @@ export class TaskManager {
       ])
       if (raceResult === 'drained') {
         this.clearAllTimers()
+        this.endRuntimeSessionGracefully()
         return { drained: true }
       }
       // Timeout: leave task timers alone for any still-running work; do not close DB.
@@ -814,7 +784,13 @@ export class TaskManager {
       this.beginGracefulShutdown()
     }
     for (const controller of this.controllers.values()) controller.abort()
+    if (!this.hasActiveWork()) this.endRuntimeSessionGracefully()
     this.clearAllTimers()
+  }
+
+  private endRuntimeSessionGracefully(): void {
+    if (!this.runtimeSession || !this.options.runtimeSessions) return
+    this.options.runtimeSessions.end(this.runtimeSession.id, 'graceful', this.now())
   }
 
   private hasDurableFinalEntity(task: Task): boolean {
@@ -1411,6 +1387,19 @@ export class TaskManager {
   }
 
   private classifyInternal(task: Task): RecoveryDecision {
+    if (
+      task.status === 'failed'
+      && task.recovery_classification === 'non-recoverable'
+      && task.recovery_reason === TASK_CORRUPTION_REASON
+    ) {
+      return {
+        classification: 'non-recoverable',
+        reason: TASK_CORRUPTION_REASON,
+        action: 'none',
+        autoAllowed: false,
+        manualRetryAllowed: false,
+      }
+    }
     const lookups = this.options.recoveryLookups
     const projectExists = lookups?.projectExists(task.project_id) ?? true
     const targetExists = lookups?.targetExists(task) ?? true

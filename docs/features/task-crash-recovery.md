@@ -21,7 +21,7 @@
 |------|----------------------|----------|------|
 | 章节生成 `chapter-generation` | 是 | 条件允许 | 有 schema versioned checkpoint；`chapter_versions.task_id` 唯一索引防重复版本 |
 | 章节润色 `chapter-polish` | 是 | 条件允许 | checkpoint schema version；`chapter_revisions.task_id` / `postprocess_reports.task_id` 唯一；auto_apply 幂等 |
-| Generic assistant | 是（无业务 checkpoint） | 否 | 仅人工确认后重试 |
+| Generic assistant | 是（无业务 checkpoint） | 否 | prompt 不持久化，旧任务不可重放；请重新发送请求 |
 | 大纲生成 | 无持久化 runner | 否 | 未实现为可恢复任务 |
 | 章节摘要 | 章节生成内部阶段 | 随章节生成 | 不独立恢复 |
 | 事实核查 | 章节生成内部阶段 | 随章节生成 | 不独立恢复 |
@@ -54,7 +54,10 @@
 - `shutdown_kind`：`graceful` | `crash`
 - `runtime_session_id` / `recovery_metadata_version`
 
-另有 `runtime_sessions` 表记录启动会话；优雅退出写 `end_reason=graceful`，未正常结束的会话在下次启动标记为 crash。
+另有 `runtime_sessions` 表记录启动会话。启动时，旧 session 标记 crash、旧 lease
+释放、open attempt 关闭和新 session 创建在同一 SQLite 事务完成；任一步失败都会整体回滚。
+优雅退出只有在任务 drain 完成后才写 `end_reason=graceful`，超时则保持 session open，
+由下次启动按 crash 原子协调。
 
 幂等副作用：
 
@@ -84,9 +87,11 @@
 
 `will-quit` / restore 关闭路径：
 
-1. `beginGracefulShutdown()`：标记进行中任务 `shutdown_kind=graceful`、释放 lease、结束 runtime session
+1. `beginGracefulShutdown()`：标记进行中任务 `shutdown_kind=graceful`、释放 lease
 2. abort 进行中控制器
-3. 再 close DB
+3. 等待任务 drain；完成后结束 runtime session，再 close DB
+
+drain 超时时不得提前结束 runtime session，也不得关闭仍可能被异步写入的数据库。
 
 优雅停止的任务不得在下次启动被误判为“崩溃后的安全自动 resume”，除非结果已按 task_id 持久化（可幂等收尾）。
 
@@ -105,7 +110,7 @@
 
 ## 已知限制
 
-- Generic assistant 无业务 checkpoint，自动恢复永远 fail closed
+- Generic assistant 无业务 checkpoint 且 prompt 不持久化，自动与人工重放都 fail closed
 - 大纲生成、记忆提取、伏笔建议不在 TaskManager 恢复范围内
 - 模型中断窗口无法由数据库单独证明“未计费”，一律人工确认
 - 旧任务（`recovery_metadata_version < 1`）默认 fail closed 到人工

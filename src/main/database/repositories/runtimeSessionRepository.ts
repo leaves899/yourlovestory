@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { SqliteDatabase } from '../types'
-import type { RuntimeSessionRecord } from '../../../shared/taskRecovery'
+import {
+  CRASHED_ATTEMPT_REASON,
+  type RuntimeSessionRecord,
+} from '../../../shared/taskRecovery'
 
 interface RuntimeSessionRow {
   id: string
@@ -48,6 +51,71 @@ export class RuntimeSessionRepository {
     const session = this.getById(id)
     if (!session) throw new Error('Runtime session was not created')
     return session
+  }
+
+  /**
+   * Atomically reconciles every crashed session, releases its task leases,
+   * closes its open recovery attempts, and creates the new runtime session.
+   */
+  public reconcileCrashedAndStart(input: {
+    id?: string
+    owner: string
+    appInstanceId: string
+    startedAt?: string
+  }): RuntimeSessionRecord {
+    const id = input.id ?? randomUUID()
+    const timestamp = input.startedAt ?? now()
+    const reconcile = this.database.transaction(() => {
+      const crashedIds = this.database
+        .prepare<{ id: string }>(
+          'SELECT id FROM runtime_sessions WHERE ended_at IS NULL ORDER BY started_at, id',
+        )
+        .all()
+        .map((row) => row.id)
+
+      if (crashedIds.length > 0) {
+        const placeholders = crashedIds.map(() => '?').join(', ')
+        this.database
+          .prepare(
+            `UPDATE runtime_sessions
+             SET ended_at = ?, end_reason = 'forced'
+             WHERE id IN (${placeholders}) AND ended_at IS NULL`,
+          )
+          .run(timestamp, ...crashedIds)
+        this.database
+          .prepare(
+            `UPDATE tasks
+             SET lease_owner = NULL,
+                 lease_token = NULL,
+                 lease_expires_at = NULL,
+                 updated_at = ?
+             WHERE runtime_session_id IN (${placeholders})
+               AND lease_token IS NOT NULL`,
+          )
+          .run(timestamp, ...crashedIds)
+        this.database
+          .prepare(
+            `UPDATE recovery_attempts
+             SET finished_at = ?,
+                 outcome = 'crashed',
+                 error_message = ?
+             WHERE finished_at IS NULL
+               AND runtime_session_id IN (${placeholders})`,
+          )
+          .run(timestamp, CRASHED_ATTEMPT_REASON, ...crashedIds)
+      }
+
+      this.database
+        .prepare(
+          `INSERT INTO runtime_sessions (id, owner, app_instance_id, started_at, ended_at, end_reason)
+           VALUES (?, ?, ?, ?, NULL, NULL)`,
+        )
+        .run(id, input.owner, input.appInstanceId, timestamp)
+      const session = this.getById(id)
+      if (!session) throw new Error('Runtime session was not created')
+      return session
+    })
+    return reconcile()
   }
 
   public getById(id: string): RuntimeSessionRecord | null {

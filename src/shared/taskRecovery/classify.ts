@@ -67,12 +67,8 @@ function decision(
 }
 
 function unsupportedTaskType(taskType: string): RecoveryDecision {
-  return decision(
-    'manual-retry-required',
-    `任务类型 ${taskType} 没有安全的自动恢复契约，需要人工确认后重试。`,
-    'manual-confirm',
-    false,
-    true,
+  return nonRecoverable(
+    `任务类型 ${taskType} 未持久化可重放的完整请求，禁止以空输入恢复；请重新创建请求。`,
   )
 }
 
@@ -259,6 +255,19 @@ export function classifyTaskRecovery(input: ClassifyTaskInput): RecoveryDecision
     return decision('non-recoverable', '任务已完成，无需恢复。', 'none', false, false)
   }
 
+  if (input.task_type === 'assistant') {
+    return nonRecoverable('助手请求未持久化原始 prompt，禁止以空 prompt 恢复；请重新发送请求。')
+  }
+  if (![
+    'chapter-generation',
+    'chapter-polish',
+    'outline-generation',
+    'memory-extraction',
+    'foreshadow-suggestion',
+  ].includes(input.task_type)) {
+    return unsupportedTaskType(input.task_type)
+  }
+
   if (input.cancel_requested || input.status === 'cancelled') {
     return manualRequired('任务已取消，禁止自动恢复；如需继续请人工确认后重试。')
   }
@@ -310,9 +319,6 @@ export function classifyTaskRecovery(input: ClassifyTaskInput): RecoveryDecision
       break
     case 'chapter-polish':
       typed = classifyChapterPolish(input)
-      break
-    case 'assistant':
-      typed = unsupportedTaskType('assistant')
       break
     case 'outline-generation':
       typed = nonRecoverable('大纲生成当前没有持久化 runner，不可自动恢复。')
