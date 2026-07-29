@@ -11,7 +11,10 @@ import {
   parseBackupPolicyUpdateInput,
   toBackupError,
 } from '../backup'
-import { EMPTY_PRUNE_RESULT } from '../../shared/backup/types'
+import {
+  createBackupThenApplyRetention,
+  EMPTY_PRUNE_RESULT,
+} from '../../shared/backup/types'
 import {
   assertTrustedIpcSender,
   isRecord,
@@ -81,12 +84,16 @@ export function registerBackupIPC(
   ipc.register('backup:create', async () => {
     const service = requireService(dependencies.backupService)
     const store = requirePolicyStore(dependencies.policyStore)
-    const record = await service.createBackup({ reason: 'manual' })
     // Apply the current persisted retention policy in this process so users
     // cannot unbounded-grow backups without restarting or re-saving policy.
+    // Cleanup failures after a successful create must still return success with
+    // a structured partial/failed cleanup outcome (never "backup create failed").
     const policy = store.load().policy
-    await service.pruneBackups(policy)
-    return { success: true as const, data: record }
+    const data = await createBackupThenApplyRetention(
+      () => service.createBackup({ reason: 'manual' }),
+      () => service.pruneBackups(policy),
+    )
+    return { success: true as const, data }
   }, { parse: parseNoInput, authorize, formatError })
 
   ipc.register('backup:verify', async (_, input) => ({

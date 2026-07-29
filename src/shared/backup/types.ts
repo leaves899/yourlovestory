@@ -104,6 +104,221 @@ export interface PruneResult {
   policyExceeded: boolean
 }
 
+/**
+ * Structured outcome for "backup created + retention cleanup".
+ *
+ * The backup is always on disk when this result is produced. Cleanup problems
+ * must never be reported as backup-creation failure.
+ */
+export type BackupCreationOutcome =
+  | 'backup-created'
+  | 'backup-created-policy-cleanup-partial'
+  | 'backup-created-policy-cleanup-failed'
+
+export type BackupCleanupWarningCode =
+  | 'BACKUP_CLEANUP_PARTIAL'
+  | 'BACKUP_CLEANUP_FAILED'
+
+/** Fixed, path-free Chinese messages for cleanup warnings. */
+export const BACKUP_CLEANUP_WARNING_MESSAGES: Record<BackupCleanupWarningCode, string> = {
+  BACKUP_CLEANUP_PARTIAL: '新备份已创建，但部分旧备份未清理',
+  BACKUP_CLEANUP_FAILED: '新备份已创建，但旧备份清理失败或未完成',
+}
+
+export interface BackupCreationWarning {
+  code: BackupCleanupWarningCode
+  message: string
+}
+
+/** Non-sensitive prune counters safe for logs and IPC. */
+export interface BackupCleanupSummary {
+  deletedCount: number
+  failedCount: number
+  retainedCount: number
+}
+
+export interface BackupCreationResult {
+  backup: BackupRecord
+  outcome: BackupCreationOutcome
+  /** False only when prune threw entirely after the backup was created. */
+  cleanupCompleted: boolean
+  /** True when prune finished but some individual deletions failed. */
+  cleanupPartialFailure: boolean
+  warning: BackupCreationWarning | null
+  /**
+   * Full prune summary when cleanup completed; empty when prune threw
+   * (never invents backup IDs from underlying errors).
+   */
+  prune: PruneResult
+  cleanupSummary: BackupCleanupSummary
+}
+
+export interface BackupCreationUserFeedback {
+  title: string
+  description: string | null
+  status: 'success' | 'warning'
+}
+
+export function summarizePruneResult(prune: PruneResult): BackupCleanupSummary {
+  return {
+    deletedCount: prune.deleted.length,
+    failedCount: prune.failed.length,
+    retainedCount: prune.retained.length,
+  }
+}
+
+/**
+ * Build a serializable backup-creation result from a successful backup and a
+ * prune attempt. Pass `'threw'` when prune rejected entirely.
+ */
+export function finalizeBackupCreation(
+  backup: BackupRecord,
+  pruneOutcome: PruneResult | 'threw',
+): BackupCreationResult {
+  if (pruneOutcome === 'threw') {
+    return {
+      backup,
+      outcome: 'backup-created-policy-cleanup-failed',
+      cleanupCompleted: false,
+      cleanupPartialFailure: false,
+      warning: {
+        code: 'BACKUP_CLEANUP_FAILED',
+        message: BACKUP_CLEANUP_WARNING_MESSAGES.BACKUP_CLEANUP_FAILED,
+      },
+      prune: {
+        deleted: [],
+        failed: [],
+        retained: [],
+        policyExceeded: false,
+      },
+      cleanupSummary: {
+        deletedCount: 0,
+        failedCount: 0,
+        retainedCount: 0,
+      },
+    }
+  }
+
+  const cleanupSummary = summarizePruneResult(pruneOutcome)
+  if (pruneOutcome.failed.length > 0) {
+    return {
+      backup,
+      outcome: 'backup-created-policy-cleanup-partial',
+      cleanupCompleted: true,
+      cleanupPartialFailure: true,
+      warning: {
+        code: 'BACKUP_CLEANUP_PARTIAL',
+        message: BACKUP_CLEANUP_WARNING_MESSAGES.BACKUP_CLEANUP_PARTIAL,
+      },
+      prune: pruneOutcome,
+      cleanupSummary,
+    }
+  }
+
+  return {
+    backup,
+    outcome: 'backup-created',
+    cleanupCompleted: true,
+    cleanupPartialFailure: false,
+    warning: null,
+    prune: pruneOutcome,
+    cleanupSummary,
+  }
+}
+
+/** Stable UI feedback for a successful backup creation (including cleanup warnings). */
+export function describeBackupCreationFeedback(
+  result: BackupCreationResult,
+): BackupCreationUserFeedback {
+  if (result.outcome === 'backup-created-policy-cleanup-failed') {
+    return {
+      title: '数据库备份已创建',
+      description: result.warning?.message
+        ?? BACKUP_CLEANUP_WARNING_MESSAGES.BACKUP_CLEANUP_FAILED,
+      status: 'warning',
+    }
+  }
+  if (result.outcome === 'backup-created-policy-cleanup-partial') {
+    return {
+      title: '数据库备份已创建',
+      description: result.warning?.message
+        ?? BACKUP_CLEANUP_WARNING_MESSAGES.BACKUP_CLEANUP_PARTIAL,
+      status: 'warning',
+    }
+  }
+  return {
+    title: '数据库备份已创建',
+    description: null,
+    status: 'success',
+  }
+}
+
+/**
+ * Sanitized log detail for cleanup warnings. Returns null when no warning.
+ * Never includes paths, usernames, backup IDs, filenames, or raw errors.
+ */
+export function backupCleanupLogDetail(
+  result: Pick<BackupCreationResult, 'outcome' | 'cleanupSummary' | 'warning'>,
+): {
+  code: BackupCleanupWarningCode
+  deletedCount: number
+  failedCount: number
+  retainedCount: number
+} | null {
+  if (result.outcome === 'backup-created' || !result.warning) return null
+  return {
+    code: result.warning.code,
+    deletedCount: result.cleanupSummary.deletedCount,
+    failedCount: result.cleanupSummary.failedCount,
+    retainedCount: result.cleanupSummary.retainedCount,
+  }
+}
+
+/**
+ * Sanitized log detail for a standalone prune (startup path without new backup).
+ */
+export function standalonePruneLogDetail(
+  pruneOutcome: PruneResult | 'threw',
+): {
+  code: BackupCleanupWarningCode
+  deletedCount: number
+  failedCount: number
+  retainedCount: number
+} | null {
+  if (pruneOutcome === 'threw') {
+    return {
+      code: 'BACKUP_CLEANUP_FAILED',
+      deletedCount: 0,
+      failedCount: 0,
+      retainedCount: 0,
+    }
+  }
+  if (pruneOutcome.failed.length === 0) return null
+  const summary = summarizePruneResult(pruneOutcome)
+  return {
+    code: 'BACKUP_CLEANUP_PARTIAL',
+    deletedCount: summary.deletedCount,
+    failedCount: summary.failedCount,
+    retainedCount: summary.retainedCount,
+  }
+}
+
+/**
+ * Run create then prune, mapping cleanup failures to structured success.
+ * Create failures still reject so callers report true backup failure.
+ */
+export async function createBackupThenApplyRetention(
+  create: () => Promise<BackupRecord>,
+  prune: () => Promise<PruneResult>,
+): Promise<BackupCreationResult> {
+  const backup = await create()
+  try {
+    return finalizeBackupCreation(backup, await prune())
+  } catch {
+    return finalizeBackupCreation(backup, 'threw')
+  }
+}
+
 export type DatabaseBackupEligibility =
   | 'safe'
   | 'contains-legacy-plaintext-credentials'

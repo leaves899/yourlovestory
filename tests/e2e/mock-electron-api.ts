@@ -194,7 +194,36 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
       track('backup:list', undefined)
       return { success: true, data: options.backups ?? [] }
     },
-    createBackup: async () => ({ success: true }),
+    createBackup: async () => ({
+      success: true,
+      data: {
+        backup: {
+          id: 'mock-manual-1',
+          filename: 'mock-manual-1.sqlite',
+          createdAt: new Date().toISOString(),
+          reason: 'manual' as const,
+          appVersion: 'test',
+          schemaVersion: 8,
+          size: 1,
+          sha256: 'a'.repeat(64),
+        },
+        outcome: 'backup-created' as const,
+        cleanupCompleted: true,
+        cleanupPartialFailure: false,
+        warning: null,
+        prune: {
+          deleted: [],
+          failed: [],
+          retained: ['mock-manual-1'],
+          policyExceeded: false,
+        },
+        cleanupSummary: {
+          deletedCount: 0,
+          failedCount: 0,
+          retainedCount: 1,
+        },
+      },
+    }),
     verifyBackup: async (id: string) => {
       track('backup:verify', { id })
       return {

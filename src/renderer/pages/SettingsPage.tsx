@@ -40,7 +40,10 @@ import type {
   BackupVerificationResult,
   DatabaseStatus,
 } from '../../shared/backup/types'
-import { DEFAULT_BACKUP_RETENTION_POLICY } from '../../shared/backup/types'
+import {
+  DEFAULT_BACKUP_RETENTION_POLICY,
+  describeBackupCreationFeedback,
+} from '../../shared/backup/types'
 
 const PHASE_COLORS: Record<RelationshipPhase, string> = {
   0: 'ink',
@@ -288,9 +291,19 @@ function SettingsPage() {
     setBackupBusy(true)
     try {
       const result = await window.electronAPI.createBackup()
-      if (!result.success) throw new Error(result.error?.message ?? '创建备份失败')
+      if (!result.success || !result.data) {
+        throw new Error(result.error?.message ?? '创建备份失败')
+      }
       await loadDataSafety()
-      toast({ title: '数据库备份已创建', status: 'success', duration: 3000 })
+      // Backup is on disk whenever success+data is returned. Cleanup warnings
+      // must not be presented as create failure.
+      const feedback = describeBackupCreationFeedback(result.data)
+      toast({
+        title: feedback.title,
+        description: feedback.description ?? undefined,
+        status: feedback.status,
+        duration: feedback.status === 'success' ? 3000 : 5000,
+      })
     } catch (error: unknown) {
       toast({
         title: '创建备份失败',

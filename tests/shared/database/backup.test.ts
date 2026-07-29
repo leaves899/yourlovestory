@@ -6,8 +6,15 @@ import * as path from 'node:path'
 import {
   BackupPolicyStore,
   DatabaseBackupService,
+  runStartupBackupRetention,
+  STARTUP_RETENTION_EVENTS,
   type BackupRecord,
 } from '@/main/backup'
+import {
+  describeBackupCreationFeedback,
+  finalizeBackupCreation,
+  type BackupCreationResult,
+} from '@/shared/backup/types'
 import {
   getDatabasePath,
   executeDatabaseRestore,
@@ -95,7 +102,10 @@ describe('database backup service', () => {
       getDatabase: () => database,
       now: () => clock.value,
     })
-    expect(await scheduledService.createScheduledBackupIfDue()).not.toBeNull()
+    const first = await scheduledService.createScheduledBackupIfDue()
+    expect(first).not.toBeNull()
+    expect(first?.outcome).toBe('backup-created')
+    expect(first?.backup.reason).toBe('scheduled')
     clock.value = new Date('2026-03-01T23:59:59.000Z')
     expect(await scheduledService.createScheduledBackupIfDue()).toBeNull()
     clock.value = new Date('2026-03-02T00:00:01.000Z')
@@ -129,6 +139,241 @@ describe('database backup service', () => {
     expect(remaining.length).toBeLessThanOrEqual(2)
     expect(remaining.every((record) => records.slice(-2).some((kept) => kept.id === record.id)
       || record.reason === 'scheduled')).toBe(true)
+  })
+
+  test('scheduled backup create succeeds with structured cleanup-failed when prune throws', async () => {
+    const directory = path.join(root, 'backups', 'database')
+    const scheduledService = new DatabaseBackupService({
+      userDataPath: root,
+      databasePath: getDatabasePath(root),
+      appVersion: 'test-version',
+      getDatabase: () => database,
+      now: () => new Date('2026-03-21T00:00:00.000Z'),
+      removeFile: () => {
+        throw new Error(
+          'EPERM unlink C:\\Users\\Alice\\AppData\\Roaming\\yourcrush\\backups\\old.sqlite raw-secret-text',
+        )
+      },
+    })
+    // Seed an old backup so prune has something to delete (and throw on).
+    const seed = new DatabaseBackupService({
+      userDataPath: root,
+      databasePath: getDatabasePath(root),
+      appVersion: 'test-version',
+      getDatabase: () => database,
+      now: () => new Date('2026-03-01T00:00:00.000Z'),
+    })
+    await seed.createBackup({ reason: 'manual' })
+
+    // Force prune to throw entirely by breaking list path mid-prune via max policy
+    // that still walks removals; inject throw on every remove after create.
+    // createScheduledBackupIfDue catches prune throw internally.
+    // First ensure pruneBackups can throw at the policy validation layer:
+    const throwingPrune = jest.spyOn(scheduledService, 'pruneBackups').mockImplementation(async () => {
+      throw new Error(
+        'EPERM unlink C:\\Users\\Alice\\AppData\\Roaming\\yourcrush\\backups\\old.sqlite raw-secret-text',
+      )
+    })
+
+    const result = await scheduledService.createScheduledBackupIfDue({
+      maxBackups: 1,
+      maxAgeDays: 1,
+    })
+    throwingPrune.mockRestore()
+
+    expect(result).not.toBeNull()
+    expect(result).toMatchObject({
+      outcome: 'backup-created-policy-cleanup-failed',
+      cleanupCompleted: false,
+      cleanupPartialFailure: false,
+      warning: {
+        code: 'BACKUP_CLEANUP_FAILED',
+        message: '新备份已创建，但旧备份清理失败或未完成',
+      },
+      backup: { reason: 'scheduled' },
+    })
+    // New scheduled backup remains on disk; must not reject as create failure.
+    expect(result?.backup.id).toBeTruthy()
+    expect(fs.existsSync(path.join(directory, result!.backup.filename))).toBe(true)
+    const serialized = JSON.stringify(result)
+    expect(serialized).not.toContain('Alice')
+    expect(serialized).not.toContain('C:\\\\Users')
+    expect(serialized).not.toContain('C:\\Users')
+    expect(serialized).not.toContain('raw-secret-text')
+    const listed = await scheduledService.listBackups()
+    expect(listed.some((record) => record.id === result!.backup.id)).toBe(true)
+  })
+
+  test('startup retention logs sanitized warnings and avoids double prune after scheduled create', async () => {
+    const logs: Array<{ event: string; detail: Record<string, string | number | boolean | null> }> = []
+    const logSafeEvent = (
+      event: string,
+      detail: Record<string, string | number | boolean | null>,
+    ): void => {
+      logs.push({ event, detail })
+    }
+
+    let pruneCalls = 0
+    const created: BackupCreationResult = finalizeBackupCreation(
+      {
+        id: 'sched-1',
+        filename: 'sched-1.sqlite',
+        createdAt: '2026-03-20T00:00:00.000Z',
+        reason: 'scheduled',
+        appVersion: 'test',
+        schemaVersion: 8,
+        size: 10,
+        sha256: 'd'.repeat(64),
+      },
+      'threw',
+    )
+    const serviceWhenDue = {
+      createScheduledBackupIfDue: jest.fn(async () => created),
+      pruneBackups: jest.fn(async () => {
+        pruneCalls += 1
+        return { deleted: [], failed: [], retained: ['sched-1'], policyExceeded: false }
+      }),
+      listBackups: jest.fn(async () => [{ createdAt: created.backup.createdAt }]),
+    }
+
+    const dueResult = await runStartupBackupRetention({
+      backupService: serviceWhenDue,
+      policy: { maxBackups: 2, maxAgeDays: 30 },
+      logSafeEvent,
+    })
+    expect(dueResult.scheduled).toEqual(created)
+    expect(dueResult.ranStartupPrune).toBe(false)
+    expect(dueResult.lastBackupAt).toBe(created.backup.createdAt)
+    expect(serviceWhenDue.pruneBackups).not.toHaveBeenCalled()
+    expect(pruneCalls).toBe(0)
+    expect(logs).toEqual([{
+      event: STARTUP_RETENTION_EVENTS.scheduledCleanup,
+      detail: {
+        code: 'BACKUP_CLEANUP_FAILED',
+        deletedCount: 0,
+        failedCount: 0,
+        retainedCount: 0,
+      },
+    }])
+    expect(JSON.stringify(logs)).not.toContain('Alice')
+    expect(JSON.stringify(logs)).not.toContain('C:')
+    expect(JSON.stringify(logs)).not.toContain('raw')
+
+    logs.length = 0
+    const partialPrune = {
+      deleted: ['old-1'],
+      failed: [{ id: 'stuck-id', error: '本地备份操作失败，请重试。' }],
+      retained: ['kept-1'],
+      policyExceeded: false,
+    }
+    const serviceNotDue = {
+      createScheduledBackupIfDue: jest.fn(async () => null),
+      pruneBackups: jest.fn(async () => partialPrune),
+      listBackups: jest.fn(async () => [{ createdAt: '2026-03-01T00:00:00.000Z' }]),
+    }
+    const notDueResult = await runStartupBackupRetention({
+      backupService: serviceNotDue,
+      policy: { maxBackups: 2, maxAgeDays: 30 },
+      logSafeEvent,
+    })
+    expect(notDueResult.scheduled).toBeNull()
+    expect(notDueResult.ranStartupPrune).toBe(true)
+    expect(serviceNotDue.pruneBackups).toHaveBeenCalledTimes(1)
+    expect(serviceNotDue.pruneBackups).toHaveBeenCalledWith(
+      { maxBackups: 2, maxAgeDays: 30 },
+      [],
+    )
+    expect(logs).toEqual([{
+      event: STARTUP_RETENTION_EVENTS.startupPrune,
+      detail: {
+        code: 'BACKUP_CLEANUP_PARTIAL',
+        deletedCount: 1,
+        failedCount: 1,
+        retainedCount: 1,
+      },
+    }])
+    // Fixed counts only: no backup IDs, filenames, or underlying errors in logs.
+    expect(JSON.stringify(logs)).not.toContain('stuck-id')
+    expect(JSON.stringify(logs)).not.toContain('old-1')
+    expect(JSON.stringify(logs)).not.toContain('kept-1')
+    expect(JSON.stringify(logs)).not.toContain('本地备份操作失败')
+
+    logs.length = 0
+    const servicePruneThrow = {
+      createScheduledBackupIfDue: jest.fn(async () => null),
+      pruneBackups: jest.fn(async () => {
+        throw new Error('EPERM C:\\Users\\Alice\\secret.sqlite raw-exception-text')
+      }),
+      listBackups: jest.fn(async () => []),
+    }
+    const throwResult = await runStartupBackupRetention({
+      backupService: servicePruneThrow,
+      policy: { maxBackups: 3, maxAgeDays: 7 },
+      logSafeEvent,
+    })
+    expect(throwResult.ranStartupPrune).toBe(true)
+    expect(logs).toEqual([{
+      event: STARTUP_RETENTION_EVENTS.startupPrune,
+      detail: {
+        code: 'BACKUP_CLEANUP_FAILED',
+        deletedCount: 0,
+        failedCount: 0,
+        retainedCount: 0,
+      },
+    }])
+    expect(JSON.stringify(logs)).not.toContain('Alice')
+    expect(JSON.stringify(logs)).not.toContain('secret.sqlite')
+    expect(JSON.stringify(logs)).not.toContain('raw-exception-text')
+  })
+
+  test('describeBackupCreationFeedback maps success and cleanup warnings without create-failure copy', () => {
+    const backup: BackupRecord = {
+      id: 'b1',
+      filename: 'b1.sqlite',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      reason: 'manual',
+      appVersion: 'test',
+      schemaVersion: 8,
+      size: 1,
+      sha256: 'e'.repeat(64),
+    }
+    const created = finalizeBackupCreation(backup, {
+      deleted: [],
+      failed: [],
+      retained: ['b1'],
+      policyExceeded: false,
+    })
+    const partial = finalizeBackupCreation(backup, {
+      deleted: [],
+      failed: [{ id: 'old', error: '本地备份操作失败，请重试。' }],
+      retained: ['b1', 'old'],
+      policyExceeded: false,
+    })
+    const failed = finalizeBackupCreation(backup, 'threw')
+
+    expect(describeBackupCreationFeedback(created)).toEqual({
+      title: '数据库备份已创建',
+      description: null,
+      status: 'success',
+    })
+    expect(describeBackupCreationFeedback(partial)).toEqual({
+      title: '数据库备份已创建',
+      description: '新备份已创建，但部分旧备份未清理',
+      status: 'warning',
+    })
+    expect(describeBackupCreationFeedback(failed)).toEqual({
+      title: '数据库备份已创建',
+      description: '新备份已创建，但旧备份清理失败或未完成',
+      status: 'warning',
+    })
+    for (const feedback of [
+      describeBackupCreationFeedback(created),
+      describeBackupCreationFeedback(partial),
+      describeBackupCreationFeedback(failed),
+    ]) {
+      expect(feedback.title).not.toContain('创建备份失败')
+      expect(JSON.stringify(feedback)).not.toContain('创建备份失败')
+    }
   })
 
   test('lifecycle startup scheduled backup and prune use the persisted policy', async () => {

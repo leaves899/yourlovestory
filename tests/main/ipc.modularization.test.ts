@@ -35,7 +35,7 @@ jest.mock('electron', () => ({
 
 import { setupIPC } from '@/main/ipc'
 import { DatabaseRuntimeStatus } from '@/main/database'
-import { BackupPolicyStore } from '@/main/backup'
+import { BackupOperationError, BackupPolicyStore } from '@/main/backup'
 import type { DiagnosticExportCoordinator } from '@/main/diagnostics'
 import type { ChapterGenerationService } from '@/shared/chapterGeneration'
 import type { TaskManager } from '@/main/tasks'
@@ -551,12 +551,112 @@ describe('modular IPC registration', () => {
     // Manual create must read the persisted policy and prune in this process.
     pruneBackups.mockClear()
     createBackup.mockClear()
+    pruneBackups.mockResolvedValueOnce({
+      deleted: [],
+      failed: [],
+      retained: ['manual-1'],
+      policyExceeded: false,
+    })
     await expect(invoke('backup:create', undefined, trustedEvent)).resolves.toMatchObject({
       success: true,
-      data: { id: 'manual-1', reason: 'manual' },
+      data: {
+        backup: { id: 'manual-1', reason: 'manual' },
+        outcome: 'backup-created',
+        cleanupCompleted: true,
+        cleanupPartialFailure: false,
+        warning: null,
+      },
     })
     expect(createBackup).toHaveBeenCalledWith({ reason: 'manual' })
     expect(pruneBackups).toHaveBeenCalledWith({ maxBackups: 4, maxAgeDays: 12 })
+
+    // Manual create + prune partial failure: still success with structured cleanup partial.
+    pruneBackups.mockClear()
+    createBackup.mockClear()
+    createBackup.mockResolvedValueOnce({
+      id: 'manual-2',
+      filename: 'manual-2.sqlite',
+      createdAt: '2026-03-10T01:00:00.000Z',
+      reason: 'manual' as const,
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+      size: 100,
+      sha256: 'b'.repeat(64),
+    })
+    pruneBackups.mockResolvedValueOnce({
+      deleted: ['old-backup'],
+      failed: [{ id: 'stuck-backup', error: '本地备份操作失败，请重试。' }],
+      retained: ['manual-2', 'stuck-backup'],
+      policyExceeded: false,
+    })
+    await expect(invoke('backup:create', undefined, trustedEvent)).resolves.toMatchObject({
+      success: true,
+      data: {
+        backup: { id: 'manual-2' },
+        outcome: 'backup-created-policy-cleanup-partial',
+        cleanupCompleted: true,
+        cleanupPartialFailure: true,
+        warning: {
+          code: 'BACKUP_CLEANUP_PARTIAL',
+          message: '新备份已创建，但部分旧备份未清理',
+        },
+      },
+    })
+
+    // Manual create succeeds but prune throws with path-bearing Error: still success.
+    pruneBackups.mockClear()
+    createBackup.mockClear()
+    createBackup.mockResolvedValueOnce({
+      id: 'manual-3',
+      filename: 'manual-3.sqlite',
+      createdAt: '2026-03-10T02:00:00.000Z',
+      reason: 'manual' as const,
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+      size: 100,
+      sha256: 'c'.repeat(64),
+    })
+    const createPruneThrow = new Error(
+      'EPERM: operation not permitted, unlink \'C:\\Users\\Alice\\AppData\\Roaming\\yourcrush\\backups\\secret.sqlite\' private-raw-text',
+    )
+    pruneBackups.mockImplementationOnce(async () => {
+      throw createPruneThrow
+    })
+    const createWithPruneThrow = await invoke('backup:create', undefined, trustedEvent)
+    expect(createWithPruneThrow).toMatchObject({
+      success: true,
+      data: {
+        backup: { id: 'manual-3' },
+        outcome: 'backup-created-policy-cleanup-failed',
+        cleanupCompleted: false,
+        cleanupPartialFailure: false,
+        warning: {
+          code: 'BACKUP_CLEANUP_FAILED',
+          message: '新备份已创建，但旧备份清理失败或未完成',
+        },
+        prune: {
+          deleted: [],
+          failed: [],
+          retained: [],
+          policyExceeded: false,
+        },
+      },
+    })
+    expect(JSON.stringify(createWithPruneThrow)).not.toContain('Alice')
+    expect(JSON.stringify(createWithPruneThrow)).not.toContain('C:\\\\Users')
+    expect(JSON.stringify(createWithPruneThrow)).not.toContain('C:\\Users')
+    expect(JSON.stringify(createWithPruneThrow)).not.toContain('private-raw-text')
+    expect(JSON.stringify(createWithPruneThrow)).not.toContain('secret.sqlite')
+    expect(createBackup).toHaveBeenCalled()
+
+    // createBackup itself fails: true failure, no fake created backup.
+    createBackup.mockRejectedValueOnce(new BackupOperationError('BACKUP_NOT_ALLOWED'))
+    pruneBackups.mockClear()
+    await expect(invoke('backup:create', undefined, trustedEvent)).resolves.toMatchObject({
+      success: false,
+      error: { code: 'BACKUP_NOT_ALLOWED' },
+    })
+    expect(pruneBackups).not.toHaveBeenCalled()
 
     // Policy is already saved; a total prune throw must not report save failure.
     const absolutePathError = new Error(

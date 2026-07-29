@@ -101,6 +101,7 @@ import type {
   RendererChatSession,
 } from './types/assistant'
 import type {
+  BackupCreationResult,
   BackupRecord,
   BackupError,
   BackupPolicyFallbackReason,
@@ -171,7 +172,11 @@ interface ElectronAPI {
 
   // 数据安全
   listBackups: () => Promise<{ success: boolean; data?: BackupRecord[]; error?: BackupError }>
-  createBackup: () => Promise<{ success: boolean; data?: BackupRecord; error?: BackupError }>
+  createBackup: () => Promise<{
+    success: boolean
+    data?: BackupCreationResult
+    error?: BackupError
+  }>
   verifyBackup: (
     id: string,
   ) => Promise<{ success: boolean; data?: BackupVerificationResult; error?: BackupError }>

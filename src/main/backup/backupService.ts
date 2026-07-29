@@ -6,7 +6,9 @@ import type { SqliteDatabase } from '../database'
 import { inspectPlaintextCredentialState } from './credentialSafety'
 import { BackupOperationError, backupError, toBackupError } from './errors'
 import {
+  createBackupThenApplyRetention,
   DEFAULT_BACKUP_RETENTION_POLICY,
+  type BackupCreationResult,
   type BackupRecord,
   type BackupRetentionPolicy,
   type BackupService,
@@ -310,15 +312,17 @@ export class DatabaseBackupService implements BackupService {
 
   public async createScheduledBackupIfDue(
     policy: BackupRetentionPolicy = DEFAULT_BACKUP_RETENTION_POLICY,
-  ): Promise<BackupRecord | null> {
+  ): Promise<BackupCreationResult | null> {
     const latest = (await this.listBackups())
       .find((record) => record.reason === 'scheduled')
     if (latest && this.now().getTime() - Date.parse(latest.createdAt) < SCHEDULE_INTERVAL_MS) {
       return null
     }
-    const backup = await this.createBackup({ reason: 'scheduled' })
-    await this.pruneBackups(policy)
-    return backup
+    // Create first; prune failures must not reject as "backup create failed".
+    return createBackupThenApplyRetention(
+      () => this.createBackup({ reason: 'scheduled' }),
+      () => this.pruneBackups(policy),
+    )
   }
 
   public async pruneBackups(
