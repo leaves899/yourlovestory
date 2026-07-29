@@ -6,6 +6,7 @@ import type {
   Volume,
   VolumeOutline,
 } from '../novelProject'
+import type { Foreshadow, NarrativeMemory } from '../narrativeWorkbench'
 import type {
   Chapter,
   ChapterVersion,
@@ -22,6 +23,15 @@ export interface ChapterGenerationProjectPort {
   getVolumeOutlineByVolume(projectId: string, volumeId: string): VolumeOutline | null
   getChapterOutline(projectId: string, outlineId: string): ChapterOutline
   getOutlineContext(projectId: string, sourceMaterialIds?: readonly string[]): OutlineContext
+}
+
+/** Optional narrative stores for compiler context assembly (main injects real repositories). */
+export interface ChapterGenerationMemoryPort {
+  listByProject(projectId: string): NarrativeMemory[]
+}
+
+export interface ChapterGenerationForeshadowPort {
+  listByProject(projectId: string): Foreshadow[]
 }
 
 export interface ChapterStore {

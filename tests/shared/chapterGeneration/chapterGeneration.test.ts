@@ -11,13 +11,18 @@ import {
   ChapterVersionStatusTransitionError,
   VersionConflictError,
 } from '@/shared/novelProject'
-import type {
-  ChapterGenerationRequest,
-  FactCheckReport,
-  TextGenerationRequest,
-  TextGenerationResult,
-  TextGenerator,
+import {
+  checkpointFromJson,
+  checkpointToJson,
+  mapPriorChapters,
+  type Chapter,
+  type ChapterGenerationRequest,
+  type FactCheckReport,
+  type TextGenerationRequest,
+  type TextGenerationResult,
+  type TextGenerator,
 } from '@/shared/chapterGeneration'
+import { ContextBudgetExceededError } from '@/shared/contextCompiler'
 
 function factCheck(passed: boolean): FactCheckReport {
   return {
@@ -267,6 +272,271 @@ describe('chapter generation repositories and domain service', () => {
     expect(() => workbench.chapterGeneration.confirmVersion(projectId, result.version!.id)).toThrow(
       ChapterVersionStatusTransitionError,
     )
+  })
+
+  test('compiles prompts via ContextCompiler and persists stage traces without final_prompt by default', async () => {
+    const workbench = new WorkbenchService(database)
+    const project = workbench.createProject({ slug: 'compiler-project', name: 'Compiler Project' })
+    const projectId = project.id
+    workbench.createCharacter({
+      project_id: projectId,
+      name: '林澈',
+      role: '主角',
+      notes: '冷静',
+      profile: { skill: '夜航' },
+    })
+    const material = workbench.createSourceMaterial({
+      project_id: projectId,
+      title: 'Discovery notes',
+      material_type: 'setting',
+      content: 'Opening Chapter discovery material about the situation and decision',
+    })
+    const volume = workbench.createVolume({
+      project_id: projectId,
+      volume_number: 1,
+      title: 'Volume One',
+    })
+    const volumeOutline = workbench.createVolumeOutline({
+      project_id: projectId,
+      volume_id: volume.id,
+      summary: 'Volume summary',
+      main_conflict: 'A controlled conflict',
+      source_material_ids: [material.id],
+    })
+    const chapterOutline = workbench.createChapterOutline({
+      project_id: projectId,
+      volume_id: volume.id,
+      chapter_number: 1,
+      title: 'Opening Chapter',
+      summary: 'Chapter summary',
+      purpose: 'Establish the situation',
+      opening: 'The chapter opens quietly',
+      conflict: 'The characters face a choice',
+      key_events: ['A discovery', 'A decision'],
+      ending: 'The choice is made',
+      ending_hook: 'A new question remains',
+      source_material_ids: [material.id],
+    })
+    workbench.confirmVolumeOutline(projectId, volumeOutline.id, volumeOutline.version)
+    workbench.confirmChapterOutline(projectId, chapterOutline.id, chapterOutline.version)
+    const chapterOutlineId = chapterOutline.id
+
+    workbench.narrativeMemories.create({
+      project_id: projectId,
+      memory_type: 'fact',
+      title: 'Approved memory',
+      content: 'The discovery in Opening Chapter remains unresolved for the characters',
+      importance: 80,
+      status: 'approved',
+    })
+    workbench.narrativeMemories.create({
+      project_id: projectId,
+      memory_type: 'fact',
+      title: 'Proposed memory',
+      content: 'Must not enter context until approved',
+      importance: 90,
+      status: 'proposed',
+    })
+    workbench.foreshadows.create({
+      project_id: projectId,
+      title: 'Open foreshadow',
+      description: 'A new question remains after the decision in Opening Chapter',
+      status: 'active',
+      importance: 70,
+    })
+    workbench.foreshadows.create({
+      project_id: projectId,
+      title: 'Closed foreshadow',
+      description: 'Must not enter context',
+      status: 'resolved',
+      importance: 99,
+    })
+
+    const checkpoints: Array<import('@/shared/chapterGeneration').ChapterGenerationCheckpoint> = []
+    const generator = new ScriptedGenerator({
+      body: ['正文段落'],
+      summary: ['摘要段落'],
+      fact_check: [JSON.stringify(factCheck(true))],
+    })
+    const result = await workbench.chapterGeneration.generate(
+      {
+        project_id: projectId,
+        chapter_outline_id: chapterOutlineId,
+        model_params: {
+          model: 'budget-model',
+          temperature: 0.2,
+          max_output_tokens: 2_048,
+          context_budget: 32_000,
+        },
+      },
+      generator,
+      {
+        signal: new AbortController().signal,
+        callbacks: {
+          on_checkpoint: (checkpoint) => checkpoints.push(checkpoint),
+        },
+      },
+    )
+
+    expect(generator.calls).toHaveLength(3)
+    expect(generator.calls[0].stage).toBe('body')
+    expect(generator.calls[0].prompt).toContain('任务指令')
+    expect(generator.calls[0].prompt).toContain('Opening Chapter')
+    expect(generator.calls[0].prompt).toContain('Discovery notes')
+    expect(generator.calls[0].prompt).toContain('Approved memory')
+    expect(generator.calls[0].prompt).not.toContain('Proposed memory')
+    expect(generator.calls[0].prompt).not.toContain('Must not enter context until approved')
+    expect(generator.calls[0].prompt).toContain('Open foreshadow')
+    expect(generator.calls[0].prompt).not.toContain('Closed foreshadow')
+    expect(generator.calls[1].prompt).toContain('正文段落')
+    expect(generator.calls[2].prompt).toContain('passed')
+
+    const last = checkpoints[checkpoints.length - 1]
+    expect(last.stage_compiles?.body?.prompt_version).toBe('context-compiler/v1')
+    expect(last.stage_compiles?.body?.model_params).toEqual({
+      model: 'budget-model',
+      temperature: 0.2,
+      max_output_tokens: 2_048,
+      context_budget: 32_000,
+    })
+    expect(last.stage_compiles?.body?.trace.final_prompt).toBeUndefined()
+    expect(last.stage_compiles?.summary?.trace.selected.length).toBeGreaterThan(0)
+    expect(last.stage_compiles?.fact_check?.trace.metadata.strategy_id).toBe('fact_check/v1')
+    expect(result.checkpoint.stage_compiles?.body?.trace.budget.available_for_prompt).toBe(
+      32_000 - last.stage_compiles!.body!.trace.budget.system_reserved - 2_048,
+    )
+
+    const roundTrip = checkpointFromJson(checkpointToJson(result.checkpoint))
+    expect(roundTrip.stage_compiles?.body?.trace.selected.map((item) => item.id)).toEqual(
+      result.checkpoint.stage_compiles?.body?.trace.selected.map((item) => item.id),
+    )
+  })
+
+  test('debug=true stores final_prompt on stage traces; over-budget saves failure stage_compiles then throws', async () => {
+    const { workbench, projectId, chapterOutlineId } = createWorkbench(database, true, 'debug-budget')
+    const generator = new ScriptedGenerator({
+      body: ['x'],
+      summary: ['y'],
+      fact_check: [JSON.stringify(factCheck(true))],
+    })
+    const result = await workbench.chapterGeneration.generate(
+      {
+        project_id: projectId,
+        chapter_outline_id: chapterOutlineId,
+        debug: true,
+      },
+      generator,
+      { signal: new AbortController().signal },
+    )
+    expect(result.checkpoint.stage_compiles?.body?.trace.final_prompt).toEqual(
+      expect.stringContaining('任务指令'),
+    )
+
+    const checkpoints: Array<import('@/shared/chapterGeneration').ChapterGenerationCheckpoint> = []
+    await expect(
+      workbench.chapterGeneration.generate(
+        {
+          project_id: projectId,
+          chapter_outline_id: chapterOutlineId,
+          model_params: {
+            context_budget: 80,
+            max_output_tokens: 60,
+          },
+        },
+        generator,
+        {
+          signal: new AbortController().signal,
+          callbacks: {
+            on_checkpoint: (checkpoint) => checkpoints.push(checkpoint),
+          },
+        },
+      ),
+    ).rejects.toThrow(ContextBudgetExceededError)
+
+    const last = checkpoints[checkpoints.length - 1]
+    expect(last).toBeDefined()
+    expect(last.stage_compiles?.body).toBeDefined()
+    expect(last.stage_compiles?.body?.trace.errors.length).toBeGreaterThan(0)
+    expect(last.stage_compiles?.body?.trace.errors[0]).toContain('超过可用预算')
+    expect(last.stage_compiles?.body?.trace.discarded.length).toBeGreaterThan(0)
+    expect(last.stage_compiles?.body?.trace.metadata.strategy_id).toBe('chapter_body/v1')
+    expect(last.stage_compiles?.body?.trace.final_prompt).toBeUndefined()
+    expect(last.stage_compiles?.body?.model_params.context_budget).toBe(80)
+  })
+
+  test('fact_check 上下文包含已批准记忆 evidence，proposed 记忆不进入 prompt', async () => {
+    const { workbench, projectId, chapterOutlineId } = createWorkbench(
+      database,
+      true,
+      'memory-evidence',
+    )
+    workbench.narrativeMemories.create({
+      project_id: projectId,
+      memory_type: 'fact',
+      title: 'Approved discovery fact',
+      content: 'Opening Chapter discovery confirms the controlled conflict choice',
+      importance: 85,
+      status: 'approved',
+      evidence: ['Opening Chapter conflict paragraph', 'Volume summary decision note'],
+    })
+    workbench.narrativeMemories.create({
+      project_id: projectId,
+      memory_type: 'fact',
+      title: 'Proposed memory',
+      content: 'Must not enter context draft',
+      importance: 99,
+      status: 'proposed',
+      evidence: ['Proposed evidence must not appear'],
+    })
+    const generator = new ScriptedGenerator({
+      body: ['正文含 Opening Chapter discovery'],
+      summary: ['摘要'],
+      fact_check: [JSON.stringify(factCheck(true))],
+    })
+    await workbench.chapterGeneration.generate(
+      {
+        project_id: projectId,
+        chapter_outline_id: chapterOutlineId,
+        model_params: {
+          model: 'm',
+          max_output_tokens: 2_048,
+          context_budget: 32_000,
+        },
+      },
+      generator,
+      { signal: new AbortController().signal },
+    )
+    const factCheckCall = generator.calls.find((call) => call.stage === 'fact_check')
+    expect(factCheckCall).toBeDefined()
+    expect(factCheckCall!.prompt).toContain('Opening Chapter conflict paragraph')
+    expect(factCheckCall!.prompt).toContain('Volume summary decision note')
+    expect(factCheckCall!.prompt).toContain('证据：')
+    expect(factCheckCall!.prompt).not.toContain('Proposed evidence must not appear')
+    expect(factCheckCall!.prompt).not.toContain('Must not enter context draft')
+  })
+
+  test('mapPriorChapters 仅保留 completed 章节，review/drafting 不进入 prior', () => {
+    const base = {
+      project_id: 'p',
+      arc_id: null,
+      title: 't',
+      synopsis: 's',
+      content: '正文内容足够长',
+      target_words: null,
+      actual_words: null,
+      version: 1,
+      created_at: '',
+      updated_at: '',
+    }
+    const chapters: Chapter[] = [
+      { ...base, id: 'c1', chapter_number: 1, status: 'completed' },
+      { ...base, id: 'c2', chapter_number: 2, status: 'review', content: '审核中正文' },
+      { ...base, id: 'c3', chapter_number: 3, status: 'drafting', content: '草稿正文' },
+      { ...base, id: 'c4', chapter_number: 4, status: 'planned', content: '' },
+    ]
+    const priors = mapPriorChapters(chapters, 5)
+    expect(priors.map((item) => item.id)).toEqual(['c1'])
+    expect(priors.every((item) => item.status === 'completed')).toBe(true)
   })
 
   test('only auto-confirms when fact check passes', async () => {

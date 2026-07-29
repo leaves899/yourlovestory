@@ -239,6 +239,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       chapter_outline_id: params.chapterOutlineId,
       ...(params.chapterId ? { chapter_id: params.chapterId } : {}),
       ...(params.autoConfirm === undefined ? {} : { auto_confirm: params.autoConfirm }),
+      ...(params.debug === undefined ? {} : { debug: params.debug }),
       llm: params.llm,
     }),
   listChapterVersions: (projectId: string, chapterId: string) =>

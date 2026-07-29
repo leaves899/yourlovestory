@@ -115,7 +115,7 @@ describe('chapter generation task pipeline', () => {
         projectId: outline.projectId,
         sessionId: 'session-pipeline',
         prompt: async (prompt, options = {}) => {
-          if (prompt.startsWith('请生成当前章节')) {
+          if (prompt.includes('续写或生成完整') || prompt.includes('本章正文')) {
             if (runNumber === 1) {
               await emitText(options, '部分正文')
               resolveBodyStarted()
@@ -130,7 +130,7 @@ describe('chapter generation task pipeline', () => {
             await emitText(options, '续写正文')
             return result('续写正文')
           }
-          if (prompt.startsWith('请为以下章节正文')) {
+          if (prompt.includes('生成客观、精炼的章节摘要') || prompt.includes('只输出摘要文本')) {
             await emitText(options, '章节摘要')
             return result('章节摘要')
           }
@@ -166,7 +166,12 @@ describe('chapter generation task pipeline', () => {
       projectId: outline.projectId,
       sessionId: 'session-pipeline',
       chapterOutlineId: outline.chapterOutlineId,
-      llm: { baseUrl: 'https://example.invalid/v1', model: 'test-model' },
+      llm: {
+        baseUrl: 'https://example.invalid/v1',
+        model: 'test-model',
+        contextBudget: 48_000,
+        maxOutputTokens: 2_000,
+      },
     })
     await bodyStarted
     expect(manager.cancel(handle.taskId)).toBe(true)
@@ -174,6 +179,28 @@ describe('chapter generation task pipeline', () => {
 
     expect(cancelled.status).toBe('cancelled')
     expect(cancelled.checkpoint).toEqual(expect.objectContaining({ stage: 'body', body: '部分正文' }))
+    expect(cancelled.checkpoint).toEqual(
+      expect.objectContaining({
+        stage_compiles: expect.objectContaining({
+          body: expect.objectContaining({
+            prompt_version: 'context-compiler/v1',
+            model_params: expect.objectContaining({
+              model: 'test-model',
+              context_budget: 48_000,
+              max_output_tokens: 2_000,
+            }),
+            trace: expect.objectContaining({
+              selected: expect.any(Array),
+              discarded: expect.any(Array),
+            }),
+          }),
+        }),
+      }),
+    )
+    expect(
+      (cancelled.checkpoint as { stage_compiles?: { body?: { trace?: { final_prompt?: string } } } })
+        ?.stage_compiles?.body?.trace?.final_prompt,
+    ).toBeUndefined()
 
     const resumed = manager.resume(handle.taskId)
     expect(resumed).not.toBeNull()
@@ -182,7 +209,16 @@ describe('chapter generation task pipeline', () => {
     expect(completed.status).toBe('completed')
     expect(completed.checkpoint).toEqual(expect.objectContaining({ stage: 'review' }))
     expect(completed.result).toEqual(
-      expect.objectContaining({ review_required: true, fact_check_passed: true }),
+      expect.objectContaining({
+        review_required: true,
+        fact_check_passed: true,
+        prompt_version: 'context-compiler/v1',
+        stage_compiles: expect.objectContaining({
+          body: expect.any(Object),
+          summary: expect.any(Object),
+          fact_check: expect.any(Object),
+        }),
+      }),
     )
     expect(completed.chapter_id).toBe(completed.result?.chapter_id)
     expect(workbench.chapterVersions.listByChapter(workbench.chapters.listByProject(outline.projectId)[0].id)).toHaveLength(1)
@@ -190,5 +226,94 @@ describe('chapter generation task pipeline', () => {
     expect(events.some((event) => event.type === 'task:review')).toBe(true)
     expect(events.some((event) => event.type === 'task:chunk')).toBe(true)
     expect(agentRuns).toBe(2)
+  })
+
+  test('budget exceeded fails task but persists stage_compiles body failure trace without agent prompt', async () => {
+    const workbench = new WorkbenchService(database)
+    const outline = setupOutlines(workbench, 'task-pipeline-budget-fail')
+    const events: TaskEvent[] = []
+    const promptMock = jest.fn(async () => result('should-not-run'))
+    const agentFactory: AgentFactory = {
+      create: async () => ({
+        projectId: outline.projectId,
+        sessionId: 'session-budget-fail',
+        prompt: promptMock,
+        abort: jest.fn(),
+        dispose: jest.fn(),
+      }),
+    }
+    const store = new TaskRepository(database)
+    const manager = new TaskManager({
+      store,
+      agentFactory,
+      events: { publish: (event) => events.push(event) },
+      runners: {
+        'chapter-generation': createChapterGenerationTaskRunner({
+          service: workbench.chapterGeneration,
+          agentFactory,
+        }),
+      },
+    })
+
+    const handle = manager.startChapterGeneration({
+      projectId: outline.projectId,
+      sessionId: 'session-budget-fail',
+      chapterOutlineId: outline.chapterOutlineId,
+      llm: {
+        baseUrl: 'https://example.invalid/v1',
+        model: 'test-model',
+        contextBudget: 80,
+        maxOutputTokens: 60,
+      },
+    })
+    const failed = await handle.completion
+    const persisted = store.getById(handle.taskId)
+
+    expect(failed.status).toBe('failed')
+    expect(persisted?.status).toBe('failed')
+    expect(promptMock).not.toHaveBeenCalled()
+
+    const checkpoint = persisted?.checkpoint ?? failed.checkpoint
+    expect(checkpoint).toEqual(
+      expect.objectContaining({
+        stage_compiles: expect.objectContaining({
+          body: expect.objectContaining({
+            prompt_version: 'context-compiler/v1',
+            model_params: expect.objectContaining({
+              model: 'test-model',
+              context_budget: 80,
+              max_output_tokens: 60,
+            }),
+            trace: expect.objectContaining({
+              errors: expect.arrayContaining([expect.stringContaining('超过可用预算')]),
+              discarded: expect.any(Array),
+              metadata: expect.objectContaining({
+                strategy_id: 'chapter_body/v1',
+                prompt_version: 'context-compiler/v1',
+              }),
+            }),
+          }),
+        }),
+      }),
+    )
+    const bodyTrace = (
+      checkpoint as {
+        stage_compiles?: {
+          body?: {
+            trace?: {
+              errors?: unknown[]
+              discarded?: unknown[]
+              final_prompt?: string
+              metadata?: { strategy_id?: string }
+            }
+          }
+        }
+      }
+    ).stage_compiles?.body?.trace
+    expect(bodyTrace?.errors?.length).toBeGreaterThan(0)
+    expect(bodyTrace?.discarded?.length).toBeGreaterThan(0)
+    expect(bodyTrace?.final_prompt).toBeUndefined()
+    expect(bodyTrace?.metadata?.strategy_id).toBe('chapter_body/v1')
+    expect(events.some((event) => event.type === 'task:checkpoint')).toBe(true)
   })
 })

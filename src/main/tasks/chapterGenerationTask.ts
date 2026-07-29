@@ -1,6 +1,8 @@
 import type { AgentEvent } from '@earendil-works/pi-agent-core'
 import type { AgentFactory, ProjectSessionAgent } from '../../agent/agent'
+import { normalizeLlmConfig } from '../../agent/llm'
 import type {
+  ChapterGenerationModelParams,
   ChapterGenerationRequest,
   ChapterGenerationService,
   TextGenerationRequest,
@@ -8,8 +10,10 @@ import type {
   TextGenerator,
 } from '../../shared/chapterGeneration'
 import {
+  CHAPTER_GENERATION_SYSTEM_PROMPT,
   checkpointFromJson,
   checkpointToJson,
+  compileTraceToJson,
 } from '../../shared/chapterGeneration'
 import type { JsonObject, JsonValue } from '../database'
 import type { TaskRunner, TaskRunnerContext, TaskRunnerResult } from './taskManager'
@@ -39,12 +43,26 @@ function readRequest(context: TaskRunnerContext): ChapterGenerationRequest {
   if (chapterId !== undefined && typeof chapterId !== 'string') {
     throw new Error('chapter_id must be a string')
   }
+  const debug = input.debug
+  if (debug !== undefined && typeof debug !== 'boolean') {
+    throw new Error('debug must be a boolean')
+  }
+  const llm = normalizeLlmConfig(context.input.llm)
+  const model_params: ChapterGenerationModelParams = {
+    model: llm.model,
+    temperature: llm.temperature ?? null,
+    max_output_tokens: llm.maxOutputTokens,
+    context_budget: llm.contextBudget,
+  }
   return {
     project_id: readRequiredString(input.project_id, 'project_id'),
     chapter_outline_id: readRequiredString(input.chapter_outline_id, 'chapter_outline_id'),
     ...(chapterId ? { chapter_id: chapterId } : {}),
     ...(autoConfirm === undefined ? {} : { auto_confirm: autoConfirm }),
+    ...(debug === undefined ? {} : { debug }),
     task_id: context.task.id,
+    model_params,
+    system_prompt: CHAPTER_GENERATION_SYSTEM_PROMPT,
   }
 }
 
@@ -66,6 +84,28 @@ class AgentTextGenerator implements TextGenerator {
   }
 }
 
+function stageCompilesToResultJson(
+  checkpoint: ReturnType<typeof checkpointFromJson>,
+): JsonObject {
+  const compiles = checkpoint.stage_compiles ?? {}
+  const out: JsonObject = {}
+  for (const stage of ['body', 'summary', 'fact_check'] as const) {
+    const item = compiles[stage]
+    if (!item) continue
+    out[stage] = {
+      prompt_version: item.prompt_version,
+      model_params: {
+        model: item.model_params.model,
+        temperature: item.model_params.temperature,
+        max_output_tokens: item.model_params.max_output_tokens,
+        context_budget: item.model_params.context_budget,
+      },
+      trace: compileTraceToJson(item.trace),
+    }
+  }
+  return out
+}
+
 function resultToJson(
   chapterId: string,
   status: TaskRunnerResult['status'],
@@ -73,7 +113,9 @@ function resultToJson(
   autoConfirmed: boolean,
   reviewRequired: boolean,
   factCheckPassed: boolean,
+  checkpoint: ReturnType<typeof checkpointFromJson>,
 ): JsonObject {
+  const stageCompiles = stageCompilesToResultJson(checkpoint)
   return {
     chapter_id: chapterId,
     status: status ?? 'completed',
@@ -81,6 +123,20 @@ function resultToJson(
     auto_confirmed: autoConfirmed,
     review_required: reviewRequired,
     fact_check_passed: factCheckPassed,
+    stage_compiles: stageCompiles,
+    prompt_version:
+      checkpoint.stage_compiles?.fact_check?.prompt_version ??
+      checkpoint.stage_compiles?.summary?.prompt_version ??
+      checkpoint.stage_compiles?.body?.prompt_version ??
+      null,
+    model_params: checkpoint.stage_compiles?.body?.model_params
+      ? {
+          model: checkpoint.stage_compiles.body.model_params.model,
+          temperature: checkpoint.stage_compiles.body.model_params.temperature,
+          max_output_tokens: checkpoint.stage_compiles.body.model_params.max_output_tokens,
+          context_budget: checkpoint.stage_compiles.body.model_params.context_budget,
+        }
+      : null,
   }
 }
 
@@ -96,7 +152,7 @@ export function createChapterGenerationTaskRunner(
           projectId: request.project_id,
           sessionId: context.input.sessionId,
           llm: context.input.llm,
-          systemPrompt: '你负责依据已确认的长篇大纲生成章节，不执行大纲修改，不生成叙事记忆。',
+          systemPrompt: request.system_prompt ?? CHAPTER_GENERATION_SYSTEM_PROMPT,
         })
         const result = await options.service.generate(
           request,
@@ -126,6 +182,7 @@ export function createChapterGenerationTaskRunner(
             result.auto_confirmed,
             result.status === 'completed' && !result.auto_confirmed,
             factCheckPassed,
+            result.checkpoint,
           ),
         }
       } finally {
