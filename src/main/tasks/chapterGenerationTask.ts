@@ -12,11 +12,21 @@ import {
   checkpointToJson,
 } from '../../shared/chapterGeneration'
 import {
+  ChapterGenerationBoundaryError,
+  ChapterVersionStatusTransitionError,
+  EntityNotFoundError,
+} from '../../shared/novelProject'
+import {
   CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
   parseStrictGenerationCheckpoint,
 } from '../../shared/taskRecovery'
 import type { JsonObject, JsonValue } from '../database'
-import type { TaskRunner, TaskRunnerContext, TaskRunnerResult } from './taskManager'
+import {
+  NonRecoverableTaskError,
+  type TaskRunner,
+  type TaskRunnerContext,
+  type TaskRunnerResult,
+} from './taskManager'
 
 export interface ChapterGenerationTaskRunnerOptions {
   service: ChapterGenerationService
@@ -104,42 +114,49 @@ function finishFromExistingVersion(
   const existing = service.getVersionByTaskId(context.task.id)
   if (!existing) return null
 
+  let finalized: ReturnType<ChapterGenerationService['finalizePersistedVersion']>
   try {
-    service.getVersion(request.project_id, existing.id)
-  } catch {
-    throw new Error('已落库章节版本与任务目标项目不一致，任务不可恢复。')
+    finalized = context.runOwnedSideEffect(() =>
+      service.finalizePersistedVersion(request, existing.id),
+    )
+  } catch (error) {
+    if (
+      error instanceof ChapterGenerationBoundaryError
+      || error instanceof ChapterVersionStatusTransitionError
+      || error instanceof EntityNotFoundError
+    ) {
+      throw new NonRecoverableTaskError('已落库章节版本与任务目标不一致，任务不可恢复。')
+    }
+    throw error
   }
-  if (request.chapter_id && existing.chapter_id !== request.chapter_id) {
-    throw new Error('已落库章节版本与任务目标章节不一致，任务不可恢复。')
-  }
+  const finalVersion = finalized.version
 
-  context.assertStillOwnsExecution()
   context.setExecutionPhase('persisting_result')
   context.saveCheckpoint(checkpointToJson({
     schema_version: CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
     stage: 'review',
-    body: existing.content,
-    summary: existing.summary,
+    body: finalVersion.content,
+    summary: finalVersion.summary,
     fact_check_text: '',
-    fact_check: existing.fact_check,
-    version_id: existing.id,
+    fact_check: finalVersion.fact_check,
+    version_id: finalVersion.id,
   }))
   context.setStage('review', 1)
   context.setExecutionPhase('finalizing')
   context.publishReview(
-    existing.id,
-    existing.status === 'review',
-    existing.status === 'approved' ? 'approved' : 'review',
+    finalVersion.id,
+    finalVersion.status === 'review',
+    finalVersion.status === 'approved' ? 'approved' : 'review',
   )
   return {
     status: 'completed',
     result: resultToJson(
-      existing.chapter_id,
+      finalized.chapter.id,
       'completed',
-      existing.id,
-      existing.status === 'approved',
-      existing.status === 'review',
-      existing.fact_check.passed,
+      finalVersion.id,
+      finalized.autoConfirmed,
+      finalVersion.status === 'review',
+      finalVersion.fact_check.passed,
     ),
   }
 }

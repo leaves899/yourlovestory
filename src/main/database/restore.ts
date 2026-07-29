@@ -14,6 +14,8 @@ export interface ExecuteDatabaseRestoreOptions {
   exit: () => void
   markRecoveryRequired?: () => void
   markRestoring?: () => void
+  /** Restores the pre-restore ready state when quiesce times out before DB close. */
+  markRestoreAborted?: () => void
   databaseAvailable?: boolean
   replaceDatabase?: (databasePath: string, stagedPath: string) => void
   verifyDatabase?: (filename: string) => void
@@ -64,6 +66,14 @@ function markRecoveryRequired(options: ExecuteDatabaseRestoreOptions): void {
   }
 }
 
+function markRestoreAborted(options: ExecuteDatabaseRestoreOptions): void {
+  try {
+    options.markRestoreAborted?.()
+  } catch {
+    // The current database remains authoritative; keep the stable restore error.
+  }
+}
+
 export async function executeDatabaseRestore(
   options: ExecuteDatabaseRestoreOptions,
 ): Promise<RestoreExecutionResult> {
@@ -103,6 +113,11 @@ export async function executeDatabaseRestore(
       serviceCleanupFailed: true,
       drained: false,
     }
+  }
+  if (shutdown.drained === false) {
+    removeStagedDatabase(staged)
+    markRestoreAborted(options)
+    throw backupError('RESTORE_FAILED')
   }
   if (!shutdown.databaseClosed) {
     removeStagedDatabase(staged)

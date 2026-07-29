@@ -16,7 +16,12 @@ import {
   type StrictPolishCheckpoint,
 } from '../../shared/taskRecovery'
 import type { JsonObject, JsonValue } from '../database'
-import type { TaskRunner, TaskRunnerContext, TaskRunnerResult } from './taskManager'
+import {
+  NonRecoverableTaskError,
+  type TaskRunner,
+  type TaskRunnerContext,
+  type TaskRunnerResult,
+} from './taskManager'
 
 export interface ChapterPolishTaskRunnerOptions {
   service: NarrativeWorkbenchService
@@ -177,10 +182,10 @@ function finishFromExistingRevision(
   try {
     service.getRevision(request.project_id, existing.id)
   } catch {
-    throw new Error('已落库修订与任务目标项目不一致，任务不可恢复。')
+    throw new NonRecoverableTaskError('已落库修订与任务目标项目不一致，任务不可恢复。')
   }
   if (existing.chapter_id !== request.chapter_id) {
-    throw new Error('已落库修订与任务目标章节不一致，任务不可恢复。')
+    throw new NonRecoverableTaskError('已落库修订与任务目标章节不一致，任务不可恢复。')
   }
 
   context.setExecutionPhase('persisting_result')
@@ -250,28 +255,9 @@ export function createChapterPolishTaskRunner(
       let agent: ProjectSessionAgent | undefined
       try {
         if (savedCheckpoint?.status === 'completed' && savedCheckpoint.revision_id) {
-          let applied = savedCheckpoint.applied === true
-          if (request.auto_apply && !applied) {
-            context.setExecutionPhase('persisting_result')
-            context.runOwnedSideEffect(() =>
-              options.service.applyRevision(request.project_id, savedCheckpoint.revision_id!),
-            )
-            applied = true
-            context.saveCheckpoint(checkpointToJson({ ...savedCheckpoint, applied: true }))
-          }
-          context.setStage('review', 1)
-          context.setExecutionPhase('finalizing')
-          return {
-            status: 'completed',
-            result: {
-              status: 'completed',
-              revision_id: savedCheckpoint.revision_id,
-              report_id: null,
-              applied,
-              error: null,
-              diff: emptyDiff(),
-            },
-          }
+          throw new NonRecoverableTaskError(
+            '完成检查点引用的修订未按当前 task_id 持久化，无法验证归属，任务不可恢复。',
+          )
         }
 
         context.setExecutionPhase('preparing')

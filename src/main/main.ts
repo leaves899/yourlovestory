@@ -4,6 +4,7 @@ import path from 'path'
 import { setupIPC } from './ipc'
 import {
   ChatRepository,
+  canExitAfterShutdown,
   DATABASE_STATUS_CHANGED_CHANNEL,
   DatabaseRuntimeStatus,
   executeDatabaseRestore,
@@ -199,17 +200,16 @@ function createWindow() {
 async function restoreDatabaseBackup(id: string): Promise<RestoreExecutionResult> {
   if (!backupService) throw new Error('Database restore is not available')
   const databaseAvailable = database !== null
+  const statusBeforeRestore = databaseRuntime.get()
   return executeDatabaseRestore({
     backupService,
     backupId: id,
     databaseAvailable,
     markRestoring: () => databaseRuntime.beginRestore(),
+    markRestoreAborted: () => databaseRuntime.replace(statusBeforeRestore),
     closeDatabase: async () => {
       const taskManagerToDispose = taskManager
-      taskManager = null
       const assistantServiceToDispose = assistantService
-      assistantService = null
-      workbenchService = null
       const databaseToClose = database
       const result = await shutdownDatabaseResources({
         taskManager: taskManagerToDispose,
@@ -218,6 +218,9 @@ async function restoreDatabaseBackup(id: string): Promise<RestoreExecutionResult
         awaitQuiesce: true,
       })
       if (result.databaseClosed) {
+        taskManager = null
+        assistantService = null
+        workbenchService = null
         database = null
       }
       if (result.serviceCleanupFailed) {
@@ -435,24 +438,26 @@ app.on('window-all-closed', () => {
   }
 })
 
-async function performGracefulAppShutdown(): Promise<void> {
+async function performGracefulAppShutdown(): Promise<boolean> {
   void projectPortabilityCoordinator?.dispose()
   projectPortabilityCoordinator = null
   const manager = taskManager
   const assistant = assistantService
   const db = database
-  taskManager = null
-  assistantService = null
-  credentialService = null
-  workbenchService = null
-  database = null
   // Quiesce active completions, then close DB. No async writes after close.
-  await shutdownDatabaseResources({
+  const result = await shutdownDatabaseResources({
     taskManager: manager,
     assistantService: assistant,
     database: db,
     awaitQuiesce: true,
   })
+  if (!canExitAfterShutdown(result)) return false
+  taskManager = null
+  assistantService = null
+  credentialService = null
+  workbenchService = null
+  database = null
+  return true
 }
 
 app.on('before-quit', (event) => {
@@ -466,12 +471,20 @@ app.on('before-quit', (event) => {
   if (shutdownPromise) return
   isShuttingDown = true
   shutdownPromise = performGracefulAppShutdown()
+    .then((safeToExit) => {
+      if (!safeToExit) {
+        isShuttingDown = false
+        return
+      }
+      allowFinalQuit = true
+      app.exit(0)
+    })
     .catch((error: unknown) => {
+      isShuttingDown = false
       console.warn('[Shutdown] coordinated quit failed:', sanitizeErrorMessage(error))
     })
     .finally(() => {
-      allowFinalQuit = true
-      app.exit(0)
+      shutdownPromise = null
     })
 })
 

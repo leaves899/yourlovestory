@@ -144,7 +144,11 @@ export function assertSafePersistedString(
   path: string,
   maxLength = 512,
 ): void {
-  if (value.trim() === '' || value.length > maxLength || /[\u0000-\u001f\u007f]/.test(value)) {
+  const hasControlCharacter = [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0
+    return codePoint <= 0x1f || codePoint === 0x7f
+  })
+  if (value.trim() === '' || value.length > maxLength || hasControlCharacter) {
     throw new Error(`拒绝持久化无效字符串: ${path}`)
   }
   assertNoSensitiveStringValue(value, path)

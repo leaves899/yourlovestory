@@ -39,6 +39,10 @@
 
 **数据库事务不能覆盖外部模型请求。** 不得声称 SQLite 事务可消除重复计费风险。
 
+按 `task_id` 找到最终 version/revision 后，恢复器仍会校验项目、章节和任务归属。
+章节版本会补齐 chapter 的 `review` / `completed` 状态、摘要、字数和允许的自动确认；
+归属冲突或已拒绝实体会稳定终止为 `non-recoverable`，不会再次进入恢复循环。
+
 ## 数据模型要点（migration 9）
 
 `tasks` 新增（摘要）：
@@ -92,6 +96,8 @@
 3. 等待任务 drain；完成后结束 runtime session，再 close DB
 
 drain 超时时不得提前结束 runtime session，也不得关闭仍可能被异步写入的数据库。
+应用退出仅在 `drained=true` 且数据库已确认关闭后继续；restore 的 drain 超时会撤销
+`restoring` 状态、保留当前数据库并返回稳定错误，不 relaunch、不退出进程。
 
 优雅停止的任务不得在下次启动被误判为“崩溃后的安全自动 resume”，除非结果已按 task_id 持久化（可幂等收尾）。
 

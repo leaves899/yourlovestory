@@ -9,6 +9,11 @@ export interface QuiesceResult {
   drained: boolean
 }
 
+/** The Electron process may exit only after writers drained and the DB closed. */
+export function canExitAfterShutdown(result: DatabaseShutdownResult): boolean {
+  return result.drained && result.databaseClosed
+}
+
 interface DisposableResource {
   dispose(): void
 }

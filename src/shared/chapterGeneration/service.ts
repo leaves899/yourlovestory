@@ -292,6 +292,82 @@ export class ChapterGenerationService {
     return this.options.versions.getByTaskId(taskId)
   }
 
+  /**
+   * Completes every durable side effect that may remain after a crash occurring
+   * immediately after the task-bound version insert.
+   */
+  public finalizePersistedVersion(
+    input: ChapterGenerationRequest,
+    versionId: string,
+  ): { chapter: Chapter; version: ChapterVersion; autoConfirmed: boolean } {
+    let version = this.getVersion(input.project_id, versionId)
+    if (version.task_id !== input.task_id) {
+      throw new ChapterGenerationBoundaryError('Chapter version does not belong to this task')
+    }
+    const outline = this.options.project.getChapterOutline(
+      input.project_id,
+      input.chapter_outline_id,
+    )
+    let chapter = this.requireChapter(input.project_id, version.chapter_id)
+    if (
+      (input.chapter_id && chapter.id !== input.chapter_id)
+      || chapter.chapter_number !== outline.chapter_number
+    ) {
+      throw new ChapterGenerationBoundaryError('Chapter version does not match the task target')
+    }
+    if (version.status === 'rejected') {
+      throw new ChapterGenerationBoundaryError('Rejected chapter version cannot finish a task')
+    }
+
+    if (input.auto_confirm && version.status === 'review' && version.fact_check.passed) {
+      version = this.confirmVersion(input.project_id, version.id)
+      chapter = this.requireChapter(input.project_id, version.chapter_id)
+      return { chapter, version, autoConfirmed: true }
+    }
+
+    if (version.status === 'approved') {
+      if (
+        chapter.status !== 'completed'
+        || chapter.content !== version.content
+        || chapter.synopsis !== version.summary
+        || chapter.actual_words !== version.content.length
+      ) {
+        const updated = this.options.chapters.update(
+          chapter.id,
+          {
+            content: version.content,
+            synopsis: version.summary,
+            status: 'completed',
+            actual_words: version.content.length,
+          },
+          chapter.version,
+        )
+        if (!updated) throw new EntityNotFoundError('Chapter', chapter.id)
+        chapter = updated
+      }
+      return { chapter, version, autoConfirmed: true }
+    }
+
+    if (
+      chapter.status !== 'review'
+      || chapter.synopsis !== version.summary
+      || chapter.actual_words !== version.content.length
+    ) {
+      const updated = this.options.chapters.update(
+        chapter.id,
+        {
+          status: 'review',
+          synopsis: version.summary,
+          actual_words: version.content.length,
+        },
+        chapter.version,
+      )
+      if (!updated) throw new EntityNotFoundError('Chapter', chapter.id)
+      chapter = updated
+    }
+    return { chapter, version, autoConfirmed: false }
+  }
+
   public confirmVersion(projectId: string, versionId: string): ChapterVersion {
     const version = this.getVersion(projectId, versionId)
     if (version.status !== 'review') {

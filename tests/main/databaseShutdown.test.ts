@@ -1,4 +1,5 @@
 import {
+  canExitAfterShutdown,
   DatabaseRuntimeStatus,
   shutdownDatabaseResources,
 } from '@/main/database'
@@ -16,6 +17,29 @@ const readyStatus = (): DatabaseStatus => ({
 })
 
 describe('database restore shutdown boundary', () => {
+  test('allows the real quit path only after drain and database close both succeed', () => {
+    expect(canExitAfterShutdown({
+      databaseClosed: false,
+      serviceCleanupFailed: false,
+      drained: false,
+    })).toBe(false)
+    expect(canExitAfterShutdown({
+      databaseClosed: false,
+      serviceCleanupFailed: false,
+      drained: true,
+    })).toBe(false)
+    expect(canExitAfterShutdown({
+      databaseClosed: true,
+      serviceCleanupFailed: false,
+      drained: false,
+    })).toBe(false)
+    expect(canExitAfterShutdown({
+      databaseClosed: true,
+      serviceCleanupFailed: true,
+      drained: true,
+    })).toBe(true)
+  })
+
   test('continues assistant cleanup and database close when task cleanup fails', async () => {
     const assistantDispose = jest.fn()
     const databaseClose = jest.fn()

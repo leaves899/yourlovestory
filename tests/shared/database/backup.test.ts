@@ -861,6 +861,46 @@ describe('database backup service', () => {
       .filter((entry) => entry.includes('.restore-'))).toEqual([])
   })
 
+  test('quiesce timeout aborts restore without relaunching or abandoning the current database', async () => {
+    const target = await service.createBackup({ reason: 'manual' })
+    const replaceDatabase = jest.fn()
+    const markRecoveryRequired = jest.fn()
+    const runtimeStatus = {
+      state: 'ready' as 'ready' | 'restoring',
+    }
+    const markRestoreAborted = jest.fn(() => {
+      runtimeStatus.state = 'ready'
+    })
+    const relaunch = jest.fn()
+    const exit = jest.fn()
+
+    await expect(executeDatabaseRestore({
+      backupService: service,
+      backupId: target.id,
+      markRestoring: () => {
+        runtimeStatus.state = 'restoring'
+      },
+      closeDatabase: () => ({
+        databaseClosed: false,
+        serviceCleanupFailed: false,
+        drained: false,
+      }),
+      replaceDatabase,
+      markRecoveryRequired,
+      markRestoreAborted,
+      relaunch,
+      exit,
+    })).rejects.toMatchObject({ code: 'RESTORE_FAILED' })
+
+    expect(replaceDatabase).not.toHaveBeenCalled()
+    expect(markRestoreAborted).toHaveBeenCalledTimes(1)
+    expect(markRecoveryRequired).not.toHaveBeenCalled()
+    expect(relaunch).not.toHaveBeenCalled()
+    expect(exit).not.toHaveBeenCalled()
+    expect(runtimeStatus.state).toBe('ready')
+    expect(await service.verifyBackup(target.id)).toMatchObject({ valid: true })
+  })
+
   test('keeps recovery available when database close and relaunch both fail', async () => {
     const target = await service.createBackup({ reason: 'manual' })
     const runtimeStatus = {

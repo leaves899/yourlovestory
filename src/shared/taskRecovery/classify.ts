@@ -155,7 +155,7 @@ function classifyChapterGeneration(input: ClassifyTaskInput): RecoveryDecision {
   const stage = parsed?.stage ?? null
 
   if (stage === 'review' && typeof parsed?.version_id === 'string' && parsed.version_id.trim() !== '') {
-    return resumable('检查点已进入 review 且包含 version_id，可幂等收尾。')
+    return nonRecoverable('review 检查点未找到按 task_id 绑定的章节版本，无法验证归属。')
   }
 
   if (
@@ -212,7 +212,7 @@ function classifyChapterPolish(input: ClassifyTaskInput): RecoveryDecision {
   const status = parsed?.status ?? null
 
   if (status === 'completed' && typeof parsed?.revision_id === 'string' && parsed.revision_id.trim() !== '') {
-    return resumable('检查点已完成并包含 revision_id，可幂等收尾。')
+    return nonRecoverable('完成检查点未找到按 task_id 绑定的章节修订，无法验证归属。')
   }
 
   if (

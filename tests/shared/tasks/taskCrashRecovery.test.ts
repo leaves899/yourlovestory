@@ -9,6 +9,7 @@ import {
   ChapterVersionRepository,
   initializeDatabase,
   migrations,
+  PostprocessReportRepository,
   ProjectRepository,
   RecoveryAttemptRepository,
   runMigrations,
@@ -1486,6 +1487,87 @@ describe('task crash recovery fault matrix', () => {
     expect(versions.getByTaskId(task.id)?.id).toBe(committed.id)
   })
 
+  test('P1-1 lease fence atomically guards revision, report, and auto-apply writes', () => {
+    const { projectId, chapterId } = seedProject('fenced-polish-side-effects')
+    const tasks = new TaskRepository(database)
+    const revisions = new ChapterRevisionRepository(database)
+    const reports = new PostprocessReportRepository(database)
+    const workbench = new WorkbenchService(database)
+    const task = tasks.create({
+      project_id: projectId,
+      chapter_id: chapterId,
+      task_type: 'chapter-polish',
+      input: {},
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+    })
+    tasks.update(task.id, {
+      status: 'running',
+      lease_owner: 'owner-b',
+      lease_token: 'token-b',
+      lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+    })
+    const originalContent = new ChapterRepository(database).getById(chapterId)!.content
+    const createAllSideEffects = () => {
+      const revision = revisions.create({
+        chapter_id: chapterId,
+        task_id: task.id,
+        content: 'fenced polished content',
+        summary: 'fenced polished summary',
+        reason: 'test',
+        operation: 'polish',
+        blocks: [],
+      })
+      const report = reports.create({
+        project_id: projectId,
+        chapter_id: chapterId,
+        task_id: task.id,
+        report_type: 'chapter-polish',
+        status: 'completed',
+        summary: 'completed',
+        details: { revision_id: revision.id },
+      })
+      workbench.narrative.applyRevision(projectId, revision.id)
+      return { revision, report }
+    }
+
+    expect(() =>
+      tasks.runOwnedTransaction(
+        task.id,
+        { owner: 'owner-a', leaseToken: 'token-a' },
+        new Date().toISOString(),
+        createAllSideEffects,
+      ),
+    ).toThrow(/lease/i)
+    expect(revisions.getByTaskId(task.id)).toBeNull()
+    expect(reports.getByTaskId(task.id)).toBeNull()
+
+    expect(() =>
+      tasks.runOwnedTransaction(
+        task.id,
+        { owner: 'owner-b', leaseToken: 'token-b' },
+        new Date().toISOString(),
+        () => {
+          createAllSideEffects()
+          throw new Error('inject rollback after polish side effects')
+        },
+      ),
+    ).toThrow(/inject rollback/)
+    expect(revisions.getByTaskId(task.id)).toBeNull()
+    expect(reports.getByTaskId(task.id)).toBeNull()
+    expect(new ChapterRepository(database).getById(chapterId)?.content).toBe(originalContent)
+
+    const committed = tasks.runOwnedTransaction(
+      task.id,
+      { owner: 'owner-b', leaseToken: 'token-b' },
+      new Date().toISOString(),
+      createAllSideEffects,
+    )
+    expect(revisions.getByTaskId(task.id)?.id).toBe(committed.revision.id)
+    expect(reports.getByTaskId(task.id)?.id).toBe(committed.report.id)
+    expect(new ChapterRepository(database).getById(chapterId)?.content)
+      .toBe('fenced polished content')
+  })
+
   test('P1-1 stale runner cannot persist a business entity after another owner takes the lease', async () => {
     const { projectId, chapterId } = seedProject('stale-business-runner')
     const tasks = new TaskRepository(database)
@@ -1682,6 +1764,175 @@ describe('task crash recovery fault matrix', () => {
     }
   })
 
+  test('P1-3 final version repairs chapter state and auto-confirms without a model', async () => {
+    const { projectId, outlineId, chapterId } = seedProject('final-side-effects')
+    const tasks = new TaskRepository(database)
+    const chapters = new ChapterRepository(database)
+    const versions = new ChapterVersionRepository(database)
+    const blocking = createBlockingAgent()
+    const chapter = chapters.getById(chapterId)!
+    chapters.update(chapterId, { status: 'drafting' }, chapter.version)
+    const task = tasks.create({
+      project_id: projectId,
+      chapter_id: chapterId,
+      task_type: 'chapter-generation',
+      input: {
+        sessionId: 's',
+        taskType: 'chapter-generation',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: {
+          project_id: projectId,
+          chapter_outline_id: outlineId,
+          chapter_id: chapterId,
+          auto_confirm: true,
+        },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      checkpoint_schema_version: 1,
+    })
+    const version = versions.create({
+      chapter_id: chapterId,
+      task_id: task.id,
+      content: 'durable final body',
+      summary: 'durable final summary',
+      fact_check: { passed: true, summary: 'ok', findings: [] },
+    })
+    tasks.update(task.id, {
+      status: 'running',
+      execution_phase: 'persisting_result',
+    })
+    const manager = createManager({
+      agentFactory: blocking.agentFactory,
+      resolveLlmConfig: () => {
+        throw new Error('credential unavailable')
+      },
+    })
+    manager.beginRuntimeSession()
+
+    expect((await manager.scanAndRecoverOnStartup()).autoStarted).toBe(1)
+    const finished = await manager.wait(task.id)
+    expect(finished?.status).toBe('completed')
+    expect(versions.getById(version.id)?.status).toBe('approved')
+    expect(chapters.getById(chapterId)).toMatchObject({
+      status: 'completed',
+      content: 'durable final body',
+      synopsis: 'durable final summary',
+      actual_words: 'durable final body'.length,
+    })
+    expect(blocking.createCount()).toBe(0)
+    expect(blocking.promptCount()).toBe(0)
+  })
+
+  test('P1-3 mismatched final entity becomes stable non-recoverable without loops', async () => {
+    const { projectId, outlineId, chapterId } = seedProject('final-mismatch')
+    const workbench = new WorkbenchService(database)
+    const wrongChapter = workbench.chapters.create({
+      project_id: projectId,
+      chapter_number: 2,
+      title: 'Wrong target',
+      content: '',
+    })
+    const tasks = new TaskRepository(database)
+    const attempts = new RecoveryAttemptRepository(database)
+    const blocking = createBlockingAgent()
+    const task = tasks.create({
+      project_id: projectId,
+      chapter_id: chapterId,
+      task_type: 'chapter-generation',
+      input: {
+        sessionId: 's',
+        taskType: 'chapter-generation',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: {
+          project_id: projectId,
+          chapter_outline_id: outlineId,
+          chapter_id: chapterId,
+        },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      checkpoint_schema_version: 1,
+    })
+    new ChapterVersionRepository(database).create({
+      chapter_id: wrongChapter.id,
+      task_id: task.id,
+      content: 'wrong body',
+      summary: 'wrong summary',
+      fact_check: { passed: true, summary: 'ok', findings: [] },
+    })
+    tasks.update(task.id, {
+      status: 'running',
+      execution_phase: 'persisting_result',
+    })
+    const manager = createManager({ agentFactory: blocking.agentFactory })
+    manager.beginRuntimeSession()
+
+    const first = await manager.scanAndRecoverOnStartup()
+    expect(first.autoStarted).toBe(1)
+    const failed = tasks.getById(task.id)!
+    expect(failed.status).toBe('failed')
+    expect(failed.recovery_classification).toBe('non-recoverable')
+    expect(failed.recovery_action).toBe('none')
+    expect(manager.classify(failed).classification).toBe('non-recoverable')
+    const attemptCount = attempts.listByTask(task.id).length
+    expect((await manager.scanAndRecoverOnStartup()).autoStarted).toBe(0)
+    expect(attempts.listByTask(task.id)).toHaveLength(attemptCount)
+    expect(blocking.createCount()).toBe(0)
+    expect(blocking.promptCount()).toBe(0)
+  })
+
+  test('P1-3 completed polish checkpoint without a task-bound revision is terminal', async () => {
+    const { projectId, chapterId } = seedProject('polish-missing-entity')
+    const tasks = new TaskRepository(database)
+    const blocking = createBlockingAgent()
+    const task = tasks.create({
+      project_id: projectId,
+      chapter_id: chapterId,
+      task_type: 'chapter-polish',
+      input: {
+        sessionId: 's',
+        taskType: 'chapter-polish',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: {
+          project_id: projectId,
+          chapter_id: chapterId,
+          mode: 'chapter',
+          auto_apply: false,
+        },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      checkpoint_schema_version: 1,
+    })
+    tasks.update(task.id, {
+      status: 'running',
+      execution_phase: 'finalizing',
+      checkpoint: {
+        schema_version: 1,
+        operation: 'chapter_polish',
+        source_content: 'source',
+        generated_content: 'generated',
+        revision_id: 'missing-revision',
+        status: 'completed',
+        error: null,
+        applied: false,
+      },
+    })
+    const manager = createManager({ agentFactory: blocking.agentFactory })
+    manager.beginRuntimeSession()
+
+    const scan = await manager.scanAndRecoverOnStartup()
+    expect(scan.autoStarted).toBe(0)
+    expect(tasks.getById(task.id)).toMatchObject({
+      status: 'failed',
+      recovery_classification: 'non-recoverable',
+      recovery_action: 'none',
+    })
+    expect(blocking.createCount()).toBe(0)
+    expect(blocking.promptCount()).toBe(0)
+  })
+
   test('P1-5 manual retry at attempt ceiling is rejected without DB mutation', () => {
     const { projectId, outlineId } = seedProject('manual-cap')
     const tasks = new TaskRepository(database)
@@ -1725,6 +1976,72 @@ describe('task crash recovery fault matrix', () => {
     expect(new RecoveryAttemptRepository(database).listByTask(task.id)).toHaveLength(0)
     const view = manager.listRecoverable(projectId).find((item) => item.id === task.id)
     expect(view?.manual_retry_allowed).toBe(false)
+  })
+
+  test('P1-4 unusable credential does not claim or consume an attempt, then retries after repair', async () => {
+    const { projectId, outlineId } = seedProject('credential-repair')
+    const tasks = new TaskRepository(database)
+    const attempts = new RecoveryAttemptRepository(database)
+    let credentialAvailable = false
+    let runs = 0
+    const task = tasks.create({
+      project_id: projectId,
+      task_type: 'chapter-generation',
+      input: {
+        sessionId: 's',
+        taskType: 'chapter-generation',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: { project_id: projectId, chapter_outline_id: outlineId },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      checkpoint_schema_version: 1,
+    })
+    tasks.update(task.id, {
+      status: 'failed',
+      execution_phase: 'queued',
+    })
+    const manager = new TaskManager({
+      store: tasks,
+      agentFactory: {
+        create: async () => {
+          throw new Error('runner should be used')
+        },
+      },
+      events: { publish: () => undefined },
+      runtimeSessions: new RuntimeSessionRepository(database),
+      recoveryAttempts: attempts,
+      runners: {
+        'chapter-generation': {
+          execute: async () => {
+            runs += 1
+            return { status: 'completed', result: { ok: true } }
+          },
+        },
+      },
+      recoveryLookups: {
+        projectExists: () => true,
+        targetExists: () => true,
+        hasChapterVersionForTask: () => false,
+        hasChapterRevisionForTask: () => false,
+        credentialAvailable: () => credentialAvailable,
+      },
+    })
+    manager.beginRuntimeSession()
+
+    const blocked = await manager.scanAndRecoverOnStartup()
+    expect(blocked.autoStarted).toBe(0)
+    expect(tasks.getById(task.id)?.recovery_attempt_count).toBe(0)
+    expect(attempts.listByTask(task.id)).toHaveLength(0)
+    expect(runs).toBe(0)
+
+    credentialAvailable = true
+    const retried = manager.manualRetry(task.id, true)
+    expect(retried).not.toBeNull()
+    expect((await retried!.completion).status).toBe('completed')
+    expect(tasks.getById(task.id)?.recovery_attempt_count).toBe(1)
+    expect(attempts.listByTask(task.id)).toHaveLength(1)
+    expect(runs).toBe(1)
   })
 
   test('P1-6 old deadline + queued is auto scanned with refreshed timer; model_in_flight is not', async () => {
@@ -1968,14 +2285,6 @@ describe('task crash recovery fault matrix', () => {
       leaseToken: 'old-token',
       claimedAt: new Date().toISOString(),
     })
-    database.exec(
-      `CREATE TRIGGER fail_new_runtime_session
-       BEFORE INSERT ON runtime_sessions
-       WHEN NEW.owner = 'new-owner'
-       BEGIN
-         SELECT RAISE(ABORT, 'injected runtime start failure');
-       END`,
-    )
     const manager = new TaskManager({
       store: tasks,
       agentFactory: {
@@ -1989,12 +2298,36 @@ describe('task crash recovery fault matrix', () => {
       ownerId: 'new-owner',
     })
 
-    expect(() => manager.beginRuntimeSession()).toThrow(/injected runtime start failure/)
-    expect(sessions.getById(crashed.id)?.ended_at).toBeNull()
-    expect(tasks.getById(task.id)?.lease_token).toBe('old-token')
-    expect(attempts.countOpen()).toBe(1)
+    const failureTriggers = [
+      `BEFORE UPDATE ON runtime_sessions
+       WHEN OLD.id = '${crashed.id}' AND NEW.end_reason = 'forced'`,
+      `BEFORE UPDATE ON tasks
+       WHEN OLD.id = '${task.id}' AND OLD.lease_token = 'old-token'
+         AND NEW.lease_token IS NULL`,
+      `BEFORE UPDATE ON recovery_attempts
+       WHEN OLD.task_id = '${task.id}' AND OLD.finished_at IS NULL
+         AND NEW.outcome = 'crashed'`,
+      `BEFORE INSERT ON runtime_sessions
+       WHEN NEW.owner = 'new-owner'`,
+    ]
+    for (const triggerClause of failureTriggers) {
+      database.exec(
+        `CREATE TRIGGER fail_runtime_reconciliation
+         ${triggerClause}
+         BEGIN
+           SELECT RAISE(ABORT, 'injected runtime reconciliation failure');
+         END`,
+      )
 
-    database.exec('DROP TRIGGER fail_new_runtime_session')
+      expect(() => manager.beginRuntimeSession())
+        .toThrow(/injected runtime reconciliation failure/)
+      expect(sessions.getById(crashed.id)?.ended_at).toBeNull()
+      expect(sessions.listOpen().map((session) => session.id)).toEqual([crashed.id])
+      expect(tasks.getById(task.id)?.lease_token).toBe('old-token')
+      expect(attempts.countOpen()).toBe(1)
+
+      database.exec('DROP TRIGGER fail_runtime_reconciliation')
+    }
     manager.beginRuntimeSession()
     expect(sessions.getById(crashed.id)?.end_reason).toBe('forced')
     expect(tasks.getById(task.id)?.lease_token).toBeNull()

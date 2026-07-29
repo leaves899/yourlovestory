@@ -113,6 +113,13 @@ export interface TaskRunner {
   execute(context: TaskRunnerContext): Promise<TaskRunnerResult>
 }
 
+export class NonRecoverableTaskError extends Error {
+  public constructor(message: string) {
+    super(message)
+    this.name = 'NonRecoverableTaskError'
+  }
+}
+
 export interface TaskRecoveryLookups {
   projectExists(projectId: string): boolean
   targetExists(task: Task): boolean
@@ -1050,6 +1057,9 @@ export class TaskManager {
         if (this.timeoutFlags.has(taskId)) return this.finishTimedOut(taskId, leaseToken)
         if (this.lostLeaseFlags.has(taskId)) return this.finishLostLease(taskId)
         if (controller.signal.aborted) return this.finishCancelled(taskId, undefined, leaseToken)
+        if (error instanceof NonRecoverableTaskError) {
+          return this.finishNonRecoverable(taskId, errorMessage(error), leaseToken)
+        }
         return this.finishFailed(taskId, errorMessage(error), leaseToken)
       } finally {
         agent?.dispose()
@@ -1060,6 +1070,9 @@ export class TaskManager {
         return this.finishLostLease(taskId)
       }
       if (controller.signal.aborted) return this.finishCancelled(taskId, undefined, leaseToken)
+      if (error instanceof NonRecoverableTaskError) {
+        return this.finishNonRecoverable(taskId, errorMessage(error), leaseToken)
+      }
       return this.finishFailed(taskId, errorMessage(error), leaseToken)
     } finally {
       if (leaseToken) {
@@ -1137,6 +1150,9 @@ export class TaskManager {
       if (this.timeoutFlags.has(taskId)) return this.finishTimedOut(taskId, leaseToken)
       if (this.lostLeaseFlags.has(taskId)) return this.finishLostLease(taskId)
       if (controller.signal.aborted) return this.finishCancelledWithResult(taskId, undefined, undefined, leaseToken)
+      if (error instanceof NonRecoverableTaskError) {
+        return this.finishNonRecoverable(taskId, errorMessage(error), leaseToken)
+      }
       return this.finishFailed(taskId, errorMessage(error), leaseToken)
     }
   }
@@ -1231,6 +1247,29 @@ export class TaskManager {
     })
     if (!failed) return this.finishLostLease(taskId)
     this.persistClassification(failed)
+    this.finishAttempt(taskId, 'failed', message)
+    this.options.events.publish({ type: 'task:error', taskId, error: message })
+    this.options.events.publish({ type: 'task:end', taskId, status: 'failed' })
+    return failed
+  }
+
+  private finishNonRecoverable(
+    taskId: string,
+    message: string,
+    leaseToken?: string,
+  ): Task {
+    if (this.lostLeaseFlags.has(taskId)) return this.finishLostLease(taskId)
+    const failed = this.mutateOwned(taskId, leaseToken, {
+      status: 'failed',
+      stage: 'failed',
+      error_message: message,
+      finished_at: this.now(),
+      execution_phase: 'failed',
+      recovery_classification: 'non-recoverable',
+      recovery_reason: message,
+      recovery_action: 'none',
+      last_recovery_error: message,
+    })
     this.finishAttempt(taskId, 'failed', message)
     this.options.events.publish({ type: 'task:error', taskId, error: message })
     this.options.events.publish({ type: 'task:end', taskId, status: 'failed' })
@@ -1390,11 +1429,12 @@ export class TaskManager {
     if (
       task.status === 'failed'
       && task.recovery_classification === 'non-recoverable'
-      && task.recovery_reason === TASK_CORRUPTION_REASON
+      && task.recovery_action === 'none'
+      && task.finished_at !== null
     ) {
       return {
         classification: 'non-recoverable',
-        reason: TASK_CORRUPTION_REASON,
+        reason: task.recovery_reason ?? TASK_CORRUPTION_REASON,
         action: 'none',
         autoAllowed: false,
         manualRetryAllowed: false,
