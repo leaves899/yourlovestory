@@ -267,6 +267,11 @@ export interface NarrativeRunOptions {
   existing_text?: string
   on_chunk?: (operation: NarrativeTextGenerationRequest['operation'], chunk: string) => void
   on_checkpoint?: (checkpoint: NarrativeOperationCheckpoint) => void
+  /**
+   * Optional synchronous commit boundary supplied by the persistent task
+   * runner so durable writes are fenced by the current execution lease.
+   */
+  commit?: <T>(operation: () => T) => T
 }
 
 export interface NarrativeOperationCheckpoint {

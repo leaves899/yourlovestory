@@ -33,6 +33,7 @@ import type {
   TaskStore,
   UpdateTaskInput,
 } from '../database'
+import { TaskLeaseLostError } from '../database'
 import type { RecoveryAttemptRepository } from '../database/repositories/recoveryAttemptRepository'
 import type { RuntimeSessionRepository } from '../database/repositories/runtimeSessionRepository'
 import type { TaskEventSink } from './events'
@@ -88,6 +89,11 @@ export interface TaskRunnerContext {
   readonly signal: AbortSignal
   /** Throws when the current owner no longer holds the execution lease. */
   assertStillOwnsExecution(): void
+  /**
+   * Executes synchronous durable side effects in the same SQLite transaction
+   * as the lease ownership check.
+   */
+  runOwnedSideEffect<T>(operation: () => T): T
   setStage(stage: string, progress: number): void
   setExecutionPhase(phase: ExecutionPhase): void
   emitChunk(chunk: string, stage?: string): void
@@ -923,19 +929,39 @@ export class TaskManager {
     taskId: string,
     leaseToken: string | undefined,
     input: UpdateTaskInput,
-  ): Task | null {
+  ): Task {
     const fence = this.fenceFor(taskId, leaseToken)
     if (!fence) {
       // Pre-lease administrative path (should be rare during execution).
-      return this.options.store.update(taskId, input)
+      const updated = this.options.store.update(taskId, input)
+      if (!updated) throw new Error(`Task not found during execution: ${taskId}`)
+      return updated
     }
     const updated = this.options.store.updateOwned(taskId, fence, input)
     if (!updated) {
       this.lostLeaseFlags.add(taskId)
       this.controllers.get(taskId)?.abort()
-      return null
+      throw new TaskLeaseLostError()
     }
     return updated
+  }
+
+  private runOwnedSideEffect<T>(
+    taskId: string,
+    leaseToken: string | undefined,
+    operation: () => T,
+  ): T {
+    const fence = this.fenceFor(taskId, leaseToken)
+    if (!fence) throw new TaskLeaseLostError()
+    try {
+      return this.options.store.runOwnedTransaction(taskId, fence, this.now(), operation)
+    } catch (error) {
+      if (error instanceof TaskLeaseLostError) {
+        this.lostLeaseFlags.add(taskId)
+        this.controllers.get(taskId)?.abort()
+      }
+      throw error
+    }
   }
 
   private assertOwnsExecution(taskId: string, leaseToken?: string): void {
@@ -1022,6 +1048,13 @@ export class TaskManager {
       } finally {
         agent?.dispose()
       }
+    } catch (error) {
+      if (this.timeoutFlags.has(taskId)) return this.finishTimedOut(taskId, leaseToken)
+      if (this.lostLeaseFlags.has(taskId) || error instanceof TaskLeaseLostError) {
+        return this.finishLostLease(taskId)
+      }
+      if (controller.signal.aborted) return this.finishCancelled(taskId, undefined, leaseToken)
+      return this.finishFailed(taskId, errorMessage(error), leaseToken)
     } finally {
       if (leaseToken) {
         this.options.store.releaseLease(taskId, leaseToken, this.now())
@@ -1046,6 +1079,8 @@ export class TaskManager {
       input,
       signal: controller.signal,
       assertStillOwnsExecution: () => this.assertOwnsExecution(taskId, leaseToken),
+      runOwnedSideEffect: (operation) =>
+        this.runOwnedSideEffect(taskId, leaseToken, operation),
       setStage: (stage, progress) => this.updateStage(taskId, stage, progress, leaseToken),
       setExecutionPhase: (phase) => this.setExecutionPhase(taskId, phase, leaseToken),
       emitChunk: (chunk, stage) => this.options.events.publish({ type: 'task:chunk', taskId, chunk, stage }),

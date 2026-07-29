@@ -38,6 +38,11 @@ export interface ChapterGenerationRunOptions {
   signal: AbortSignal
   checkpoint?: ChapterGenerationCheckpoint
   callbacks?: ChapterGenerationCallbacks
+  /**
+   * Optional synchronous commit boundary supplied by a persistent task runner.
+   * The main process uses it to fence durable writes with the task lease.
+   */
+  commit?: <T>(operation: () => T) => T
 }
 
 const stableOutlineStatuses = new Set(['confirmed', 'locked'])
@@ -336,14 +341,20 @@ export class ChapterGenerationService {
   ): Promise<ChapterGenerationResult> {
     let checkpoint = options.checkpoint ?? emptyChapterGenerationCheckpoint()
     const canReuseSavedVersion = checkpoint.stage === 'review' && checkpoint.version_id !== null
-    const preparation = this.prepareInternal(input, !canReuseSavedVersion)
+    const preparation = this.commit(
+      options,
+      () => this.prepareInternal(input, !canReuseSavedVersion),
+    )
     let chapter = preparation.chapter
 
     if (canReuseSavedVersion) {
       const saved = this.options.versions.getById(checkpoint.version_id!)
       if (saved) {
         if (input.auto_confirm && saved.status === 'review' && saved.fact_check.passed) {
-          const confirmed = this.confirmVersion(input.project_id, saved.id)
+          const confirmed = this.commit(
+            options,
+            () => this.confirmVersion(input.project_id, saved.id),
+          )
           checkpoint = { ...checkpoint, stage: 'review' }
           options.callbacks?.on_review?.(confirmed, false)
           return {
@@ -464,36 +475,44 @@ export class ChapterGenerationService {
     options.callbacks?.on_stage?.('saving', 0.9)
     checkpoint = { ...checkpoint, stage: 'saving' }
     this.publishCheckpoint(options, checkpoint)
-    const version = input.task_id
-      ? this.options.versions.getByTaskId(input.task_id) ?? this.options.versions.create({
-          chapter_id: chapter.id,
-          task_id: input.task_id,
-          content: checkpoint.body,
-          summary: checkpoint.summary,
-          fact_check: checkpoint.fact_check ?? parseFactCheckText(checkpoint.fact_check_text),
-        })
-      : this.options.versions.create({
-          chapter_id: chapter.id,
-          content: checkpoint.body,
-          summary: checkpoint.summary,
-          fact_check: checkpoint.fact_check ?? parseFactCheckText(checkpoint.fact_check_text),
-        })
+    const version = this.commit(options, () =>
+      input.task_id
+        ? this.options.versions.getByTaskId(input.task_id) ?? this.options.versions.create({
+            chapter_id: chapter.id,
+            task_id: input.task_id,
+            content: checkpoint.body,
+            summary: checkpoint.summary,
+            fact_check: checkpoint.fact_check ?? parseFactCheckText(checkpoint.fact_check_text),
+          })
+        : this.options.versions.create({
+            chapter_id: chapter.id,
+            content: checkpoint.body,
+            summary: checkpoint.summary,
+            fact_check: checkpoint.fact_check ?? parseFactCheckText(checkpoint.fact_check_text),
+          }),
+    )
     checkpoint = { ...checkpoint, stage: 'review', version_id: version.id }
     this.publishCheckpoint(options, checkpoint)
-    chapter = this.options.chapters.update(
-      chapter.id,
-      {
-        status: 'review',
-        synopsis: version.summary,
-        actual_words: version.content.length,
-      },
-      chapter.version,
-    ) ?? chapter
+    chapter = this.commit(
+      options,
+      () => this.options.chapters.update(
+        chapter.id,
+        {
+          status: 'review',
+          synopsis: version.summary,
+          actual_words: version.content.length,
+        },
+        chapter.version,
+      ) ?? chapter,
+    )
 
     const autoConfirmed = Boolean(input.auto_confirm && version.fact_check.passed)
     options.callbacks?.on_review?.(version, !autoConfirmed)
     if (autoConfirmed && version.status === 'review') {
-      const confirmed = this.confirmVersion(input.project_id, version.id)
+      const confirmed = this.commit(
+        options,
+        () => this.confirmVersion(input.project_id, version.id),
+      )
       options.callbacks?.on_review?.(confirmed, false)
       chapter = this.requireChapter(input.project_id, confirmed.chapter_id)
       options.callbacks?.on_stage?.('review', 1)
@@ -526,6 +545,13 @@ export class ChapterGenerationService {
       checkpoint,
       auto_confirmed: false,
     }
+  }
+
+  private commit<T>(
+    options: ChapterGenerationRunOptions,
+    operation: () => T,
+  ): T {
+    return options.commit ? options.commit(operation) : operation()
   }
 
   private prepareInternal(

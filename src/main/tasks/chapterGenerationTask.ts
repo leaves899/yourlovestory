@@ -179,6 +179,7 @@ export function createChapterGenerationTaskRunner(
           new AgentTextGenerator(agent, () => context.setExecutionPhase('model_in_flight')),
           {
             signal: context.signal,
+            commit: (operation) => context.runOwnedSideEffect(operation),
             checkpoint: (() => {
               const strict = context.task.checkpoint
                 ? parseStrictGenerationCheckpoint(context.task.checkpoint)

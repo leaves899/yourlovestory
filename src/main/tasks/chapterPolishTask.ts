@@ -183,26 +183,24 @@ function finishFromExistingRevision(
     throw new Error('已落库修订与任务目标章节不一致，任务不可恢复。')
   }
 
-  context.assertStillOwnsExecution()
   context.setExecutionPhase('persisting_result')
-  const report = service.ensureReportForTask(
-    request.project_id,
-    request.chapter_id,
-    context.task.id,
-    existing.id,
-    request.mode === 'paragraph' ? 'paragraph-revision' : 'chapter-polish',
-  )
-
-  let applied = false
   const savedCheckpoint = checkpointFromJson(context.task.checkpoint)
-  if (savedCheckpoint?.applied === true && savedCheckpoint.revision_id === existing.id) {
-    applied = true
-  }
-  if (request.auto_apply && !applied) {
-    context.assertStillOwnsExecution()
-    service.applyRevision(request.project_id, existing.id)
-    applied = true
-  }
+  const committed = context.runOwnedSideEffect(() => {
+    const report = service.ensureReportForTask(
+      request.project_id,
+      request.chapter_id,
+      context.task.id,
+      existing.id,
+      request.mode === 'paragraph' ? 'paragraph-revision' : 'chapter-polish',
+    )
+    let applied = savedCheckpoint?.applied === true
+      && savedCheckpoint.revision_id === existing.id
+    if (request.auto_apply && !applied) {
+      service.applyRevision(request.project_id, existing.id)
+      applied = true
+    }
+    return { report, applied }
+  })
 
   context.saveCheckpoint(checkpointToJson({
     schema_version: CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
@@ -212,7 +210,7 @@ function finishFromExistingRevision(
     revision_id: existing.id,
     status: 'completed',
     error: null,
-    applied,
+    applied: committed.applied,
   }))
   context.setStage('review', 1)
   context.setExecutionPhase('finalizing')
@@ -221,8 +219,8 @@ function finishFromExistingRevision(
     result: {
       status: 'completed',
       revision_id: existing.id,
-      report_id: report?.id ?? null,
-      applied,
+      report_id: committed.report?.id ?? null,
+      applied: committed.applied,
       error: null,
       diff: emptyDiff(),
     },
@@ -255,8 +253,9 @@ export function createChapterPolishTaskRunner(
           let applied = savedCheckpoint.applied === true
           if (request.auto_apply && !applied) {
             context.setExecutionPhase('persisting_result')
-            context.assertStillOwnsExecution()
-            options.service.applyRevision(request.project_id, savedCheckpoint.revision_id)
+            context.runOwnedSideEffect(() =>
+              options.service.applyRevision(request.project_id, savedCheckpoint.revision_id!),
+            )
             applied = true
             context.saveCheckpoint(checkpointToJson({ ...savedCheckpoint, applied: true }))
           }
@@ -296,6 +295,8 @@ export function createChapterPolishTaskRunner(
               schema_version: CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
             }))
           },
+          commit: <T>(operation: () => T): T =>
+            context.runOwnedSideEffect(operation),
           task_id: context.task.id,
         }
         context.setStage(request.mode === 'paragraph' ? 'paragraph-revision' : 'polish', 0.1)
@@ -331,7 +332,9 @@ export function createChapterPolishTaskRunner(
           const alreadyApplied = savedCheckpoint?.applied === true
             && savedCheckpoint.revision_id === result.revision.id
           if (!alreadyApplied) {
-            options.service.applyRevision(request.project_id, result.revision.id)
+            context.runOwnedSideEffect(() =>
+              options.service.applyRevision(request.project_id, result.revision!.id),
+            )
             applied = true
             if (result.revision) {
               context.saveCheckpoint(checkpointToJson({

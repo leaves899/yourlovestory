@@ -902,83 +902,85 @@ export class NarrativeWorkbenchService {
   ): ChapterRevisionOperationResult {
     const content = chapterBlocksToContent(blocks)
     const diff = diffChapterBlocks(source.blocks, blocks)
-    const taskId = options.task_id ?? null
-    if (taskId) {
-      const existing = this.options.stores.revisions.getByTaskId?.(taskId)
-        ?? null
-      if (existing) {
-        const report = this.options.stores.reports.getByTaskId?.(taskId)
-          ?? this.createReport(
-            projectId,
-            source.chapter.id,
-            taskId,
-            reportType,
-            'completed',
-            `${operation} completed`,
-            { revision_id: existing.id, diff: diffToJson(diff) },
+    return this.commit(options, () => {
+      const taskId = options.task_id ?? null
+      if (taskId) {
+        const existing = this.options.stores.revisions.getByTaskId?.(taskId)
+          ?? null
+        if (existing) {
+          const report = this.options.stores.reports.getByTaskId?.(taskId)
+            ?? this.createReport(
+              projectId,
+              source.chapter.id,
+              taskId,
+              reportType,
+              'completed',
+              `${operation} completed`,
+              { revision_id: existing.id, diff: diffToJson(diff) },
+            )
+          notifyCheckpoint(
+            options,
+            checkpointFor(
+              operation === 'polish' ? 'chapter_polish' : 'paragraph_revision',
+              source.content,
+              existing.content,
+              'completed',
+              existing.id,
+              null,
+              this.now(),
+            ),
           )
-        notifyCheckpoint(
-          options,
-          checkpointFor(
-            operation === 'polish' ? 'chapter_polish' : 'paragraph_revision',
-            source.content,
-            existing.content,
-            'completed',
-            existing.id,
-            null,
-            this.now(),
-          ),
-        )
-        return {
-          status: 'completed',
-          content: existing.content,
-          revision: existing,
-          diff,
-          report,
-          error: null,
+          return {
+            status: 'completed',
+            content: existing.content,
+            revision: existing,
+            diff,
+            report,
+            error: null,
+          }
         }
       }
-    }
-    const revision = this.options.stores.revisions.create({
-      chapter_id: source.chapter.id,
-      parent_revision_id: source.revision?.id ?? null,
-      task_id: taskId,
-      content,
-      summary: source.chapter.synopsis,
-      reason,
-      operation,
-      blocks,
-    })
-    const current = this.options.stores.revisions.setCurrent(revision.id) ?? revision
-    const report = this.createReport(
-      projectId,
-      source.chapter.id,
-      taskId,
-      reportType,
-      'completed',
-      `${operation} completed`,
-      { revision_id: current.id, diff: diffToJson(diff) },
-    )
-    notifyCheckpoint(
-      options,
-      checkpointFor(
-        operation === 'polish' ? 'chapter_polish' : 'paragraph_revision',
-        source.content,
+      const revision = this.options.stores.revisions.create({
+        chapter_id: source.chapter.id,
+        parent_revision_id: source.revision?.id ?? null,
+        task_id: taskId,
         content,
+        summary: source.chapter.synopsis,
+        reason,
+        operation,
+        blocks,
+      })
+      const current = this.options.stores.revisions.setCurrent(revision.id) ?? revision
+      const report = this.createReport(
+        projectId,
+        source.chapter.id,
+        taskId,
+        reportType,
         'completed',
-        current.id,
-        null,
-        this.now(),
-      ),
-    )
-    return {
-      status: 'completed',
-      content,
-      revision: current,
-      diff,
-      report,
-      error: null,
-    }
+        `${operation} completed`,
+        { revision_id: current.id, diff: diffToJson(diff) },
+      )
+      notifyCheckpoint(
+        options,
+        checkpointFor(
+          operation === 'polish' ? 'chapter_polish' : 'paragraph_revision',
+          source.content,
+          content,
+          'completed',
+          current.id,
+          null,
+          this.now(),
+        ),
+      )
+      return {
+        status: 'completed',
+        content,
+        revision: current,
+        diff,
+        report,
+        error: null,
+      }
+    })
   }
 
   private fallbackResult(
@@ -992,14 +994,17 @@ export class NarrativeWorkbenchService {
     const actualStatus = status === 'cancelled' ? 'cancelled' : 'fallback'
     const fallbackError = error ?? `${reportType} used the original content`
     const report = actualStatus === 'fallback'
-      ? this.createReport(
-          projectId,
-          source.chapter.id,
-          options.task_id ?? null,
-          reportType,
-          'fallback',
-          `${reportType} fell back to the original content`,
-          { error: fallbackError },
+      ? this.commit(
+          options,
+          () => this.createReport(
+            projectId,
+            source.chapter.id,
+            options.task_id ?? null,
+            reportType,
+            'fallback',
+            `${reportType} fell back to the original content`,
+            { error: fallbackError },
+          ),
         )
       : null
     return {
@@ -1010,6 +1015,10 @@ export class NarrativeWorkbenchService {
       report,
       error: fallbackError,
     }
+  }
+
+  private commit<T>(options: NarrativeRunOptions, operation: () => T): T {
+    return options.commit ? options.commit(operation) : operation()
   }
 
   private createReport(

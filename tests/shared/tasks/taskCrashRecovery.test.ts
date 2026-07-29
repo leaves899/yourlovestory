@@ -1322,6 +1322,121 @@ describe('task crash recovery fault matrix', () => {
     void nowIso
   })
 
+  test('P1-1 lease fence guards durable business writes in the same transaction', () => {
+    const { projectId, chapterId } = seedProject('fenced-side-effect')
+    const tasks = new TaskRepository(database)
+    const versions = new ChapterVersionRepository(database)
+    const task = tasks.create({
+      project_id: projectId,
+      chapter_id: chapterId,
+      task_type: 'chapter-generation',
+      input: {},
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+    })
+    const expiresAt = new Date(Date.now() + 60_000).toISOString()
+    tasks.update(task.id, {
+      status: 'running',
+      lease_owner: 'owner-b',
+      lease_token: 'token-b',
+      lease_expires_at: expiresAt,
+    })
+    const createVersion = () => versions.create({
+      chapter_id: chapterId,
+      task_id: task.id,
+      content: 'fenced content',
+      summary: 'fenced summary',
+      fact_check: { passed: true, summary: 'ok', findings: [] },
+    })
+
+    expect(() =>
+      tasks.runOwnedTransaction(
+        task.id,
+        { owner: 'owner-a', leaseToken: 'token-a' },
+        new Date().toISOString(),
+        createVersion,
+      ),
+    ).toThrow(/lease/i)
+    expect(versions.getByTaskId(task.id)).toBeNull()
+
+    expect(() =>
+      tasks.runOwnedTransaction(
+        task.id,
+        { owner: 'owner-b', leaseToken: 'token-b' },
+        new Date().toISOString(),
+        () => {
+          createVersion()
+          throw new Error('inject rollback after business write')
+        },
+      ),
+    ).toThrow(/inject rollback/)
+    expect(versions.getByTaskId(task.id)).toBeNull()
+
+    const committed = tasks.runOwnedTransaction(
+      task.id,
+      { owner: 'owner-b', leaseToken: 'token-b' },
+      new Date().toISOString(),
+      createVersion,
+    )
+    expect(committed.task_id).toBe(task.id)
+    expect(versions.getByTaskId(task.id)?.id).toBe(committed.id)
+  })
+
+  test('P1-1 stale runner cannot persist a business entity after another owner takes the lease', async () => {
+    const { projectId, chapterId } = seedProject('stale-business-runner')
+    const tasks = new TaskRepository(database)
+    const versions = new ChapterVersionRepository(database)
+    let releaseRunner: (() => void) | null = null
+    let markStarted: (() => void) | null = null
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const manager = createManager({
+      ownerId: 'owner-a',
+      runners: {
+        'fenced-business': {
+          execute: async (context) => {
+            markStarted?.()
+            await new Promise<void>((resolve) => {
+              releaseRunner = resolve
+            })
+            context.runOwnedSideEffect(() => {
+              versions.create({
+                chapter_id: chapterId,
+                task_id: context.task.id,
+                content: 'stale content',
+                summary: 'stale summary',
+                fact_check: { passed: true, summary: 'ok', findings: [] },
+              })
+            })
+            return { status: 'completed', result: { ok: true } }
+          },
+        },
+      },
+    })
+    manager.beginRuntimeSession()
+    const handle = manager.start({
+      projectId,
+      chapterId,
+      sessionId: 's',
+      taskType: 'fenced-business',
+      prompt: '',
+      llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+    })
+    await started
+    tasks.update(handle.taskId, {
+      lease_owner: 'owner-b',
+      lease_token: 'token-b',
+      lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+      stage: 'owned-by-b',
+    })
+    releaseRunner?.()
+    const finished = await handle.completion
+
+    expect(versions.getByTaskId(handle.taskId)).toBeNull()
+    expect(finished.lease_owner).toBe('owner-b')
+    expect(tasks.getById(handle.taskId)?.stage).toBe('owned-by-b')
+  })
+
   test('P1-1 two managers real concurrent claim fencing', async () => {
     const { projectId, outlineId } = seedProject('two-mgr')
     const tasks = new TaskRepository(database)

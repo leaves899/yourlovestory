@@ -149,6 +149,13 @@ export interface LeaseFence {
   leaseToken: string
 }
 
+export class TaskLeaseLostError extends Error {
+  public constructor() {
+    super('Task execution lease is no longer owned by this worker')
+    this.name = 'TaskLeaseLostError'
+  }
+}
+
 export interface TaskStore {
   create(input: CreateTaskInput): Task
   getById(id: string): Task | null
@@ -164,6 +171,16 @@ export interface TaskStore {
     fence: LeaseFence,
     input: UpdateTaskInput,
   ): Task | null
+  /**
+   * Runs synchronous business writes in the same SQLite write transaction as
+   * the lease check. This is the fencing boundary for durable side effects.
+   */
+  runOwnedTransaction<T>(
+    id: string,
+    fence: LeaseFence,
+    nowIso: string,
+    operation: () => T,
+  ): T
   requestCancellation(id: string): boolean
   claimForRecovery(input: ClaimTaskInput): ClaimTaskResult
   renewLease(input: RenewLeaseInput): boolean
@@ -424,6 +441,41 @@ export class TaskRepository implements TaskStore {
     input: UpdateTaskInput,
   ): Task | null {
     return this.applyUpdate(id, input, fence)
+  }
+
+  public runOwnedTransaction<T>(
+    id: string,
+    fence: LeaseFence,
+    nowIso: string,
+    operation: () => T,
+  ): T {
+    const execute = (): T => {
+      const owned = this.database
+        .prepare<{ owned: number }>(
+          `SELECT 1 AS owned
+           FROM tasks
+           WHERE id = ?
+             AND lease_owner = ?
+             AND lease_token = ?
+             AND lease_expires_at IS NOT NULL
+             AND lease_expires_at > ?`,
+        )
+        .get(id, fence.owner, fence.leaseToken, nowIso)
+      if (!owned) throw new TaskLeaseLostError()
+      return operation()
+    }
+
+    if (this.database.inTransaction) return execute()
+
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const result = execute()
+      this.database.exec('COMMIT')
+      return result
+    } catch (error) {
+      if (this.database.inTransaction) this.database.exec('ROLLBACK')
+      throw error
+    }
   }
 
   private applyUpdate(
