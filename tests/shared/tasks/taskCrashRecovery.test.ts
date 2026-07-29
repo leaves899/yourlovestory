@@ -325,6 +325,7 @@ describe('task crash recovery fault matrix', () => {
     const blocking = createBlockingAgent()
     const manager = createManager({ agentFactory: blocking.agentFactory })
     manager.beginRuntimeSession()
+    const sourceContent = new ChapterRepository(database).getById(chapterId)!.content
 
     const task = tasks.create({
       project_id: projectId,
@@ -359,7 +360,16 @@ describe('task crash recovery fault matrix', () => {
     tasks.update(task.id, {
       status: 'running',
       execution_phase: 'persisting_result',
-      checkpoint: null,
+      checkpoint: {
+        schema_version: 1,
+        operation: 'chapter_polish',
+        source_content: sourceContent,
+        generated_content: revision.content,
+        revision_id: null,
+        status: 'running',
+        error: null,
+        applied: false,
+      },
       finished_at: null,
     })
 
@@ -444,6 +454,75 @@ describe('task crash recovery fault matrix', () => {
     expect(revisions.getById(newer.id)?.is_current).toBe(true)
     expect(new ChapterRepository(database).getById(chapterId)?.content)
       .toBe('newer adopted revision')
+    expect(blocking.createCount()).toBe(0)
+    expect(blocking.promptCount()).toBe(0)
+  })
+
+  test('P1-2 recovered auto-apply fails closed when chapter changed after source checkpoint', async () => {
+    const { projectId, chapterId } = seedProject('polish-source-fence')
+    const tasks = new TaskRepository(database)
+    const chapters = new ChapterRepository(database)
+    const revisions = new ChapterRevisionRepository(database)
+    const reports = new PostprocessReportRepository(database)
+    const blocking = createBlockingAgent()
+    const source = chapters.getById(chapterId)!
+    const task = tasks.create({
+      project_id: projectId,
+      chapter_id: chapterId,
+      task_type: 'chapter-polish',
+      input: {
+        sessionId: 's',
+        taskType: 'chapter-polish',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: {
+          project_id: projectId,
+          chapter_id: chapterId,
+          mode: 'chapter',
+          auto_apply: true,
+        },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      checkpoint_schema_version: 1,
+    })
+    const revision = revisions.create({
+      chapter_id: chapterId,
+      task_id: task.id,
+      content: 'recovered polished content',
+      summary: 'polished',
+      reason: 'task',
+      operation: 'polish',
+      blocks: [],
+    })
+    revisions.setCurrent(revision.id)
+    tasks.update(task.id, {
+      status: 'running',
+      execution_phase: 'persisting_result',
+      checkpoint: {
+        schema_version: 1,
+        operation: 'chapter_polish',
+        source_content: source.content,
+        generated_content: revision.content,
+        revision_id: revision.id,
+        status: 'completed',
+        error: null,
+        applied: false,
+      },
+    })
+    chapters.update(chapterId, {
+      content: 'manual edit after crash',
+    }, source.version)
+    const manager = createManager({ agentFactory: blocking.agentFactory })
+    manager.beginRuntimeSession()
+
+    expect((await manager.scanAndRecoverOnStartup()).autoStarted).toBe(1)
+    expect(tasks.getById(task.id)).toMatchObject({
+      status: 'failed',
+      recovery_classification: 'non-recoverable',
+    })
+    expect(chapters.getById(chapterId)?.content).toBe('manual edit after crash')
+    expect(revisions.getById(revision.id)?.is_current).toBe(true)
+    expect(reports.getByTaskId(task.id)).toBeNull()
     expect(blocking.createCount()).toBe(0)
     expect(blocking.promptCount()).toBe(0)
   })

@@ -9,6 +9,7 @@ import type {
   ParagraphRevisionOptions,
   NarrativeWorkbenchService,
 } from '../../shared/narrativeWorkbench'
+import { NarrativeBoundaryError } from '../../shared/narrativeWorkbench'
 import {
   CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
   parseStrictPolishCheckpoint,
@@ -196,22 +197,35 @@ function finishFromExistingRevision(
 
   context.setExecutionPhase('persisting_result')
   const savedCheckpoint = checkpointFromJson(context.task.checkpoint)
-  const committed = context.runOwnedSideEffect(() => {
-    const report = service.ensureReportForTask(
-      request.project_id,
-      request.chapter_id,
-      context.task.id,
-      existing.id,
-      request.mode === 'paragraph' ? 'paragraph-revision' : 'chapter-polish',
-    )
-    let applied = savedCheckpoint?.applied === true
-      && savedCheckpoint.revision_id === existing.id
-    if (request.auto_apply && !applied) {
-      service.applyRevision(request.project_id, existing.id)
-      applied = true
+  let committed: { report: ReturnType<NarrativeWorkbenchService['ensureReportForTask']>; applied: boolean }
+  try {
+    committed = context.runOwnedSideEffect(() => {
+      const report = service.ensureReportForTask(
+        request.project_id,
+        request.chapter_id,
+        context.task.id,
+        existing.id,
+        request.mode === 'paragraph' ? 'paragraph-revision' : 'chapter-polish',
+      )
+      let applied = savedCheckpoint?.applied === true
+        && savedCheckpoint.revision_id === existing.id
+      if (request.auto_apply && !applied) {
+        const sourceContent = typeof context.task.checkpoint?.source_content === 'string'
+          ? context.task.checkpoint.source_content
+          : null
+        service.applyRecoveredRevision(request.project_id, existing.id, sourceContent)
+        applied = true
+      }
+      return { report, applied }
+    })
+  } catch (error) {
+    if (error instanceof NarrativeBoundaryError) {
+      throw new NonRecoverableTaskError(
+        '章节内容在崩溃后已变化或缺少源内容证据，禁止自动应用旧修订。',
+      )
     }
-    return { report, applied }
-  })
+    throw error
+  }
 
   context.saveCheckpoint(checkpointToJson({
     schema_version: CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,

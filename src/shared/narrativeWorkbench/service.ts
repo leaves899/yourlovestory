@@ -698,6 +698,35 @@ export class NarrativeWorkbenchService {
     return updated
   }
 
+  /**
+   * Recovery-only compare-and-apply boundary. A task's old auto_apply consent
+   * cannot overwrite chapter text changed after the checkpoint was persisted.
+   */
+  public applyRecoveredRevision(
+    projectId: string,
+    revisionId: string,
+    expectedSourceContent: string | null,
+  ): Chapter {
+    const revision = this.getRevision(projectId, revisionId)
+    const latest = this.options.stores.revisions.listByChapter(revision.chapter_id)[0]
+    if (!revision.is_current || !latest || latest.id !== revision.id) {
+      throw new NarrativeBoundaryError('Recovered revision is no longer latest and current')
+    }
+    const chapter = this.requireChapter(projectId, revision.chapter_id)
+    if (
+      chapter.content === revision.content
+      && chapter.status === 'completed'
+    ) {
+      return chapter
+    }
+    if (expectedSourceContent === null || chapter.content !== expectedSourceContent) {
+      throw new NarrativeBoundaryError(
+        'Chapter changed after the revision checkpoint; explicit review is required',
+      )
+    }
+    return this.applyRevision(projectId, revisionId)
+  }
+
   public async reviseParagraph(
     projectId: string,
     chapterId: string,

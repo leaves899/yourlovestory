@@ -45,6 +45,8 @@
 实体会稳定终止为 `non-recoverable`，不会覆盖后来采用/编辑的章节，也不会再次进入恢复循环。
 即使 approved version 仍为 current，只要章节正文或采用状态已与它不一致，也拒绝自动回写。
 task-bound revision 同样必须仍是最新且 current，才允许执行既有 `auto_apply` 授权。
+恢复期 `auto_apply` 还必须用 checkpoint 的 `source_content` 对当前章节做 compare-and-apply；
+当前正文已变化或缺少来源证据时 fail closed，保留 revision 供用户显式复核。
 
 ## 数据模型要点（migration 9）
 
