@@ -5,6 +5,14 @@ import {
   type JsonObject,
 } from '../json'
 import type { SqliteDatabase } from '../types'
+import {
+  DEFAULT_MAX_RECOVERY_ATTEMPTS,
+  RECOVERY_METADATA_VERSION,
+  type ExecutionPhase,
+  type RecoveryAction,
+  type RecoveryClassification,
+  type ShutdownKind,
+} from '../../../shared/taskRecovery'
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
 
@@ -28,6 +36,24 @@ export interface Task {
   finished_at: string | null
   created_at: string
   updated_at: string
+  execution_phase: ExecutionPhase
+  recovery_classification: RecoveryClassification | null
+  recovery_reason: string | null
+  recovery_action: RecoveryAction | null
+  recovery_attempt_count: number
+  max_recovery_attempts: number
+  last_recovery_attempt_at: string | null
+  last_recovery_error: string | null
+  idempotency_key: string | null
+  checkpoint_schema_version: number | null
+  recovery_root_task_id: string | null
+  lease_owner: string | null
+  lease_token: string | null
+  lease_expires_at: string | null
+  timeout_at: string | null
+  shutdown_kind: ShutdownKind | null
+  runtime_session_id: string | null
+  recovery_metadata_version: number
 }
 
 export interface CreateTaskInput {
@@ -37,6 +63,14 @@ export interface CreateTaskInput {
   parent_task_id?: string | null
   task_type: string
   input?: JsonObject
+  idempotency_key?: string | null
+  recovery_root_task_id?: string | null
+  checkpoint_schema_version?: number | null
+  max_recovery_attempts?: number
+  timeout_at?: string | null
+  runtime_session_id?: string | null
+  recovery_metadata_version?: number
+  execution_phase?: ExecutionPhase
 }
 
 export interface UpdateTaskInput {
@@ -50,14 +84,57 @@ export interface UpdateTaskInput {
   cancel_requested?: boolean
   started_at?: string | null
   finished_at?: string | null
+  execution_phase?: ExecutionPhase
+  recovery_classification?: RecoveryClassification | null
+  recovery_reason?: string | null
+  recovery_action?: RecoveryAction | null
+  recovery_attempt_count?: number
+  max_recovery_attempts?: number
+  last_recovery_attempt_at?: string | null
+  last_recovery_error?: string | null
+  idempotency_key?: string | null
+  checkpoint_schema_version?: number | null
+  recovery_root_task_id?: string | null
+  lease_owner?: string | null
+  lease_token?: string | null
+  lease_expires_at?: string | null
+  timeout_at?: string | null
+  shutdown_kind?: ShutdownKind | null
+  runtime_session_id?: string | null
+  recovery_metadata_version?: number
+}
+
+export interface ClaimTaskInput {
+  taskId: string
+  owner: string
+  leaseToken: string
+  leaseExpiresAt: string
+  nowIso: string
+  /** For automatic recovery only allow these classifications. */
+  allowedClassifications?: readonly RecoveryClassification[]
+  /** Increment recovery attempt counter on successful claim. */
+  incrementAttempt?: boolean
+  /** When true, allow claim even if attempt count reached the auto max (manual path). */
+  bypassAttemptLimit?: boolean
+  runtimeSessionId?: string | null
+}
+
+export interface ClaimTaskResult {
+  claimed: boolean
+  task: Task | null
 }
 
 export interface TaskStore {
   create(input: CreateTaskInput): Task
   getById(id: string): Task | null
   listByProject(projectId: string): Task[]
+  listRecoveryCandidates(): Task[]
   update(id: string, input: UpdateTaskInput): Task | null
   requestCancellation(id: string): boolean
+  claimForRecovery(input: ClaimTaskInput): ClaimTaskResult
+  releaseLease(taskId: string, leaseToken: string, nowIso: string): boolean
+  markGracefulShutdown(nowIso: string, runtimeSessionId: string | null): number
+  expireLeases(nowIso: string): number
 }
 
 interface TaskRow {
@@ -78,16 +155,86 @@ interface TaskRow {
   finished_at: string | null
   created_at: string
   updated_at: string
+  execution_phase: string
+  recovery_classification: string | null
+  recovery_reason: string | null
+  recovery_action: string | null
+  recovery_attempt_count: number
+  max_recovery_attempts: number
+  last_recovery_attempt_at: string | null
+  last_recovery_error: string | null
+  idempotency_key: string | null
+  checkpoint_schema_version: number | null
+  recovery_root_task_id: string | null
+  lease_owner: string | null
+  lease_token: string | null
+  lease_expires_at: string | null
+  timeout_at: string | null
+  shutdown_kind: string | null
+  runtime_session_id: string | null
+  recovery_metadata_version: number
+}
+
+const statuses: readonly TaskStatus[] = [
+  'pending',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+]
+
+const executionPhases: readonly ExecutionPhase[] = [
+  'queued',
+  'preparing',
+  'awaiting_model',
+  'model_in_flight',
+  'persisting_result',
+  'finalizing',
+  'completed',
+  'cancelled',
+  'failed',
+]
+
+const classifications: readonly RecoveryClassification[] = [
+  'resumable',
+  'restartable',
+  'manual-retry-required',
+  'non-recoverable',
+]
+
+const actions: readonly RecoveryAction[] = [
+  'auto-resume',
+  'auto-restart',
+  'manual-retry',
+  'manual-confirm',
+  'none',
+]
+
+function parseExecutionPhase(value: string): ExecutionPhase {
+  if (executionPhases.includes(value as ExecutionPhase)) return value as ExecutionPhase
+  return 'queued'
+}
+
+function parseClassification(value: string | null): RecoveryClassification | null {
+  if (value === null) return null
+  if (classifications.includes(value as RecoveryClassification)) {
+    return value as RecoveryClassification
+  }
+  return null
+}
+
+function parseAction(value: string | null): RecoveryAction | null {
+  if (value === null) return null
+  if (actions.includes(value as RecoveryAction)) return value as RecoveryAction
+  return null
+}
+
+function parseShutdownKind(value: string | null): ShutdownKind | null {
+  if (value === 'graceful' || value === 'crash') return value
+  return null
 }
 
 function toTask(row: TaskRow): Task {
-  const statuses: readonly TaskStatus[] = [
-    'pending',
-    'running',
-    'completed',
-    'failed',
-    'cancelled',
-  ]
   if (!statuses.includes(row.status as TaskStatus)) {
     throw new Error(`Unknown task status: ${row.status}`)
   }
@@ -111,6 +258,24 @@ function toTask(row: TaskRow): Task {
     finished_at: row.finished_at,
     created_at: row.created_at,
     updated_at: row.updated_at,
+    execution_phase: parseExecutionPhase(row.execution_phase ?? 'queued'),
+    recovery_classification: parseClassification(row.recovery_classification),
+    recovery_reason: row.recovery_reason,
+    recovery_action: parseAction(row.recovery_action),
+    recovery_attempt_count: row.recovery_attempt_count ?? 0,
+    max_recovery_attempts: row.max_recovery_attempts ?? DEFAULT_MAX_RECOVERY_ATTEMPTS,
+    last_recovery_attempt_at: row.last_recovery_attempt_at,
+    last_recovery_error: row.last_recovery_error,
+    idempotency_key: row.idempotency_key,
+    checkpoint_schema_version: row.checkpoint_schema_version,
+    recovery_root_task_id: row.recovery_root_task_id,
+    lease_owner: row.lease_owner,
+    lease_token: row.lease_token,
+    lease_expires_at: row.lease_expires_at,
+    timeout_at: row.timeout_at,
+    shutdown_kind: parseShutdownKind(row.shutdown_kind),
+    runtime_session_id: row.runtime_session_id,
+    recovery_metadata_version: row.recovery_metadata_version ?? 0,
   }
 }
 
@@ -124,12 +289,22 @@ export class TaskRepository implements TaskStore {
   public create(input: CreateTaskInput): Task {
     const id = input.id ?? randomUUID()
     const timestamp = now()
+    const metadataVersion = input.recovery_metadata_version ?? RECOVERY_METADATA_VERSION
     this.database
       .prepare(
         `INSERT INTO tasks (
           id, project_id, chapter_id, parent_task_id, task_type, status, stage, progress,
-          input_json, checkpoint_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'pending', '', 0, ?, NULL, ?, ?)`,
+          input_json, checkpoint_json, created_at, updated_at,
+          execution_phase, recovery_attempt_count, max_recovery_attempts,
+          idempotency_key, checkpoint_schema_version, recovery_root_task_id,
+          timeout_at, runtime_session_id, recovery_metadata_version
+        ) VALUES (
+          ?, ?, ?, ?, ?, 'pending', '', 0,
+          ?, NULL, ?, ?,
+          ?, 0, ?,
+          ?, ?, ?,
+          ?, ?, ?
+        )`,
       )
       .run(
         id,
@@ -140,6 +315,14 @@ export class TaskRepository implements TaskStore {
         stringifyJsonObject(input.input ?? {}),
         timestamp,
         timestamp,
+        input.execution_phase ?? 'queued',
+        input.max_recovery_attempts ?? DEFAULT_MAX_RECOVERY_ATTEMPTS,
+        input.idempotency_key ?? null,
+        input.checkpoint_schema_version ?? null,
+        input.recovery_root_task_id ?? id,
+        input.timeout_at ?? null,
+        input.runtime_session_id ?? null,
+        metadataVersion,
       )
     const task = this.getById(id)
     if (!task) throw new Error('Task was not created')
@@ -158,6 +341,18 @@ export class TaskRepository implements TaskStore {
       .map(toTask)
   }
 
+  public listRecoveryCandidates(): Task[] {
+    return this.database
+      .prepare<TaskRow>(
+        `SELECT * FROM tasks
+         WHERE status IN ('pending', 'running', 'failed')
+           AND cancel_requested = 0
+         ORDER BY created_at, id`,
+      )
+      .all()
+      .map(toTask)
+  }
+
   public update(id: string, input: UpdateTaskInput): Task | null {
     const current = this.getById(id)
     if (!current) return null
@@ -172,12 +367,59 @@ export class TaskRepository implements TaskStore {
       cancel_requested: input.cancel_requested ?? current.cancel_requested,
       started_at: input.started_at === undefined ? current.started_at : input.started_at,
       finished_at: input.finished_at === undefined ? current.finished_at : input.finished_at,
+      execution_phase: input.execution_phase ?? current.execution_phase,
+      recovery_classification:
+        input.recovery_classification === undefined
+          ? current.recovery_classification
+          : input.recovery_classification,
+      recovery_reason:
+        input.recovery_reason === undefined ? current.recovery_reason : input.recovery_reason,
+      recovery_action:
+        input.recovery_action === undefined ? current.recovery_action : input.recovery_action,
+      recovery_attempt_count: input.recovery_attempt_count ?? current.recovery_attempt_count,
+      max_recovery_attempts: input.max_recovery_attempts ?? current.max_recovery_attempts,
+      last_recovery_attempt_at:
+        input.last_recovery_attempt_at === undefined
+          ? current.last_recovery_attempt_at
+          : input.last_recovery_attempt_at,
+      last_recovery_error:
+        input.last_recovery_error === undefined
+          ? current.last_recovery_error
+          : input.last_recovery_error,
+      idempotency_key:
+        input.idempotency_key === undefined ? current.idempotency_key : input.idempotency_key,
+      checkpoint_schema_version:
+        input.checkpoint_schema_version === undefined
+          ? current.checkpoint_schema_version
+          : input.checkpoint_schema_version,
+      recovery_root_task_id:
+        input.recovery_root_task_id === undefined
+          ? current.recovery_root_task_id
+          : input.recovery_root_task_id,
+      lease_owner: input.lease_owner === undefined ? current.lease_owner : input.lease_owner,
+      lease_token: input.lease_token === undefined ? current.lease_token : input.lease_token,
+      lease_expires_at:
+        input.lease_expires_at === undefined ? current.lease_expires_at : input.lease_expires_at,
+      timeout_at: input.timeout_at === undefined ? current.timeout_at : input.timeout_at,
+      shutdown_kind:
+        input.shutdown_kind === undefined ? current.shutdown_kind : input.shutdown_kind,
+      runtime_session_id:
+        input.runtime_session_id === undefined
+          ? current.runtime_session_id
+          : input.runtime_session_id,
+      recovery_metadata_version:
+        input.recovery_metadata_version ?? current.recovery_metadata_version,
     }
     this.database
       .prepare(
         `UPDATE tasks
          SET chapter_id = ?, status = ?, stage = ?, progress = ?, checkpoint_json = ?, result_json = ?,
-             error_message = ?, cancel_requested = ?, started_at = ?, finished_at = ?, updated_at = ?
+             error_message = ?, cancel_requested = ?, started_at = ?, finished_at = ?, updated_at = ?,
+             execution_phase = ?, recovery_classification = ?, recovery_reason = ?, recovery_action = ?,
+             recovery_attempt_count = ?, max_recovery_attempts = ?, last_recovery_attempt_at = ?,
+             last_recovery_error = ?, idempotency_key = ?, checkpoint_schema_version = ?,
+             recovery_root_task_id = ?, lease_owner = ?, lease_token = ?, lease_expires_at = ?,
+             timeout_at = ?, shutdown_kind = ?, runtime_session_id = ?, recovery_metadata_version = ?
          WHERE id = ?`,
       )
       .run(
@@ -192,6 +434,24 @@ export class TaskRepository implements TaskStore {
         next.started_at,
         next.finished_at,
         now(),
+        next.execution_phase,
+        next.recovery_classification,
+        next.recovery_reason,
+        next.recovery_action,
+        next.recovery_attempt_count,
+        next.max_recovery_attempts,
+        next.last_recovery_attempt_at,
+        next.last_recovery_error,
+        next.idempotency_key,
+        next.checkpoint_schema_version,
+        next.recovery_root_task_id,
+        next.lease_owner,
+        next.lease_token,
+        next.lease_expires_at,
+        next.timeout_at,
+        next.shutdown_kind,
+        next.runtime_session_id,
+        next.recovery_metadata_version,
         id,
       )
     return this.getById(id)
@@ -206,5 +466,97 @@ export class TaskRepository implements TaskStore {
       )
       .run(now(), id)
     return result.changes > 0
+  }
+
+  /**
+   * Atomic claim using conditional UPDATE; uniqueness is determined by SQLite `changes`.
+   */
+  public claimForRecovery(input: ClaimTaskInput): ClaimTaskResult {
+    const allowed = input.allowedClassifications
+    const classificationClause = allowed && allowed.length > 0
+      ? `AND recovery_classification IN (${allowed.map(() => '?').join(', ')})`
+      : ''
+    const incrementAttempt = input.incrementAttempt !== false
+    const attemptClause = input.bypassAttemptLimit
+      ? ''
+      : 'AND recovery_attempt_count < max_recovery_attempts'
+    const sql = `
+      UPDATE tasks
+      SET lease_owner = ?,
+          lease_token = ?,
+          lease_expires_at = ?,
+          status = 'running',
+          last_recovery_attempt_at = ?,
+          recovery_attempt_count = recovery_attempt_count + ${incrementAttempt ? 1 : 0},
+          runtime_session_id = COALESCE(?, runtime_session_id),
+          shutdown_kind = NULL,
+          updated_at = ?
+      WHERE id = ?
+        AND cancel_requested = 0
+        AND status IN ('pending', 'running', 'failed', 'cancelled')
+        ${attemptClause}
+        AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?)
+        ${classificationClause}
+    `
+    const params: Array<string | null> = [
+      input.owner,
+      input.leaseToken,
+      input.leaseExpiresAt,
+      input.nowIso,
+      input.runtimeSessionId ?? null,
+      input.nowIso,
+      input.taskId,
+      input.nowIso,
+    ]
+    if (allowed && allowed.length > 0) {
+      for (const item of allowed) params.push(item)
+    }
+    const result = this.database.prepare(sql).run(...params)
+    if (result.changes === 0) {
+      return { claimed: false, task: this.getById(input.taskId) }
+    }
+    return { claimed: true, task: this.getById(input.taskId) }
+  }
+
+  public releaseLease(taskId: string, leaseToken: string, nowIso: string): boolean {
+    const result = this.database
+      .prepare(
+        `UPDATE tasks
+         SET lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+         WHERE id = ? AND lease_token = ?`,
+      )
+      .run(nowIso, taskId, leaseToken)
+    return result.changes > 0
+  }
+
+  public markGracefulShutdown(nowIso: string, runtimeSessionId: string | null): number {
+    const result = this.database
+      .prepare(
+        `UPDATE tasks
+         SET shutdown_kind = 'graceful',
+             lease_owner = NULL,
+             lease_token = NULL,
+             lease_expires_at = NULL,
+             execution_phase = CASE
+               WHEN status IN ('pending', 'running') THEN 'queued'
+               ELSE execution_phase
+             END,
+             updated_at = ?
+         WHERE status IN ('pending', 'running')
+           AND (? IS NULL OR runtime_session_id = ? OR runtime_session_id IS NULL)`,
+      )
+      .run(nowIso, runtimeSessionId, runtimeSessionId)
+    return result.changes
+  }
+
+  public expireLeases(nowIso: string): number {
+    const result = this.database
+      .prepare(
+        `UPDATE tasks
+         SET lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = ?
+         WHERE lease_expires_at IS NOT NULL AND lease_expires_at <= ?`,
+      )
+      .run(nowIso, nowIso)
+    return result.changes
   }
 }

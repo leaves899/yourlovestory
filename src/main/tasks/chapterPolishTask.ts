@@ -9,6 +9,7 @@ import type {
   ParagraphRevisionOptions,
   NarrativeWorkbenchService,
 } from '../../shared/narrativeWorkbench'
+import { CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION } from '../../shared/taskRecovery'
 import type { JsonObject, JsonValue } from '../database'
 import type { TaskRunner, TaskRunnerContext, TaskRunnerResult } from './taskManager'
 
@@ -74,25 +75,32 @@ function checkpointFromJson(value: JsonObject | null): NarrativeOperationCheckpo
   ) {
     return null
   }
+  const schemaVersion = typeof value.schema_version === 'number'
+    ? value.schema_version
+    : CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION
   return {
+    schema_version: schemaVersion,
     operation,
     source_content: typeof value.source_content === 'string' ? value.source_content : '',
     generated_content: typeof value.generated_content === 'string' ? value.generated_content : '',
     revision_id: typeof value.revision_id === 'string' ? value.revision_id : null,
     status,
     error: typeof value.error === 'string' ? value.error : null,
+    applied: value.applied === true,
     updated_at: typeof value.updated_at === 'string' ? value.updated_at : undefined,
   }
 }
 
 function checkpointToJson(checkpoint: NarrativeOperationCheckpoint): JsonObject {
   return {
+    schema_version: checkpoint.schema_version,
     operation: checkpoint.operation,
     source_content: checkpoint.source_content,
     generated_content: checkpoint.generated_content,
     revision_id: checkpoint.revision_id,
     status: checkpoint.status,
     error: checkpoint.error,
+    applied: checkpoint.applied === true,
     ...(checkpoint.updated_at ? { updated_at: checkpoint.updated_at } : {}),
   }
 }
@@ -137,6 +145,7 @@ function resultToJson(
 
 interface ChapterRevisionOperationResultLike {
   status: 'completed' | 'fallback' | 'cancelled'
+  content?: string
   revision: { id: string } | null
   report: { id: string } | null
   diff: {
@@ -157,6 +166,36 @@ export function createChapterPolishTaskRunner(
       const savedCheckpoint = checkpointFromJson(context.task.checkpoint)
       let agent: ProjectSessionAgent | undefined
       try {
+        // Safe resume path: revision already exists for this task.
+        if (savedCheckpoint?.status === 'completed' && savedCheckpoint.revision_id) {
+          let applied = savedCheckpoint.applied === true
+          if (request.auto_apply && !applied) {
+            context.setExecutionPhase('persisting_result')
+            options.service.applyRevision(request.project_id, savedCheckpoint.revision_id)
+            applied = true
+            context.saveCheckpoint(checkpointToJson({ ...savedCheckpoint, applied: true }))
+          }
+          context.setStage('review', 1)
+          context.setExecutionPhase('finalizing')
+          return {
+            status: 'completed',
+            result: {
+              status: 'completed',
+              revision_id: savedCheckpoint.revision_id,
+              report_id: null,
+              applied,
+              error: null,
+              diff: {
+                unchanged_count: 0,
+                added_count: 0,
+                removed_count: 0,
+                modified_count: 0,
+              },
+            },
+          }
+        }
+
+        context.setExecutionPhase('preparing')
         agent = await options.agentFactory.create({
           projectId: request.project_id,
           sessionId: context.input.sessionId,
@@ -170,11 +209,16 @@ export function createChapterPolishTaskRunner(
             if (context.input.llm.streamingEnabled !== false) context.emitChunk(chunk, operation)
           },
           on_checkpoint: (checkpoint: NarrativeOperationCheckpoint) =>
-            context.saveCheckpoint(checkpointToJson(checkpoint)),
+            context.saveCheckpoint(checkpointToJson({
+              ...checkpoint,
+              schema_version: CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
+            })),
           task_id: context.task.id,
         }
         context.setStage(request.mode === 'paragraph' ? 'paragraph-revision' : 'polish', 0.1)
+        context.setExecutionPhase('awaiting_model')
         const generator = new AgentNarrativeTextGenerator(agent)
+        context.setExecutionPhase('model_in_flight')
         const result = request.mode === 'paragraph'
           ? await options.service.reviseParagraph(
               request.project_id,
@@ -198,12 +242,32 @@ export function createChapterPolishTaskRunner(
         if (result.status === 'cancelled') {
           return { status: 'cancelled', result: resultToJson('cancelled', result, false) }
         }
+        context.setExecutionPhase('persisting_result')
         let applied = false
         if (request.auto_apply && result.revision && result.status === 'completed') {
-          options.service.applyRevision(request.project_id, result.revision.id)
-          applied = true
+          const alreadyApplied = savedCheckpoint?.applied === true
+            && savedCheckpoint.revision_id === result.revision.id
+          if (!alreadyApplied) {
+            options.service.applyRevision(request.project_id, result.revision.id)
+            applied = true
+            if (result.revision) {
+              context.saveCheckpoint(checkpointToJson({
+                schema_version: CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
+                operation: request.mode === 'paragraph' ? 'paragraph_revision' : 'chapter_polish',
+                source_content: savedCheckpoint?.source_content ?? '',
+                generated_content: result.content ?? '',
+                revision_id: result.revision.id,
+                status: 'completed',
+                error: null,
+                applied: true,
+              }))
+            }
+          } else {
+            applied = true
+          }
         }
         context.setStage('review', 1)
+        context.setExecutionPhase('finalizing')
         return {
           status: 'completed',
           result: resultToJson(result.status, result, applied),

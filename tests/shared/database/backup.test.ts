@@ -60,7 +60,7 @@ describe('database backup service', () => {
     expect(record).toMatchObject({
       reason: 'manual',
       appVersion: 'test-version',
-      schemaVersion: 8,
+      schemaVersion: 9,
     })
     expect(record.sha256).toBe(digest(backupPath))
     expect(record.size).toBe(fs.statSync(backupPath).size)
@@ -221,7 +221,7 @@ describe('database backup service', () => {
         createdAt: '2026-03-20T00:00:00.000Z',
         reason: 'scheduled',
         appVersion: 'test',
-        schemaVersion: 8,
+        schemaVersion: 9,
         size: 10,
         sha256: 'd'.repeat(64),
       },
@@ -333,7 +333,7 @@ describe('database backup service', () => {
       createdAt: '2026-03-10T00:00:00.000Z',
       reason: 'manual',
       appVersion: 'test',
-      schemaVersion: 8,
+      schemaVersion: 9,
       size: 1,
       sha256: 'e'.repeat(64),
     }

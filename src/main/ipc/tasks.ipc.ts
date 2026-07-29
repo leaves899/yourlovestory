@@ -2,7 +2,12 @@ import type { LlmConfigInput } from '../../agent/llm'
 import { normalizeLlmBaseUrl } from '../../agent/llm/config'
 import type { JsonObject } from '../database'
 import type { StartTaskInput, TaskManager } from '../tasks'
-import { isRecord, readString, type IpcRegistry } from './shared'
+import {
+  assertTrustedIpcSender,
+  isRecord,
+  readString,
+  type IpcRegistry,
+} from './shared'
 
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
@@ -89,7 +94,18 @@ function parseProjectId(
   return readString(value.projectId, 'projectId')
 }
 
+function parseManualRetry(value: unknown): { taskId: string; confirmed: true } {
+  if (!isRecord(value)) throw new Error('manual retry input is required')
+  const taskId = readString(value.taskId, 'taskId')
+  if (value.confirmed !== true) {
+    throw new Error('manual retry requires confirmed=true')
+  }
+  return { taskId, confirmed: true }
+}
+
 export function registerTaskIPC(ipc: IpcRegistry, taskManager?: TaskManager): void {
+  const authorize = assertTrustedIpcSender
+
   ipc.register('task:run', async (_, input: {
     taskManager: TaskManager
     params: StartTaskInput
@@ -97,6 +113,7 @@ export function registerTaskIPC(ipc: IpcRegistry, taskManager?: TaskManager): vo
     const handle = input.taskManager.start(input.params)
     return { success: true, data: { taskId: handle.taskId } }
   }, {
+    authorize,
     parse: (value) => ({
       taskManager: requireTaskManager(taskManager),
       params: parseTaskStartInput(value),
@@ -109,6 +126,7 @@ export function registerTaskIPC(ipc: IpcRegistry, taskManager?: TaskManager): vo
   }) => {
     return { success: input.taskManager.cancel(input.taskId) }
   }, {
+    authorize,
     parse: (value) => ({
       taskManager: requireTaskManager(taskManager),
       taskId: parseTaskId(value, 'task cancel'),
@@ -121,6 +139,7 @@ export function registerTaskIPC(ipc: IpcRegistry, taskManager?: TaskManager): vo
   }) => {
     return { success: true, data: input.taskManager.get(input.taskId) }
   }, {
+    authorize,
     parse: (value) => ({
       taskManager: requireTaskManager(taskManager),
       taskId: parseTaskId(value, 'task get'),
@@ -133,6 +152,7 @@ export function registerTaskIPC(ipc: IpcRegistry, taskManager?: TaskManager): vo
   }) => {
     return { success: true, data: input.taskManager.listByProject(input.projectId) }
   }, {
+    authorize,
     parse: (value) => ({
       taskManager: requireTaskManager(taskManager),
       projectId: parseProjectId(value, 'task list'),
@@ -143,16 +163,49 @@ export function registerTaskIPC(ipc: IpcRegistry, taskManager?: TaskManager): vo
     taskManager: TaskManager
     taskId: string
   }) => {
-    const handle = input.taskManager.resume(input.taskId)
-    return {
-      success: handle !== null,
-      ...(handle ? { data: { taskId: handle.taskId } } : {}),
+    try {
+      const handle = input.taskManager.resume(input.taskId)
+      return {
+        success: handle !== null,
+        ...(handle ? { data: { taskId: handle.taskId } } : {}),
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '任务恢复失败'
+      return { success: false, errors: [message] }
     }
   }, {
+    authorize,
     parse: (value) => ({
       taskManager: requireTaskManager(taskManager),
       taskId: parseTaskId(value, 'task resume'),
     }),
+  })
+
+  ipc.register('task:manual-retry', async (_, input: {
+    taskManager: TaskManager
+    taskId: string
+    confirmed: true
+  }) => {
+    try {
+      const handle = input.taskManager.manualRetry(input.taskId, input.confirmed)
+      return {
+        success: handle !== null,
+        ...(handle ? { data: { taskId: handle.taskId } } : {}),
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '人工重试失败'
+      return { success: false, errors: [message] }
+    }
+  }, {
+    authorize,
+    parse: (value) => {
+      const parsed = parseManualRetry(value)
+      return {
+        taskManager: requireTaskManager(taskManager),
+        taskId: parsed.taskId,
+        confirmed: parsed.confirmed,
+      }
+    },
   })
 
   ipc.register('task:recoverable', async (_, input: {
@@ -164,6 +217,7 @@ export function registerTaskIPC(ipc: IpcRegistry, taskManager?: TaskManager): vo
       data: input.taskManager.listRecoverable(input.projectId),
     }
   }, {
+    authorize,
     parse: (value) => ({
       taskManager: requireTaskManager(taskManager),
       projectId: parseProjectId(value, 'task recoverable'),

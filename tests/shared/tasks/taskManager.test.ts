@@ -185,7 +185,8 @@ describe('TaskManager', () => {
     expect((await first.completion).status).toBe('failed')
 
     currentCredentialId = 'llm:project:replacement'
-    const resumed = manager.resume(first.taskId)
+    // Assistant tasks require explicit manual retry after Phase D safety classification.
+    const resumed = manager.manualRetry(first.taskId, true)
     expect(resumed).not.toBeNull()
     expect((await resumed!.completion).status).toBe('completed')
     expect(resolvedCredentialIds).toEqual([

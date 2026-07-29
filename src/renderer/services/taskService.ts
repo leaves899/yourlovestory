@@ -12,6 +12,7 @@ import type {
   TaskStartEvent,
 } from '../../main/tasks'
 import type { ChapterVersion } from '../../shared/chapterGeneration'
+import type { RecoverableTaskView } from '../../shared/taskRecovery'
 
 export type TaskEvent =
   | TaskStartEvent
@@ -54,15 +55,24 @@ export interface RendererTask {
   finished_at: string | null
   created_at: string
   updated_at: string
+  execution_phase?: string
+  recovery_classification?: string | null
+  recovery_reason?: string | null
+  recovery_action?: string | null
+  recovery_attempt_count?: number
+  max_recovery_attempts?: number
 }
+
+export type { RecoverableTaskView }
 
 export interface TaskService {
   list(projectId: string): Promise<RendererTask[]>
-  listRecoverable(projectId: string): Promise<RendererTask[]>
+  listRecoverable(projectId: string): Promise<RecoverableTaskView[]>
   startChapterGeneration(input: StartChapterGenerationInput): Promise<string>
   startChapterPolish(input: StartChapterPolishInput): Promise<string>
   cancel(taskId: string): Promise<void>
   resume(taskId: string): Promise<string | null>
+  manualRetry(taskId: string): Promise<string | null>
   listVersions(projectId: string, chapterId: string): Promise<ChapterVersion[]>
   confirmVersion(projectId: string, versionId: string): Promise<ChapterVersion>
   rejectVersion(projectId: string, versionId: string): Promise<ChapterVersion>
@@ -79,6 +89,7 @@ function errorMessage(error: unknown): string {
     [/endpoint|base url|url security/i, '模型接口地址不安全或无效，请在项目配置中使用 HTTPS 或本机回环地址。'],
     [/already running|conflict/i, '已有互斥任务正在运行，请等待完成或取消后重试。'],
     [/blocking fact-check errors/i, '章节仍有错误级事实核查结果，请先修订正文或拒绝该版本。'],
+    [/manual|确认|人工/i, '该任务需要人工确认后才能重试。'],
   ]
   return translations.find(([pattern]) => pattern.test(message))?.[1]
     ?? message
@@ -123,8 +134,17 @@ const taskService: TaskService = {
   cancel: (taskId) => requireComplete(() => window.electronAPI.cancelTask(taskId)),
   resume: async (taskId) => {
     const response = await window.electronAPI.resumeTask(taskId)
-    if (!response.success) return null
-    return response.data.taskId
+    if (!response.success) {
+      throw new Error(response.errors?.[0] ?? '任务恢复失败')
+    }
+    return response.data?.taskId ?? null
+  },
+  manualRetry: async (taskId) => {
+    const response = await window.electronAPI.manualRetryTask(taskId, true)
+    if (!response.success) {
+      throw new Error(response.errors?.[0] ?? '人工重试失败')
+    }
+    return response.data?.taskId ?? null
   },
   listVersions: (projectId, chapterId) =>
     requireSuccess(() => window.electronAPI.listChapterVersions(projectId, chapterId)),

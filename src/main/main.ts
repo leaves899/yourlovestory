@@ -8,6 +8,12 @@ import {
   DatabaseRuntimeStatus,
   executeDatabaseRestore,
   initializeDatabaseLifecycle,
+  ProjectRepository,
+  ChapterRepository,
+  ChapterOutlineRepository,
+  ChapterRevisionRepository,
+  ChapterVersionRepository,
+  RuntimeSessionRepository,
   shutdownDatabaseResources,
   TaskRepository,
 } from './database'
@@ -298,8 +304,15 @@ app.whenReady().then(async () => {
       return resolved.data
     },
   })
+  const taskRepository = new TaskRepository(database)
+  const runtimeSessions = new RuntimeSessionRepository(database)
+  const projectRepository = new ProjectRepository(database)
+  const chapterRepository = new ChapterRepository(database)
+  const chapterOutlineRepository = new ChapterOutlineRepository(database)
+  const chapterRevisionRepository = new ChapterRevisionRepository(database)
+  const chapterVersionRepository = new ChapterVersionRepository(database)
   taskManager = new TaskManager({
-    store: new TaskRepository(database),
+    store: taskRepository,
     agentFactory,
     events: createWebContentsTaskEventSink(() => mainWindow?.webContents ?? null),
     runners: {
@@ -316,6 +329,54 @@ app.whenReady().then(async () => {
       llmCredentialController.runtimeConfig(projectId, input),
     validateChapterGeneration: (input) =>
       assertChapterGenerationPreflight(workbenchService!, input),
+    runtimeSessions,
+    recoveryLookups: {
+      projectExists: (projectId) => projectRepository.getById(projectId) !== null,
+      targetExists: (task) => {
+        if (task.task_type === 'chapter-generation') {
+          const outlineId = task.input.request
+            && typeof task.input.request === 'object'
+            && !Array.isArray(task.input.request)
+            && typeof (task.input.request as { chapter_outline_id?: unknown }).chapter_outline_id === 'string'
+            ? (task.input.request as { chapter_outline_id: string }).chapter_outline_id
+            : null
+          if (!outlineId) return false
+          return chapterOutlineRepository.getById(outlineId) !== null
+        }
+        if (task.task_type === 'chapter-polish') {
+          if (!task.chapter_id) return false
+          if (!chapterRepository.getById(task.chapter_id)) return false
+          const sourceRevisionId = task.input.request
+            && typeof task.input.request === 'object'
+            && !Array.isArray(task.input.request)
+            && typeof (task.input.request as { source_revision_id?: unknown }).source_revision_id === 'string'
+            ? (task.input.request as { source_revision_id: string }).source_revision_id
+            : null
+          if (sourceRevisionId && !chapterRevisionRepository.getById(sourceRevisionId)) {
+            return false
+          }
+          return true
+        }
+        return true
+      },
+      hasChapterVersionForTask: (taskId) => chapterVersionRepository.getByTaskId(taskId) !== null,
+      hasChapterRevisionForTask: (taskId) => chapterRevisionRepository.getByTaskId(taskId) !== null,
+      credentialAvailable: (projectId) => {
+        try {
+          llmCredentialController.runtimeConfig(projectId, {
+            baseUrl: 'https://example.invalid/v1',
+            model: 'probe',
+          })
+          return true
+        } catch {
+          return false
+        }
+      },
+    },
+  })
+  taskManager.beginRuntimeSession()
+  void taskManager.scanAndRecoverOnStartup().catch((error: unknown) => {
+    console.warn('[TaskRecovery] startup scan failed:', sanitizeErrorMessage(error))
   })
   assistantService = new AssistantService({
     store: new ChatRepository(database),
@@ -364,6 +425,13 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   void projectPortabilityCoordinator?.dispose()
   projectPortabilityCoordinator = null
+  // Persist graceful shutdown markers and release leases before closing the database.
+  // Do not schedule async writes after DB close.
+  try {
+    taskManager?.beginGracefulShutdown()
+  } catch (error: unknown) {
+    console.warn('[Shutdown] graceful task shutdown failed:', sanitizeErrorMessage(error))
+  }
   taskManager?.dispose()
   taskManager = null
   assistantService?.dispose()

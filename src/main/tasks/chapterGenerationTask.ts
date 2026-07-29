@@ -11,6 +11,7 @@ import {
   checkpointFromJson,
   checkpointToJson,
 } from '../../shared/chapterGeneration'
+import { CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION } from '../../shared/taskRecovery'
 import type { JsonObject, JsonValue } from '../database'
 import type { TaskRunner, TaskRunnerContext, TaskRunnerResult } from './taskManager'
 
@@ -49,9 +50,13 @@ function readRequest(context: TaskRunnerContext): ChapterGenerationRequest {
 }
 
 class AgentTextGenerator implements TextGenerator {
-  public constructor(private readonly agent: ProjectSessionAgent) {}
+  public constructor(
+    private readonly agent: ProjectSessionAgent,
+    private readonly onModelStart?: () => void,
+  ) {}
 
   public async generate(request: TextGenerationRequest): Promise<TextGenerationResult> {
+    this.onModelStart?.()
     let streamed = ''
     const result = await this.agent.prompt(request.prompt, {
       signal: request.signal,
@@ -92,24 +97,39 @@ export function createChapterGenerationTaskRunner(
       const request = readRequest(context)
       let agent: ProjectSessionAgent | undefined
       try {
+        context.setExecutionPhase('preparing')
         agent = await options.agentFactory.create({
           projectId: request.project_id,
           sessionId: context.input.sessionId,
           llm: context.input.llm,
           systemPrompt: '你负责依据已确认的长篇大纲生成章节，不执行大纲修改，不生成叙事记忆。',
         })
+        context.setExecutionPhase('awaiting_model')
         const result = await options.service.generate(
           request,
-          new AgentTextGenerator(agent),
+          new AgentTextGenerator(agent, () => context.setExecutionPhase('model_in_flight')),
           {
             signal: context.signal,
-            checkpoint: checkpointFromJson(context.task.checkpoint),
+            checkpoint: (() => {
+              const checkpoint = checkpointFromJson(context.task.checkpoint)
+              return {
+                ...checkpoint,
+                schema_version: checkpoint.schema_version || CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
+              }
+            })(),
             callbacks: {
-              on_stage: (stage, progress) => context.setStage(stage, progress),
+              on_stage: (stage, progress) => {
+                context.setStage(stage, progress)
+                if (stage === 'saving') context.setExecutionPhase('persisting_result')
+                if (stage === 'review') context.setExecutionPhase('finalizing')
+              },
               on_chunk: (stage, chunk) => {
                 if (context.input.llm.streamingEnabled !== false) context.emitChunk(chunk, stage)
               },
-              on_checkpoint: (checkpoint) => context.saveCheckpoint(checkpointToJson(checkpoint)),
+              on_checkpoint: (checkpoint) => context.saveCheckpoint(checkpointToJson({
+                ...checkpoint,
+                schema_version: CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
+              })),
               on_review: (version, required) =>
                 context.publishReview(version.id, required, version.status === 'approved' ? 'approved' : 'review'),
             },
@@ -117,6 +137,7 @@ export function createChapterGenerationTaskRunner(
         )
         const versionId = result.version?.id ?? result.checkpoint.version_id
         const factCheckPassed = result.version?.fact_check.passed ?? result.checkpoint.fact_check?.passed ?? false
+        context.setExecutionPhase('finalizing')
         return {
           status: result.status,
           result: resultToJson(

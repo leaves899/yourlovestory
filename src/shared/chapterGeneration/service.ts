@@ -116,18 +116,22 @@ function factCheckToJson(report: FactCheckReport): JsonObject {
 
 export function checkpointToJson(checkpoint: ChapterGenerationCheckpoint): JsonObject {
   return {
+    schema_version: checkpoint.schema_version,
     stage: checkpoint.stage,
     body: checkpoint.body,
     summary: checkpoint.summary,
     fact_check_text: checkpoint.fact_check_text,
     fact_check: checkpoint.fact_check ? factCheckToJson(checkpoint.fact_check) : null,
     version_id: checkpoint.version_id,
+    ...(checkpoint.updated_at ? { updated_at: checkpoint.updated_at } : {}),
   }
 }
 
 export function checkpointFromJson(value: JsonObject | null): ChapterGenerationCheckpoint {
   if (!value || !isStage(value.stage)) return emptyChapterGenerationCheckpoint()
+  const schemaVersion = typeof value.schema_version === 'number' ? value.schema_version : 1
   return {
+    schema_version: schemaVersion,
     stage: value.stage,
     body: readString(value.body),
     summary: readString(value.summary),

@@ -112,6 +112,7 @@ const EXPECTED_CHANNELS = [
   'task:cancel',
   'task:get',
   'task:list',
+  'task:manual-retry',
   'task:recoverable',
   'task:resume',
   'task:run',

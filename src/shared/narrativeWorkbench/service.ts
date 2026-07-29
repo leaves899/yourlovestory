@@ -187,14 +187,17 @@ function checkpointFor(
   revisionId: string | null,
   error: string | null,
   now: string,
+  applied = false,
 ): NarrativeOperationCheckpoint {
   return {
+    schema_version: 1,
     operation,
     source_content: sourceContent,
     generated_content: generatedContent,
     revision_id: revisionId,
     status,
     error,
+    applied,
     updated_at: now,
   }
 }
@@ -641,6 +644,14 @@ export class NarrativeWorkbenchService {
   public applyRevision(projectId: string, revisionId: string): Chapter {
     const revision = this.getRevision(projectId, revisionId)
     const chapter = this.requireChapter(projectId, revision.chapter_id)
+    // Idempotent: if chapter already matches the revision and it is current, skip write.
+    if (
+      chapter.content === revision.content
+      && revision.is_current
+      && chapter.status === 'completed'
+    ) {
+      return chapter
+    }
     const updated = this.options.stores.chapters.update(
       chapter.id,
       {
@@ -860,9 +871,47 @@ export class NarrativeWorkbenchService {
   ): ChapterRevisionOperationResult {
     const content = chapterBlocksToContent(blocks)
     const diff = diffChapterBlocks(source.blocks, blocks)
+    const taskId = options.task_id ?? null
+    if (taskId) {
+      const existing = this.options.stores.revisions.getByTaskId?.(taskId)
+        ?? null
+      if (existing) {
+        const report = this.options.stores.reports.getByTaskId?.(taskId)
+          ?? this.createReport(
+            projectId,
+            source.chapter.id,
+            taskId,
+            reportType,
+            'completed',
+            `${operation} completed`,
+            { revision_id: existing.id, diff: diffToJson(diff) },
+          )
+        notifyCheckpoint(
+          options,
+          checkpointFor(
+            operation === 'polish' ? 'chapter_polish' : 'paragraph_revision',
+            source.content,
+            existing.content,
+            'completed',
+            existing.id,
+            null,
+            this.now(),
+          ),
+        )
+        return {
+          status: 'completed',
+          content: existing.content,
+          revision: existing,
+          diff,
+          report,
+          error: null,
+        }
+      }
+    }
     const revision = this.options.stores.revisions.create({
       chapter_id: source.chapter.id,
       parent_revision_id: source.revision?.id ?? null,
+      task_id: taskId,
       content,
       summary: source.chapter.synopsis,
       reason,
@@ -873,7 +922,7 @@ export class NarrativeWorkbenchService {
     const report = this.createReport(
       projectId,
       source.chapter.id,
-      options.task_id ?? null,
+      taskId,
       reportType,
       'completed',
       `${operation} completed`,
@@ -942,6 +991,10 @@ export class NarrativeWorkbenchService {
     details: JsonObject,
   ): PostprocessReport | null {
     try {
+      if (taskId) {
+        const existing = this.options.stores.reports.getByTaskId?.(taskId) ?? null
+        if (existing) return existing
+      }
       return this.options.stores.reports.create({
         project_id: projectId,
         chapter_id: chapterId,
@@ -952,6 +1005,9 @@ export class NarrativeWorkbenchService {
         details,
       })
     } catch {
+      if (taskId) {
+        return this.options.stores.reports.getByTaskId?.(taskId) ?? null
+      }
       return null
     }
   }
