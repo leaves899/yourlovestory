@@ -106,6 +106,30 @@ describe('database restore shutdown boundary', () => {
     })
   })
 
+  test('restores task admission when drain succeeds but database close fails', async () => {
+    const resumeAfterAbortedShutdown = jest.fn()
+    const result = await shutdownDatabaseResources({
+      taskManager: {
+        dispose: jest.fn(),
+        quiesceForShutdown: async () => ({ drained: true }),
+        resumeAfterAbortedShutdown,
+      },
+      assistantService: { dispose: jest.fn() },
+      database: {
+        close: () => {
+          throw new Error('injected database close failure')
+        },
+      },
+    })
+
+    expect(result).toEqual({
+      databaseClosed: false,
+      serviceCleanupFailed: false,
+      drained: true,
+    })
+    expect(resumeAfterAbortedShutdown).toHaveBeenCalledTimes(1)
+  })
+
   test('quiesces active tasks before database close', async () => {
     let closed = false
     let completionResolved = false

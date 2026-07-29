@@ -43,6 +43,8 @@
 章节版本会补齐 chapter 的 `review` / `completed` 状态、摘要、字数和允许的自动确认；
 但仅限该 version 仍是最新版本，且已批准版本仍为 current。归属冲突、旧版本或已拒绝
 实体会稳定终止为 `non-recoverable`，不会覆盖后来采用/编辑的章节，也不会再次进入恢复循环。
+即使 approved version 仍为 current，只要章节正文或采用状态已与它不一致，也拒绝自动回写。
+task-bound revision 同样必须仍是最新且 current，才允许执行既有 `auto_apply` 授权。
 
 ## 数据模型要点（migration 9）
 
@@ -103,6 +105,8 @@ drain 超时时不得提前结束 runtime session，也不得关闭仍可能被�
 应用退出仅在 `drained=true` 且数据库已确认关闭后继续；restore 的 drain 超时会撤销
 `restoring` 状态、重新开放 TaskManager、保留当前数据库并返回稳定错误，不 relaunch、
 不退出进程。超时前已中止的旧执行仍受 lease fence 约束，不会在恢复开放后落库。
+若任务已经 drain、但数据库关闭失败，TaskManager 会创建新的 runtime session 并恢复接纳；
+进程不会退出，当前数据库句柄仍作为权威状态。
 
 优雅停止的任务不得在下次启动被误判为“崩溃后的安全自动 resume”，除非结果已按 task_id 持久化（可幂等收尾）。
 

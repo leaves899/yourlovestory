@@ -102,6 +102,13 @@ export async function shutdownDatabaseResources(
       databaseClosed = false
     }
   }
+  if (awaitQuiesce && !databaseClosed) {
+    try {
+      options.taskManager?.resumeAfterAbortedShutdown?.()
+    } catch {
+      serviceCleanupFailed = true
+    }
+  }
 
   return {
     databaseClosed,

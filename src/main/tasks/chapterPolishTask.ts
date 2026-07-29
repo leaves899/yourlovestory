@@ -187,6 +187,12 @@ function finishFromExistingRevision(
   if (existing.chapter_id !== request.chapter_id) {
     throw new NonRecoverableTaskError('已落库修订与任务目标章节不一致，任务不可恢复。')
   }
+  const latest = service.listRevisions(request.project_id, request.chapter_id)[0]
+  if (!existing.is_current || !latest || latest.id !== existing.id) {
+    throw new NonRecoverableTaskError(
+      '已落库修订已不是当前最新修订，禁止自动覆盖后来采用的内容。',
+    )
+  }
 
   context.setExecutionPhase('persisting_result')
   const savedCheckpoint = checkpointFromJson(context.task.checkpoint)

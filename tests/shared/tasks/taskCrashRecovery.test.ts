@@ -384,6 +384,70 @@ describe('task crash recovery fault matrix', () => {
     void workbench
   })
 
+  test('P1-2 stale task revision cannot auto-apply over a newer current revision', async () => {
+    const { projectId, chapterId } = seedProject('polish-stale-current')
+    const workbench = new WorkbenchService(database)
+    const tasks = new TaskRepository(database)
+    const revisions = new ChapterRevisionRepository(database)
+    const blocking = createBlockingAgent()
+    const task = tasks.create({
+      project_id: projectId,
+      chapter_id: chapterId,
+      task_type: 'chapter-polish',
+      input: {
+        sessionId: 's',
+        taskType: 'chapter-polish',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: {
+          project_id: projectId,
+          chapter_id: chapterId,
+          mode: 'chapter',
+          auto_apply: true,
+        },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      checkpoint_schema_version: 1,
+    })
+    const stale = revisions.create({
+      chapter_id: chapterId,
+      task_id: task.id,
+      content: 'stale task revision',
+      summary: 'stale',
+      reason: 'task',
+      operation: 'polish',
+      blocks: [],
+    })
+    revisions.setCurrent(stale.id)
+    const newer = revisions.create({
+      chapter_id: chapterId,
+      content: 'newer adopted revision',
+      summary: 'newer',
+      reason: 'manual',
+      operation: 'manual',
+      blocks: [],
+    })
+    revisions.setCurrent(newer.id)
+    workbench.narrative.applyRevision(projectId, newer.id)
+    tasks.update(task.id, {
+      status: 'running',
+      execution_phase: 'persisting_result',
+      checkpoint: null,
+    })
+    const manager = createManager({ agentFactory: blocking.agentFactory })
+    manager.beginRuntimeSession()
+
+    expect((await manager.scanAndRecoverOnStartup()).autoStarted).toBe(1)
+    const failed = tasks.getById(task.id)!
+    expect(failed.status).toBe('failed')
+    expect(failed.recovery_classification).toBe('non-recoverable')
+    expect(revisions.getById(newer.id)?.is_current).toBe(true)
+    expect(new ChapterRepository(database).getById(chapterId)?.content)
+      .toBe('newer adopted revision')
+    expect(blocking.createCount()).toBe(0)
+    expect(blocking.promptCount()).toBe(0)
+  })
+
   test('P1-2 generation version exists without completed checkpoint finishes without model', async () => {
     const { projectId, outlineId, chapterId } = seedProject('gen-entity')
     const tasks = new TaskRepository(database)
@@ -1132,6 +1196,44 @@ describe('task crash recovery fault matrix', () => {
     expect(secondShutdown.databaseClosed).toBe(true)
     expect(secondShutdown.drained).toBe(true)
     expect(closeCount).toBe(1)
+  })
+
+  test('P1-10c database close failure starts a fresh runtime session and restores admission', async () => {
+    const { projectId } = seedProject('close-failure-resume')
+    const sessions = new RuntimeSessionRepository(database)
+    const manager = createManager()
+    const firstRuntime = manager.beginRuntimeSession()!
+
+    const result = await shutdownDatabaseResources({
+      taskManager: manager,
+      assistantService: { dispose: jest.fn() },
+      database: {
+        close: () => {
+          throw new Error('injected close failure')
+        },
+      },
+      awaitQuiesce: true,
+    })
+
+    expect(result).toEqual({
+      databaseClosed: false,
+      serviceCleanupFailed: false,
+      drained: true,
+    })
+    expect(sessions.getById(firstRuntime.id)?.end_reason).toBe('graceful')
+    const openSessions = sessions.listOpen()
+    expect(openSessions).toHaveLength(1)
+    expect(openSessions[0]?.id).not.toBe(firstRuntime.id)
+    expect(manager.isQuitting()).toBe(false)
+
+    const fresh = manager.start({
+      projectId,
+      sessionId: 'after-close-failure',
+      taskType: 'assistant',
+      prompt: 'still available',
+      llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+    })
+    expect((await fresh.completion).status).toBe('completed')
   })
 
   test('P1-11 sanitizeErrorMessage strips paths and tokens', () => {
@@ -1930,6 +2032,70 @@ describe('task crash recovery fault matrix', () => {
       synopsis: 'newer adopted summary',
     })
     expect(versions.getById(newerVersion.id)?.is_current).toBe(true)
+    expect(blocking.createCount()).toBe(0)
+    expect(blocking.promptCount()).toBe(0)
+  })
+
+  test('P1-3 current approved version cannot overwrite later manual chapter edits', async () => {
+    const { projectId, outlineId, chapterId } = seedProject('approved-manual-edit')
+    const workbench = new WorkbenchService(database)
+    const tasks = new TaskRepository(database)
+    const chapters = new ChapterRepository(database)
+    const versions = new ChapterVersionRepository(database)
+    const blocking = createBlockingAgent()
+    const task = tasks.create({
+      project_id: projectId,
+      chapter_id: chapterId,
+      task_type: 'chapter-generation',
+      input: {
+        sessionId: 's',
+        taskType: 'chapter-generation',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: {
+          project_id: projectId,
+          chapter_outline_id: outlineId,
+          chapter_id: chapterId,
+          auto_confirm: true,
+        },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      checkpoint_schema_version: 1,
+    })
+    const version = versions.create({
+      chapter_id: chapterId,
+      task_id: task.id,
+      content: 'approved body',
+      summary: 'approved summary',
+      fact_check: { passed: true, summary: 'ok', findings: [] },
+    })
+    workbench.chapterGeneration.confirmVersion(projectId, version.id)
+    const adopted = chapters.getById(chapterId)!
+    chapters.update(chapterId, {
+      content: 'manual edit after approval',
+      synopsis: 'manual synopsis',
+    }, adopted.version)
+    tasks.update(task.id, {
+      status: 'running',
+      execution_phase: 'persisting_result',
+    })
+
+    const manager = createManager({ agentFactory: blocking.agentFactory })
+    manager.beginRuntimeSession()
+    expect((await manager.scanAndRecoverOnStartup()).autoStarted).toBe(1)
+
+    expect(tasks.getById(task.id)).toMatchObject({
+      status: 'failed',
+      recovery_classification: 'non-recoverable',
+    })
+    expect(versions.getById(version.id)).toMatchObject({
+      status: 'approved',
+      is_current: true,
+    })
+    expect(chapters.getById(chapterId)).toMatchObject({
+      content: 'manual edit after approval',
+      synopsis: 'manual synopsis',
+    })
     expect(blocking.createCount()).toBe(0)
     expect(blocking.promptCount()).toBe(0)
   })

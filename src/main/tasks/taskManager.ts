@@ -744,6 +744,10 @@ export class TaskManager {
    * Existing aborted executions remain lease-fenced and must settle independently.
    */
   public resumeAfterAbortedShutdown(): void {
+    if (this.runtimeSession?.ended_at && this.options.runtimeSessions) {
+      this.beginRuntimeSession()
+      return
+    }
     this.quitting = false
     this.recoveryGateOpen = true
   }
@@ -806,7 +810,11 @@ export class TaskManager {
 
   private endRuntimeSessionGracefully(): void {
     if (!this.runtimeSession || !this.options.runtimeSessions) return
-    this.options.runtimeSessions.end(this.runtimeSession.id, 'graceful', this.now())
+    this.runtimeSession = this.options.runtimeSessions.end(
+      this.runtimeSession.id,
+      'graceful',
+      this.now(),
+    ) ?? this.runtimeSession
   }
 
   private hasDurableFinalEntity(task: Task): boolean {

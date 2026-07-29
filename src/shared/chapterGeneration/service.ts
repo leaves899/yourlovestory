@@ -343,18 +343,9 @@ export class ChapterGenerationService {
         || chapter.synopsis !== version.summary
         || chapter.actual_words !== version.content.length
       ) {
-        const updated = this.options.chapters.update(
-          chapter.id,
-          {
-            content: version.content,
-            synopsis: version.summary,
-            status: 'completed',
-            actual_words: version.content.length,
-          },
-          chapter.version,
+        throw new ChapterGenerationBoundaryError(
+          'Approved version differs from the current chapter; recovery cannot overwrite user content',
         )
-        if (!updated) throw new EntityNotFoundError('Chapter', chapter.id)
-        chapter = updated
       }
       return { chapter, version, autoConfirmed: true }
     }
