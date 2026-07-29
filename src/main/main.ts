@@ -59,6 +59,8 @@ let backupPolicyStore: BackupPolicyStore | null = null
 let diagnosticExportCoordinator: DiagnosticExportCoordinator | null = null
 let projectPortabilityCoordinator: ProjectPortabilityCoordinator | null = null
 let isShuttingDown = false
+/** Set only after coordinated shutdown finishes so the final app.exit is allowed. */
+let allowFinalQuit = false
 let shutdownPromise: Promise<void> | null = null
 
 // Single-instance lock: a second process must not open the same DB session.
@@ -463,9 +465,10 @@ async function performGracefulAppShutdown(): Promise<void> {
 }
 
 app.on('before-quit', (event) => {
-  if (isShuttingDown) return
-  if (!taskManager?.hasActiveWork() && !database) {
-    // Nothing to drain; allow default quit.
+  // Final exit after drain completes may proceed once.
+  if (allowFinalQuit) return
+  // During drain, every quit attempt must be cancelled so we do not skip quiesce.
+  if (!taskManager?.hasActiveWork() && !database && !shutdownPromise) {
     return
   }
   event.preventDefault()
@@ -476,13 +479,13 @@ app.on('before-quit', (event) => {
       console.warn('[Shutdown] coordinated quit failed:', sanitizeErrorMessage(error))
     })
     .finally(() => {
+      allowFinalQuit = true
       app.exit(0)
     })
 })
 
 app.on('will-quit', (event) => {
-  if (shutdownPromise && !isShuttingDown) {
-    // Safety net if before-quit was skipped.
+  if (!allowFinalQuit && (shutdownPromise || isShuttingDown)) {
     event.preventDefault()
   }
 })

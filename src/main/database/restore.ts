@@ -101,6 +101,7 @@ export async function executeDatabaseRestore(
     shutdown = {
       databaseClosed: false,
       serviceCleanupFailed: true,
+      drained: false,
     }
   }
   if (!shutdown.databaseClosed) {

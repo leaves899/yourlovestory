@@ -1,7 +1,9 @@
 import type { JsonObject, JsonValue } from '../novelProject'
 import {
-  CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
-  CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
+  parseStrictGenerationCheckpoint,
+  parseStrictPolishCheckpoint,
+} from './checkpoints'
+import {
   RECOVERY_METADATA_VERSION,
   type ExecutionPhase,
   type RecoveryDecision,
@@ -94,61 +96,46 @@ function restartable(reason: string): RecoveryDecision {
   return decision('restartable', reason, 'auto-restart', true, true)
 }
 
+function corruptCheckpoint(kind: string): RecoveryDecision {
+  return nonRecoverable(`${kind}检查点语义损坏或字段不合法，已拒绝自动恢复。`)
+}
+
 /**
- * Embedded checkpoint schema must be present on the checkpoint itself.
- * Task-level checkpoint_schema_version must not legitimise a corrupt payload.
+ * Final durable entities finish without model calls. Priority path after ownership
+ * of project/target is confirmed: not blocked by credential, old deadline, or attempt cap.
  */
-function embeddedCheckpointSchemaVersion(checkpoint: JsonObject | null): number | null {
-  if (!checkpoint) return null
-  if (typeof checkpoint.schema_version !== 'number' || !Number.isFinite(checkpoint.schema_version)) {
-    return null
+function classifyFinalEntity(input: ClassifyTaskInput): RecoveryDecision | null {
+  if (input.task_type === 'chapter-generation' && input.hasChapterVersionForTask) {
+    return resumable('章节版本已按 task_id 持久化，可安全收尾而无需重放模型请求。')
   }
-  return checkpoint.schema_version
-}
-
-function generationStage(checkpoint: JsonObject | null): string | null {
-  if (!checkpoint) return null
-  const stage = checkpoint.stage
-  return typeof stage === 'string' ? stage : null
-}
-
-function polishStatus(checkpoint: JsonObject | null): string | null {
-  if (!checkpoint) return null
-  const status = checkpoint.status
-  return typeof status === 'string' ? status : null
+  if (input.task_type === 'chapter-polish' && input.hasChapterRevisionForTask) {
+    return resumable('修订结果已按 task_id 持久化，可安全收尾（含幂等 auto_apply）。')
+  }
+  return null
 }
 
 function classifyChapterGeneration(input: ClassifyTaskInput): RecoveryDecision {
   if (input.checkpoint !== null) {
-    const schemaVersion = embeddedCheckpointSchemaVersion(input.checkpoint)
-    if (schemaVersion === null) {
-      return nonRecoverable('章节生成检查点缺少 schema version，已拒绝自动恢复。')
-    }
-    if (schemaVersion < CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION) {
-      return nonRecoverable(
-        `章节生成检查点 schema 过旧（${schemaVersion}），已拒绝自动恢复。`,
-      )
-    }
-    if (schemaVersion > CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION) {
-      return nonRecoverable(
-        `章节生成检查点 schema 来自未来版本（${schemaVersion}），已拒绝自动恢复。`,
-      )
+    const parsed = parseStrictGenerationCheckpoint(input.checkpoint)
+    if (!parsed) {
+      return corruptCheckpoint('章节生成')
     }
   }
 
-  if (input.hasChapterVersionForTask) {
-    return resumable('章节版本已按 task_id 持久化，可安全收尾而无需重放模型请求。')
-  }
+  const finalEntity = classifyFinalEntity(input)
+  if (finalEntity) return finalEntity
 
-  const stage = generationStage(input.checkpoint)
-  if (stage === 'review' && typeof input.checkpoint?.version_id === 'string') {
+  const parsed = input.checkpoint ? parseStrictGenerationCheckpoint(input.checkpoint) : null
+  const stage = parsed?.stage ?? null
+
+  if (stage === 'review' && typeof parsed?.version_id === 'string' && parsed.version_id.trim() !== '') {
     return resumable('检查点已进入 review 且包含 version_id，可幂等收尾。')
   }
 
   if (
     stage === 'saving'
-    && readString(input.checkpoint?.body).trim() !== ''
-    && readString(input.checkpoint?.summary).trim() !== ''
+    && readString(parsed?.body).trim() !== ''
+    && readString(parsed?.summary).trim() !== ''
   ) {
     return resumable('正文与摘要已就绪，可幂等写入章节版本而无需重放模型请求。')
   }
@@ -157,8 +144,8 @@ function classifyChapterGeneration(input: ClassifyTaskInput): RecoveryDecision {
     input.execution_phase === 'queued'
     || input.execution_phase === 'preparing'
   ) {
-    const body = readString(input.checkpoint?.body)
-    if (!input.checkpoint || body.trim() === '') {
+    const body = readString(parsed?.body)
+    if (!parsed || body.trim() === '') {
       return restartable('模型调用尚未开始，可用稳定幂等键安全从头重启。')
     }
   }
@@ -186,28 +173,19 @@ function classifyChapterGeneration(input: ClassifyTaskInput): RecoveryDecision {
 
 function classifyChapterPolish(input: ClassifyTaskInput): RecoveryDecision {
   if (input.checkpoint !== null) {
-    const schemaVersion = embeddedCheckpointSchemaVersion(input.checkpoint)
-    if (schemaVersion === null) {
-      return nonRecoverable('章节润色检查点缺少 schema version，已拒绝自动恢复。')
-    }
-    if (schemaVersion < CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION) {
-      return nonRecoverable(
-        `章节润色检查点 schema 过旧（${schemaVersion}），已拒绝自动恢复。`,
-      )
-    }
-    if (schemaVersion > CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION) {
-      return nonRecoverable(
-        `章节润色检查点 schema 来自未来版本（${schemaVersion}），已拒绝自动恢复。`,
-      )
+    const parsed = parseStrictPolishCheckpoint(input.checkpoint)
+    if (!parsed) {
+      return corruptCheckpoint('章节润色')
     }
   }
 
-  if (input.hasChapterRevisionForTask) {
-    return resumable('修订结果已按 task_id 持久化，可安全收尾（含幂等 auto_apply）。')
-  }
+  const finalEntity = classifyFinalEntity(input)
+  if (finalEntity) return finalEntity
 
-  const status = polishStatus(input.checkpoint)
-  if (status === 'completed' && typeof input.checkpoint?.revision_id === 'string') {
+  const parsed = input.checkpoint ? parseStrictPolishCheckpoint(input.checkpoint) : null
+  const status = parsed?.status ?? null
+
+  if (status === 'completed' && typeof parsed?.revision_id === 'string' && parsed.revision_id.trim() !== '') {
     return resumable('检查点已完成并包含 revision_id，可幂等收尾。')
   }
 
@@ -215,7 +193,7 @@ function classifyChapterPolish(input: ClassifyTaskInput): RecoveryDecision {
     input.execution_phase === 'queued'
     || input.execution_phase === 'preparing'
   ) {
-    if (!input.checkpoint || polishStatus(input.checkpoint) === null) {
+    if (!parsed || status === null) {
       return restartable('润色模型调用尚未开始，可用稳定幂等键安全从头重启。')
     }
   }
@@ -263,13 +241,14 @@ export function classifyTaskRecovery(input: ClassifyTaskInput): RecoveryDecision
     return nonRecoverable('目标章节、大纲或源修订已删除，任务不可恢复。')
   }
 
-  if (input.timeout_at && input.timeout_at <= input.nowIso) {
-    return manualRequired('任务已超过执行期限，需要人工确认后重试。')
-  }
+  // Zero-model final-entity finish: not blocked by credential, deadline, or attempt cap.
+  const finalEntity = classifyFinalEntity(input)
+  if (finalEntity) return finalEntity
 
   if (input.recovery_attempt_count >= input.max_recovery_attempts) {
     return manualRequired(
-      `恢复尝试次数已达上限（${input.max_recovery_attempts}），停止自动恢复以免启动循环。`,
+      `恢复尝试次数已达上限（${input.max_recovery_attempts}），停止自动与人工重试以免启动循环。`,
+      false,
     )
   }
 
@@ -280,39 +259,73 @@ export function classifyTaskRecovery(input: ClassifyTaskInput): RecoveryDecision
   }
 
   if (input.shutdown_kind === 'graceful') {
-    // Graceful stop is never treated as a crash-safe automatic model replay.
-    // Only pure side-effect-free finishing of already-persisted results is allowed.
-    if (input.hasChapterVersionForTask || input.hasChapterRevisionForTask) {
-      return resumable('优雅退出前结果已持久化，可安全收尾。')
-    }
     return manualRequired(
       '任务在优雅退出中停止，不得误判为崩溃后的安全自动 resume。',
     )
   }
 
-  if (!input.credentialAvailable) {
+  // Type-specific classification first so queued/preparing and strict checkpoint
+  // semantics are not demoted solely by a stale pre-crash deadline.
+  let typed: RecoveryDecision
+  switch (input.task_type) {
+    case 'chapter-generation':
+      typed = classifyChapterGeneration(input)
+      break
+    case 'chapter-polish':
+      typed = classifyChapterPolish(input)
+      break
+    case 'assistant':
+      typed = unsupportedTaskType('assistant')
+      break
+    case 'outline-generation':
+      typed = nonRecoverable('大纲生成当前没有持久化 runner，不可自动恢复。')
+      break
+    case 'memory-extraction':
+      typed = nonRecoverable('叙事记忆提取是直接 service/IPC 流程，不是可恢复任务。')
+      break
+    case 'foreshadow-suggestion':
+      typed = nonRecoverable('伏笔建议是直接 service/IPC 流程，不是可恢复任务。')
+      break
+    default:
+      typed = unsupportedTaskType(input.task_type)
+      break
+  }
+
+  // Uncertain model windows stay manual even if the old deadline expired.
+  // Proven restartable/resumable paths keep auto allowance; claim refreshes deadline.
+  if (
+    typed.autoAllowed
+    && input.timeout_at
+    && input.timeout_at <= input.nowIso
+    && typed.action !== 'auto-restart'
+    && typed.action !== 'auto-resume'
+  ) {
+    return manualRequired('任务已超过执行期限，需要人工确认后重试。')
+  }
+
+  // Credential only required when we might call the model again.
+  if (typed.autoAllowed && typed.action === 'auto-restart' && !input.credentialAvailable) {
+    return manualRequired(
+      '当前项目凭据不可用或已重新绑定后无法解析，请修复凭据后再人工重试。',
+      true,
+    )
+  }
+  if (!typed.autoAllowed && typed.manualRetryAllowed && !input.credentialAvailable) {
+    // Keep manual classification; reason can note credentials when already manual.
+    return typed
+  }
+  if (typed.autoAllowed && typed.action === 'auto-resume') {
+    // Zero-model resume paths do not require credentials.
+    return typed
+  }
+  if (typed.autoAllowed && !input.credentialAvailable) {
     return manualRequired(
       '当前项目凭据不可用或已重新绑定后无法解析，请修复凭据后再人工重试。',
       true,
     )
   }
 
-  switch (input.task_type) {
-    case 'chapter-generation':
-      return classifyChapterGeneration(input)
-    case 'chapter-polish':
-      return classifyChapterPolish(input)
-    case 'assistant':
-      return unsupportedTaskType('assistant')
-    case 'outline-generation':
-      return nonRecoverable('大纲生成当前没有持久化 runner，不可自动恢复。')
-    case 'memory-extraction':
-      return nonRecoverable('叙事记忆提取是直接 service/IPC 流程，不是可恢复任务。')
-    case 'foreshadow-suggestion':
-      return nonRecoverable('伏笔建议是直接 service/IPC 流程，不是可恢复任务。')
-    default:
-      return unsupportedTaskType(input.task_type)
-  }
+  return typed
 }
 
 export function buildIdempotencyKey(

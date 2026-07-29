@@ -7,6 +7,7 @@ import type { ChapterGenerationStage } from '../../shared/chapterGeneration'
 import {
   buildIdempotencyKey,
   classifyTaskRecovery,
+  CRASHED_ATTEMPT_REASON,
   DEFAULT_LEASE_MS,
   DEFAULT_LEASE_RENEW_MS,
   DEFAULT_MAX_RECOVERY_ATTEMPTS,
@@ -27,14 +28,21 @@ import type {
   CreateTaskInput,
   JsonObject,
   JsonValue,
+  LeaseFence,
   Task,
   TaskStore,
+  UpdateTaskInput,
 } from '../database'
 import type { RecoveryAttemptRepository } from '../database/repositories/recoveryAttemptRepository'
 import type { RuntimeSessionRepository } from '../database/repositories/runtimeSessionRepository'
 import type { TaskEventSink } from './events'
 import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveData'
-import { assertNoSensitiveTaskInput } from './sensitiveInput'
+import {
+  assertNoSensitiveTaskInput,
+  assertSafePersistedBaseUrl,
+  assertSafeTaskStartSecrets,
+} from './sensitiveInput'
+import type { QuiesceResult } from '../database/shutdown'
 
 export interface StartTaskInput {
   projectId: string
@@ -78,6 +86,8 @@ export interface TaskRunnerContext {
   readonly task: Task
   readonly input: StartTaskInput
   readonly signal: AbortSignal
+  /** Throws when the current owner no longer holds the execution lease. */
+  assertStillOwnsExecution(): void
   setStage(stage: string, progress: number): void
   setExecutionPhase(phase: ExecutionPhase): void
   emitChunk(chunk: string, stage?: string): void
@@ -156,11 +166,48 @@ function toResult(result: AgentRunResult): JsonObject {
 }
 
 /**
- * Persist only non-secret LLM endpoint metadata.
- * Never store API keys, credential secrets, or resolved credentialId.
+ * Persist only recovery-needed, non-secret fields.
+ * Memory-only prompt/request details are not durable by default.
  */
+function minimizePersistedRequest(
+  taskType: string,
+  request: JsonObject | undefined,
+): JsonObject {
+  if (!request) return {}
+  if (taskType === 'chapter-generation') {
+    const out: JsonObject = {}
+    if (typeof request.project_id === 'string') out.project_id = request.project_id
+    if (typeof request.chapter_outline_id === 'string') {
+      out.chapter_outline_id = request.chapter_outline_id
+    }
+    if (typeof request.chapter_id === 'string') out.chapter_id = request.chapter_id
+    if (typeof request.auto_confirm === 'boolean') out.auto_confirm = request.auto_confirm
+    return out
+  }
+  if (taskType === 'chapter-polish') {
+    const out: JsonObject = {}
+    if (typeof request.project_id === 'string') out.project_id = request.project_id
+    if (typeof request.chapter_id === 'string') out.chapter_id = request.chapter_id
+    if (request.mode === 'chapter' || request.mode === 'paragraph') out.mode = request.mode
+    if (typeof request.block_id === 'string') out.block_id = request.block_id
+    if (typeof request.instruction === 'string') out.instruction = request.instruction
+    if (typeof request.source_revision_id === 'string') {
+      out.source_revision_id = request.source_revision_id
+    }
+    if (typeof request.auto_apply === 'boolean') out.auto_apply = request.auto_apply
+    return out
+  }
+  // Generic / unsupported recovery types: persist nothing from request.
+  return {}
+}
+
 function toPersistedInput(input: StartTaskInput): JsonObject {
-  assertNoSensitiveTaskInput(input.input ?? {}, 'request')
+  assertSafeTaskStartSecrets({
+    prompt: input.prompt,
+    input: input.input,
+    llm: input.llm,
+  })
+  assertSafePersistedBaseUrl(input.llm.baseUrl)
   const llm: JsonObject = {
     provider: input.llm.provider ?? 'openai-compatible',
     baseUrl: input.llm.baseUrl,
@@ -172,11 +219,12 @@ function toPersistedInput(input: StartTaskInput): JsonObject {
     ...(input.llm.maxRetries === undefined ? {} : { maxRetries: input.llm.maxRetries }),
   }
   return {
-    prompt: input.prompt,
+    // Prompt is not required for crash recovery and must not carry secrets.
+    prompt: '',
     sessionId: input.sessionId,
     taskType: input.taskType,
     llm,
-    request: input.input ?? {},
+    request: minimizePersistedRequest(input.taskType, input.input),
   }
 }
 
@@ -264,6 +312,7 @@ export class TaskManager {
   private readonly timeoutTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly leaseTimers = new Map<string, ReturnType<typeof setInterval>>()
   private readonly attemptIds = new Map<string, string>()
+  private readonly leaseTokens = new Map<string, string>()
   private readonly timeoutFlags = new Set<string>()
   private readonly lostLeaseFlags = new Set<string>()
   private readonly now: () => string
@@ -308,6 +357,13 @@ export class TaskManager {
     if (crashedIds.length > 0) {
       // Immediately free leases held by crashed sessions so restart can recover.
       this.options.store.releaseLeasesForRuntimeSessions(crashedIds, this.now())
+      // Close open recovery attempts from crashed sessions so none stay permanently open.
+      this.options.recoveryAttempts?.finishOpenForRuntimeSessions(
+        crashedIds,
+        'crashed',
+        this.now(),
+        CRASHED_ATTEMPT_REASON,
+      )
     }
     this.runtimeSession = this.options.runtimeSessions.start({
       owner: this.ownerId,
@@ -343,7 +399,11 @@ export class TaskManager {
 
   public start(input: StartTaskInput): TaskHandle {
     this.assertCanStartTasks()
-    assertNoSensitiveTaskInput(input.input ?? {}, 'request')
+    assertSafeTaskStartSecrets({
+      prompt: input.prompt,
+      input: input.input,
+      llm: input.llm,
+    })
     const resolvedLlm = this.resolveCurrentCredential(input.projectId, input.llm)
     const validatedInput: StartTaskInput = {
       ...input,
@@ -450,14 +510,9 @@ export class TaskManager {
   }
 
   public listRecoverable(projectId: string): RecoverableTaskView[] {
+    const nowIso = this.now()
     return this.listByProject(projectId)
-      .filter(
-        (task) =>
-          task.status === 'pending'
-          || task.status === 'running'
-          || task.status === 'failed'
-          || task.status === 'cancelled',
-      )
+      .filter((task) => this.isRecoveryUiCandidate(task, nowIso))
       .map((task) => this.toRecoverableView(task))
       .filter((view) =>
         view.recovery_classification !== null
@@ -475,6 +530,41 @@ export class TaskManager {
         || view.recovery_classification === 'manual-retry-required'
         || view.recovery_classification === 'non-recoverable',
       )
+  }
+
+  /**
+   * Recovery UI excludes this manager's active completions and unexpired leases
+   * held by the current owner / active runtime session.
+   */
+  private isRecoveryUiCandidate(task: Task, nowIso: string): boolean {
+    if (
+      task.status !== 'pending'
+      && task.status !== 'running'
+      && task.status !== 'failed'
+      && task.status !== 'cancelled'
+    ) {
+      return false
+    }
+    if (this.completions.has(task.id)) return false
+    if (
+      task.lease_owner === this.ownerId
+      && task.lease_token
+      && task.lease_expires_at
+      && task.lease_expires_at > nowIso
+    ) {
+      return false
+    }
+    if (
+      this.runtimeSession
+      && task.runtime_session_id === this.runtimeSession.id
+      && task.lease_token
+      && task.lease_expires_at
+      && task.lease_expires_at > nowIso
+      && task.status === 'running'
+    ) {
+      return false
+    }
+    return true
   }
 
   /**
@@ -499,12 +589,14 @@ export class TaskManager {
       kind: 'auto',
       allowedClassifications: ['resumable', 'restartable'],
       incrementAttempt: true,
+      timeoutAt: addMs(this.now(), this.taskTimeoutMs),
     })
   }
 
   /**
    * Explicit user-confirmed manual retry.
    * State transition + lease claim happen in one conditional transaction.
+   * Shares the same attempt ceiling as automatic recovery.
    */
   public manualRetry(taskId: string, confirmed: true): TaskHandle | null {
     if (confirmed !== true) {
@@ -602,6 +694,7 @@ export class TaskManager {
               kind: 'auto',
               allowedClassifications: ['resumable', 'restartable'],
               incrementAttempt: true,
+              timeoutAt: addMs(this.now(), this.taskTimeoutMs),
             })
             if (!handle) {
               result.skipped += 1
@@ -640,10 +733,11 @@ export class TaskManager {
   }
 
   /**
-   * Coordinated quiesce: forbid new work, abort, wait for active completions to
-   * finish their terminal writes, then clear timers. Callers close the DB only after this.
+   * Coordinated quiesce: forbid new work, abort, wait for active completions.
+   * Returns drained=true only when every completion settled. Callers must not
+   * close/replace the DB when drained=false.
    */
-  public async quiesceForShutdown(timeoutMs = this.quiesceTimeoutMs): Promise<void> {
+  public async quiesceForShutdown(timeoutMs = this.quiesceTimeoutMs): Promise<QuiesceResult> {
     if (!this.quitting) {
       this.beginGracefulShutdown()
     } else {
@@ -652,15 +746,27 @@ export class TaskManager {
     const pending = [...this.completions.values()]
     if (pending.length === 0) {
       this.clearAllTimers()
-      return
+      return { drained: true }
     }
-    await Promise.race([
-      Promise.allSettled(pending),
-      new Promise<void>((resolve) => {
-        this.setTimeoutFn(() => resolve(), timeoutMs)
-      }),
-    ])
-    this.clearAllTimers()
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+    try {
+      const raceResult = await Promise.race([
+        Promise.allSettled(pending).then(() => 'drained' as const),
+        new Promise<'timeout'>((resolve) => {
+          timeoutHandle = this.setTimeoutFn(() => resolve('timeout'), timeoutMs)
+        }),
+      ])
+      if (raceResult === 'drained') {
+        this.clearAllTimers()
+        return { drained: true }
+      }
+      // Timeout: leave task timers alone for any still-running work; do not close DB.
+      return { drained: false }
+    } finally {
+      if (timeoutHandle !== undefined) {
+        this.clearTimeoutFn(timeoutHandle)
+      }
+    }
   }
 
   public async wait(taskId: string): Promise<Task | null> {
@@ -679,6 +785,18 @@ export class TaskManager {
     this.clearAllTimers()
   }
 
+  private hasDurableFinalEntity(task: Task): boolean {
+    const lookups = this.options.recoveryLookups
+    if (!lookups) return false
+    if (task.task_type === 'chapter-generation') {
+      return lookups.hasChapterVersionForTask(task.id)
+    }
+    if (task.task_type === 'chapter-polish') {
+      return lookups.hasChapterRevisionForTask(task.id)
+    }
+    return false
+  }
+
   private claimAndStart(
     taskId: string,
     options: {
@@ -692,8 +810,13 @@ export class TaskManager {
     const active = this.completions.get(taskId)
     if (active) return { taskId, completion: active }
 
+    const existing = this.options.store.getById(taskId)
+    if (!existing) return null
+    const finalEntity = this.hasDurableFinalEntity(existing)
+
     const nowIso = this.now()
     const leaseToken = randomUUID()
+    const refreshedTimeout = options.timeoutAt ?? addMs(nowIso, this.taskTimeoutMs)
     const claim = this.options.store.claimForRecovery({
       taskId,
       owner: this.ownerId,
@@ -702,10 +825,12 @@ export class TaskManager {
       nowIso,
       kind: options.kind,
       allowedClassifications: options.allowedClassifications,
-      incrementAttempt: options.incrementAttempt,
+      // Zero-model final-entity finish does not consume the attempt budget.
+      incrementAttempt: finalEntity ? false : options.incrementAttempt,
+      ignoreAttemptLimit: finalEntity,
       runtimeSessionId: this.runtimeSession?.id ?? null,
       manualConfirmed: options.manualConfirmed === true,
-      timeoutAt: options.timeoutAt ?? null,
+      timeoutAt: refreshedTimeout,
     })
     if (!claim.claimed || !claim.task) return null
     if (claim.attemptId) {
@@ -725,7 +850,7 @@ export class TaskManager {
       }
     } catch (error) {
       const message = errorMessage(error)
-      this.options.store.update(taskId, {
+      this.mutateOwned(taskId, leaseToken, {
         status: 'failed',
         stage: 'failed',
         error_message: message,
@@ -741,7 +866,7 @@ export class TaskManager {
       return null
     }
 
-    this.options.store.update(taskId, {
+    this.mutateOwned(taskId, leaseToken, {
       status: 'running',
       stage: 'resuming',
       error_message: null,
@@ -761,6 +886,9 @@ export class TaskManager {
   ): TaskHandle {
     const controller = this.createAbortController()
     this.controllers.set(task.id, controller)
+    if (leaseToken) {
+      this.leaseTokens.set(task.id, leaseToken)
+    }
     this.options.events.publish({ type: 'task:start', task })
     this.armTimeout(task.id, task.timeout_at, controller)
     if (leaseToken) {
@@ -774,10 +902,55 @@ export class TaskManager {
     const completion = this.execute(task.id, input, controller, leaseToken).finally(() => {
       this.controllers.delete(task.id)
       this.completions.delete(task.id)
+      this.leaseTokens.delete(task.id)
       this.clearTaskTimers(task.id)
     })
     this.completions.set(task.id, completion)
     return { taskId: task.id, completion }
+  }
+
+  private fenceFor(taskId: string, leaseToken?: string): LeaseFence | null {
+    const token = leaseToken ?? this.leaseTokens.get(taskId)
+    if (!token) return null
+    return { owner: this.ownerId, leaseToken: token }
+  }
+
+  /**
+   * Execution-period mutations must be fenced by lease ownership.
+   * Returns null when the lease was lost (caller must not overwrite the new owner).
+   */
+  private mutateOwned(
+    taskId: string,
+    leaseToken: string | undefined,
+    input: UpdateTaskInput,
+  ): Task | null {
+    const fence = this.fenceFor(taskId, leaseToken)
+    if (!fence) {
+      // Pre-lease administrative path (should be rare during execution).
+      return this.options.store.update(taskId, input)
+    }
+    const updated = this.options.store.updateOwned(taskId, fence, input)
+    if (!updated) {
+      this.lostLeaseFlags.add(taskId)
+      this.controllers.get(taskId)?.abort()
+      return null
+    }
+    return updated
+  }
+
+  private assertOwnsExecution(taskId: string, leaseToken?: string): void {
+    const fence = this.fenceFor(taskId, leaseToken)
+    if (!fence) return
+    const current = this.options.store.getById(taskId)
+    if (
+      !current
+      || current.lease_owner !== fence.owner
+      || current.lease_token !== fence.leaseToken
+    ) {
+      this.lostLeaseFlags.add(taskId)
+      this.controllers.get(taskId)?.abort()
+      throw new Error('任务租约已丢失，已中止非幂等副作用。')
+    }
   }
 
   private async execute(
@@ -788,38 +961,39 @@ export class TaskManager {
   ): Promise<Task> {
     const runner = this.options.runners?.[input.taskType]
     try {
-      if (runner) return await this.executeRunner(taskId, input, controller, runner)
+      if (runner) return await this.executeRunner(taskId, input, controller, runner, leaseToken)
 
-      this.updateStage(taskId, 'starting', 0)
-      this.setExecutionPhase(taskId, 'preparing')
-      this.options.store.update(taskId, { status: 'running', started_at: this.now() })
+      this.updateStage(taskId, 'starting', 0, leaseToken)
+      this.setExecutionPhase(taskId, 'preparing', leaseToken)
+      this.mutateOwned(taskId, leaseToken, { status: 'running', started_at: this.now() })
 
       let agent: Awaited<ReturnType<AgentFactory['create']>> | undefined
       try {
-        this.setExecutionPhase(taskId, 'awaiting_model')
+        this.setExecutionPhase(taskId, 'awaiting_model', leaseToken)
+        this.assertOwnsExecution(taskId, leaseToken)
         agent = await this.options.agentFactory.create({
           projectId: input.projectId,
           sessionId: input.sessionId,
           llm: input.llm,
           systemPrompt: input.systemPrompt,
         })
-        this.setExecutionPhase(taskId, 'model_in_flight')
+        this.setExecutionPhase(taskId, 'model_in_flight', leaseToken)
         const result = await agent.prompt(input.prompt, {
           signal: controller.signal,
-          onEvent: (event) => this.handleAgentEvent(taskId, event, input.llm.streamingEnabled !== false),
+          onEvent: (event) => this.handleAgentEvent(taskId, event, input.llm.streamingEnabled !== false, leaseToken),
         })
 
         if (this.timeoutFlags.has(taskId)) {
-          return this.finishTimedOut(taskId)
+          return this.finishTimedOut(taskId, leaseToken)
         }
         if (this.lostLeaseFlags.has(taskId)) {
           return this.finishLostLease(taskId)
         }
         if (controller.signal.aborted || result.finishReason === 'aborted') {
-          return this.finishCancelled(taskId, result)
+          return this.finishCancelled(taskId, result, leaseToken)
         }
-        this.setExecutionPhase(taskId, 'persisting_result')
-        const completed = this.options.store.update(taskId, {
+        this.setExecutionPhase(taskId, 'persisting_result', leaseToken)
+        const completed = this.mutateOwned(taskId, leaseToken, {
           status: 'completed',
           stage: 'completed',
           progress: 1,
@@ -830,7 +1004,7 @@ export class TaskManager {
           recovery_reason: null,
           recovery_action: 'none',
         })
-        if (!completed) throw new Error(`Task not found after completion: ${taskId}`)
+        if (!completed) return this.finishLostLease(taskId)
         this.finishAttempt(taskId, 'completed')
         this.options.events.publish({
           type: 'task:end',
@@ -841,10 +1015,10 @@ export class TaskManager {
         })
         return completed
       } catch (error) {
-        if (this.timeoutFlags.has(taskId)) return this.finishTimedOut(taskId)
+        if (this.timeoutFlags.has(taskId)) return this.finishTimedOut(taskId, leaseToken)
         if (this.lostLeaseFlags.has(taskId)) return this.finishLostLease(taskId)
-        if (controller.signal.aborted) return this.finishCancelled(taskId)
-        return this.finishFailed(taskId, errorMessage(error))
+        if (controller.signal.aborted) return this.finishCancelled(taskId, undefined, leaseToken)
+        return this.finishFailed(taskId, errorMessage(error), leaseToken)
       } finally {
         agent?.dispose()
       }
@@ -860,28 +1034,30 @@ export class TaskManager {
     input: StartTaskInput,
     controller: AbortController,
     runner: TaskRunner,
+    leaseToken?: string,
   ): Promise<Task> {
-    this.updateStage(taskId, 'starting', 0)
-    this.setExecutionPhase(taskId, 'preparing')
-    this.options.store.update(taskId, { status: 'running', started_at: this.now() })
+    this.updateStage(taskId, 'starting', 0, leaseToken)
+    this.setExecutionPhase(taskId, 'preparing', leaseToken)
+    this.mutateOwned(taskId, leaseToken, { status: 'running', started_at: this.now() })
     const current = this.options.store.getById(taskId)
     if (!current) throw new Error(`Task not found before execution: ${taskId}`)
     const context: TaskRunnerContext = {
       task: current,
       input,
       signal: controller.signal,
-      setStage: (stage, progress) => this.updateStage(taskId, stage, progress),
-      setExecutionPhase: (phase) => this.setExecutionPhase(taskId, phase),
+      assertStillOwnsExecution: () => this.assertOwnsExecution(taskId, leaseToken),
+      setStage: (stage, progress) => this.updateStage(taskId, stage, progress, leaseToken),
+      setExecutionPhase: (phase) => this.setExecutionPhase(taskId, phase, leaseToken),
       emitChunk: (chunk, stage) => this.options.events.publish({ type: 'task:chunk', taskId, chunk, stage }),
       saveCheckpoint: (checkpoint) => {
         const schemaVersion = typeof checkpoint.schema_version === 'number'
           ? checkpoint.schema_version
           : null
-        const saved = this.options.store.update(taskId, {
+        const saved = this.mutateOwned(taskId, leaseToken, {
           checkpoint,
           checkpoint_schema_version: schemaVersion ?? current.checkpoint_schema_version,
         })
-        if (!saved) throw new Error(`Task not found while saving checkpoint: ${taskId}`)
+        if (!saved) throw new Error('任务租约已丢失，检查点写入已拒绝。')
         this.options.events.publish({ type: 'task:checkpoint', taskId, checkpoint })
       },
       publishReview: (versionId, required, status) =>
@@ -889,13 +1065,13 @@ export class TaskManager {
     }
     try {
       const result = await runner.execute(context)
-      if (this.timeoutFlags.has(taskId)) return this.finishTimedOut(taskId)
+      if (this.timeoutFlags.has(taskId)) return this.finishTimedOut(taskId, leaseToken)
       if (this.lostLeaseFlags.has(taskId)) return this.finishLostLease(taskId)
       if (controller.signal.aborted || result.status === 'cancelled') {
-        return this.finishCancelledWithResult(taskId, result.result)
+        return this.finishCancelledWithResult(taskId, result.result, undefined, leaseToken)
       }
-      this.setExecutionPhase(taskId, 'finalizing')
-      const completed = this.options.store.update(taskId, {
+      this.setExecutionPhase(taskId, 'finalizing', leaseToken)
+      const completed = this.mutateOwned(taskId, leaseToken, {
         chapter_id: resultChapterId(result.result),
         status: 'completed',
         stage: 'completed',
@@ -907,7 +1083,7 @@ export class TaskManager {
         recovery_reason: null,
         recovery_action: 'none',
       })
-      if (!completed) throw new Error(`Task not found after runner completion: ${taskId}`)
+      if (!completed) return this.finishLostLease(taskId)
       this.finishAttempt(taskId, 'completed')
       this.options.events.publish({
         type: 'task:end',
@@ -917,25 +1093,26 @@ export class TaskManager {
       })
       return completed
     } catch (error) {
-      if (this.timeoutFlags.has(taskId)) return this.finishTimedOut(taskId)
+      if (this.timeoutFlags.has(taskId)) return this.finishTimedOut(taskId, leaseToken)
       if (this.lostLeaseFlags.has(taskId)) return this.finishLostLease(taskId)
-      if (controller.signal.aborted) return this.finishCancelledWithResult(taskId)
-      return this.finishFailed(taskId, errorMessage(error))
+      if (controller.signal.aborted) return this.finishCancelledWithResult(taskId, undefined, undefined, leaseToken)
+      return this.finishFailed(taskId, errorMessage(error), leaseToken)
     }
   }
 
-  private finishCancelled(taskId: string, result?: AgentRunResult): Task {
-    return this.finishCancelledWithResult(taskId, result ? toResult(result) : undefined, result)
+  private finishCancelled(taskId: string, result?: AgentRunResult, leaseToken?: string): Task {
+    return this.finishCancelledWithResult(taskId, result ? toResult(result) : undefined, result, leaseToken)
   }
 
   private finishCancelledWithResult(
     taskId: string,
     result?: JsonObject,
     stats?: AgentRunResult,
+    leaseToken?: string,
   ): Task {
-    if (this.timeoutFlags.has(taskId)) return this.finishTimedOut(taskId)
+    if (this.timeoutFlags.has(taskId)) return this.finishTimedOut(taskId, leaseToken)
     if (this.lostLeaseFlags.has(taskId)) return this.finishLostLease(taskId)
-    const cancelled = this.options.store.update(taskId, {
+    const cancelled = this.mutateOwned(taskId, leaseToken, {
       status: 'cancelled',
       stage: 'cancelled',
       progress: 1,
@@ -947,7 +1124,7 @@ export class TaskManager {
       recovery_reason: '任务已取消，禁止自动恢复；如需继续请人工确认后重试。',
       recovery_action: 'manual-confirm',
     })
-    if (!cancelled) throw new Error(`Task not found after cancellation: ${taskId}`)
+    if (!cancelled) return this.finishLostLease(taskId)
     this.finishAttempt(taskId, 'cancelled')
     this.options.events.publish({
       type: 'task:end',
@@ -959,9 +1136,9 @@ export class TaskManager {
     return cancelled
   }
 
-  private finishTimedOut(taskId: string): Task {
+  private finishTimedOut(taskId: string, leaseToken?: string): Task {
     const message = TIMEOUT_RECOVERY_REASON
-    const failed = this.options.store.update(taskId, {
+    const failed = this.mutateOwned(taskId, leaseToken, {
       status: 'failed',
       stage: 'timeout',
       progress: 1,
@@ -974,36 +1151,36 @@ export class TaskManager {
       recovery_action: 'manual-confirm',
       cancel_requested: false,
     })
-    if (!failed) throw new Error(`Task not found after timeout: ${taskId}`)
+    if (!failed) return this.finishLostLease(taskId)
     this.finishAttempt(taskId, 'timeout', message)
     this.options.events.publish({ type: 'task:error', taskId, error: message })
     this.options.events.publish({ type: 'task:end', taskId, status: 'failed' })
     return failed
   }
 
+  /**
+   * Lost-lease path: only finish this owner's recovery_attempt.
+   * Never mutate the task row (new owner may already hold it).
+   */
   private finishLostLease(taskId: string): Task {
     const message = '任务租约已丢失，执行已安全中止，避免并发副作用。'
-    const failed = this.options.store.update(taskId, {
-      status: 'failed',
-      stage: 'lost-lease',
-      progress: 1,
-      error_message: message,
-      last_recovery_error: message,
-      finished_at: this.now(),
-      execution_phase: 'failed',
-      recovery_classification: 'manual-retry-required',
-      recovery_reason: message,
-      recovery_action: 'manual-confirm',
-    })
-    if (!failed) throw new Error(`Task not found after lost lease: ${taskId}`)
     this.finishAttempt(taskId, 'lost_lease', message)
-    this.options.events.publish({ type: 'task:error', taskId, error: message })
-    this.options.events.publish({ type: 'task:end', taskId, status: 'failed' })
-    return failed
+    const current = this.options.store.getById(taskId)
+    if (!current) throw new Error(`Task not found after lost lease: ${taskId}`)
+    // Do not invent a terminal status for the new owner; only signal local attempt end.
+    if (
+      current.status === 'completed'
+      || current.status === 'failed'
+      || current.status === 'cancelled'
+    ) {
+      this.options.events.publish({ type: 'task:end', taskId, status: current.status })
+    }
+    return current
   }
 
-  private finishFailed(taskId: string, message: string): Task {
-    const failed = this.options.store.update(taskId, {
+  private finishFailed(taskId: string, message: string, leaseToken?: string): Task {
+    if (this.lostLeaseFlags.has(taskId)) return this.finishLostLease(taskId)
+    const failed = this.mutateOwned(taskId, leaseToken, {
       status: 'failed',
       stage: 'failed',
       error_message: message,
@@ -1011,7 +1188,7 @@ export class TaskManager {
       execution_phase: 'failed',
       last_recovery_error: message,
     })
-    if (!failed) throw new Error(`Task not found after failure: ${taskId}`)
+    if (!failed) return this.finishLostLease(taskId)
     this.persistClassification(failed)
     this.finishAttempt(taskId, 'failed', message)
     this.options.events.publish({ type: 'task:error', taskId, error: message })
@@ -1096,13 +1273,18 @@ export class TaskManager {
     }
   }
 
-  private handleAgentEvent(taskId: string, event: AgentEvent, streamingEnabled: boolean): void {
+  private handleAgentEvent(
+    taskId: string,
+    event: AgentEvent,
+    streamingEnabled: boolean,
+    leaseToken?: string,
+  ): void {
     if (event.type === 'agent_start') {
-      this.updateStage(taskId, 'agent', 0)
+      this.updateStage(taskId, 'agent', 0, leaseToken)
       return
     }
     if (event.type === 'tool_execution_start') {
-      this.updateStage(taskId, `tool:${event.toolName}`, 0)
+      this.updateStage(taskId, `tool:${event.toolName}`, 0, leaseToken)
       return
     }
     if (
@@ -1114,13 +1296,14 @@ export class TaskManager {
     }
   }
 
-  private updateStage(taskId: string, stage: string, progress: number): void {
-    this.options.store.update(taskId, { stage, progress })
+  private updateStage(taskId: string, stage: string, progress: number, leaseToken?: string): void {
+    const updated = this.mutateOwned(taskId, leaseToken, { stage, progress })
+    if (!updated) return
     this.options.events.publish({ type: 'task:stage', taskId, stage, progress })
   }
 
-  private setExecutionPhase(taskId: string, phase: ExecutionPhase): void {
-    this.options.store.update(taskId, { execution_phase: phase })
+  private setExecutionPhase(taskId: string, phase: ExecutionPhase, leaseToken?: string): void {
+    this.mutateOwned(taskId, leaseToken, { execution_phase: phase })
   }
 
   private resolveCurrentCredential(projectId: string, input: LlmConfigInput): LlmConfigInput {

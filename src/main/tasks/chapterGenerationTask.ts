@@ -11,7 +11,10 @@ import {
   checkpointFromJson,
   checkpointToJson,
 } from '../../shared/chapterGeneration'
-import { CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION } from '../../shared/taskRecovery'
+import {
+  CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
+  parseStrictGenerationCheckpoint,
+} from '../../shared/taskRecovery'
 import type { JsonObject, JsonValue } from '../database'
 import type { TaskRunner, TaskRunnerContext, TaskRunnerResult } from './taskManager'
 
@@ -110,6 +113,7 @@ function finishFromExistingVersion(
     throw new Error('已落库章节版本与任务目标章节不一致，任务不可恢复。')
   }
 
+  context.assertStillOwnsExecution()
   context.setExecutionPhase('persisting_result')
   context.saveCheckpoint(checkpointToJson({
     schema_version: CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
@@ -151,9 +155,18 @@ export function createChapterGenerationTaskRunner(
       const finished = finishFromExistingVersion(context, request, options.service)
       if (finished) return finished
 
+      // Shared strict validator with classifier: corrupt checkpoint is terminal.
+      if (context.task.checkpoint) {
+        const strict = parseStrictGenerationCheckpoint(context.task.checkpoint)
+        if (!strict) {
+          throw new Error('章节生成检查点语义损坏或字段不合法，已拒绝恢复并禁止调用模型。')
+        }
+      }
+
       let agent: ProjectSessionAgent | undefined
       try {
         context.setExecutionPhase('preparing')
+        context.assertStillOwnsExecution()
         agent = await options.agentFactory.create({
           projectId: request.project_id,
           sessionId: context.input.sessionId,
@@ -167,10 +180,16 @@ export function createChapterGenerationTaskRunner(
           {
             signal: context.signal,
             checkpoint: (() => {
-              const checkpoint = checkpointFromJson(context.task.checkpoint)
+              const strict = context.task.checkpoint
+                ? parseStrictGenerationCheckpoint(context.task.checkpoint)
+                : null
+              if (context.task.checkpoint && !strict) {
+                throw new Error('章节生成检查点语义损坏或字段不合法，已拒绝恢复并禁止调用模型。')
+              }
+              const checkpoint = checkpointFromJson(strict ? context.task.checkpoint : null)
               return {
                 ...checkpoint,
-                schema_version: checkpoint.schema_version || CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
+                schema_version: CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
               }
             })(),
             callbacks: {
@@ -182,10 +201,13 @@ export function createChapterGenerationTaskRunner(
               on_chunk: (stage, chunk) => {
                 if (context.input.llm.streamingEnabled !== false) context.emitChunk(chunk, stage)
               },
-              on_checkpoint: (checkpoint) => context.saveCheckpoint(checkpointToJson({
-                ...checkpoint,
-                schema_version: CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
-              })),
+              on_checkpoint: (checkpoint) => {
+                context.assertStillOwnsExecution()
+                context.saveCheckpoint(checkpointToJson({
+                  ...checkpoint,
+                  schema_version: CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
+                }))
+              },
               on_review: (version, required) =>
                 context.publishReview(version.id, required, version.status === 'approved' ? 'approved' : 'review'),
             },

@@ -26,6 +26,40 @@ const SENSITIVE_KEY_TOKENS = new Set([
   'apisecret',
 ])
 
+/** Query parameter names that must never appear on persisted LLM base URLs. */
+const SENSITIVE_URL_QUERY_KEYS = new Set([
+  'api_key',
+  'apikey',
+  'key',
+  'token',
+  'access_token',
+  'refresh_token',
+  'secret',
+  'authorization',
+  'auth',
+  'password',
+  'credential',
+  'client_secret',
+  'private_key',
+])
+
+/**
+ * Value-level secret patterns. Messages never include the matched payload so
+ * rejected markers do not re-enter logs or exception strings.
+ */
+const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
+  /\bBearer\s+\S+/i,
+  /\bsk-[A-Za-z0-9_-]{8,}/i,
+  /\bsk_live_[A-Za-z0-9_-]+/i,
+  /\bsk_test_[A-Za-z0-9_-]+/i,
+  /\bghp_[A-Za-z0-9]{20,}\b/,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/,
+  /\bxox[baprs]-[A-Za-z0-9-]+\b/,
+  /\bAIza[0-9A-Za-z\-_]{20,}\b/,
+  /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/,
+  /(?:^|[?&])(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|token|authorization|password)=/i,
+]
+
 function normalizeKey(key: string): string {
   return key.replace(/[^a-z0-9]/gi, '').toLowerCase()
 }
@@ -33,7 +67,6 @@ function normalizeKey(key: string): string {
 export function isSensitiveInputKey(key: string): boolean {
   const normalized = normalizeKey(key)
   if (SENSITIVE_KEY_TOKENS.has(normalized)) return true
-  // Catch variants like api_key_value, mySecretToken, userPasswordHash
   if (normalized.includes('password')) return true
   if (normalized.includes('secret')) return true
   if (normalized.includes('authorization')) return true
@@ -44,16 +77,90 @@ export function isSensitiveInputKey(key: string): boolean {
   return false
 }
 
+function isSensitiveQueryKey(key: string): boolean {
+  const lower = key.toLowerCase()
+  if (SENSITIVE_URL_QUERY_KEYS.has(lower)) return true
+  const normalized = normalizeKey(key)
+  if (SENSITIVE_URL_QUERY_KEYS.has(normalized)) return true
+  if (normalized.includes('secret')) return true
+  if (normalized.includes('token') && normalized !== 'apitokenversion') return true
+  if (normalized.includes('password')) return true
+  if (normalized.includes('authorization')) return true
+  if (normalized.includes('apikey')) return true
+  if (normalized.includes('credential')) return true
+  return false
+}
+
+function looksLikeUrl(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(value) || value.startsWith('//')
+}
+
 /**
- * Recursively reject secret-bearing fields. Throws rather than silently stripping
- * so callers never persist untrusted secrets by omission.
+ * Reject secret-bearing string values. Error text uses only the field path so
+ * the secret marker never appears in exception messages.
+ */
+export function assertNoSensitiveStringValue(value: string, path: string): void {
+  for (const pattern of SECRET_VALUE_PATTERNS) {
+    if (pattern.test(value)) {
+      throw new Error(`拒绝持久化敏感字符串值: ${path}`)
+    }
+  }
+  if (!looksLikeUrl(value) && !value.includes('?') && !value.includes('@')) {
+    return
+  }
+  try {
+    const candidate = value.startsWith('//') ? `https:${value}` : value
+    const url = new URL(candidate)
+    if (url.username || url.password) {
+      throw new Error(`拒绝持久化含用户凭据的 URL: ${path}`)
+    }
+    for (const key of url.searchParams.keys()) {
+      if (isSensitiveQueryKey(key)) {
+        throw new Error(`拒绝持久化含敏感查询参数的 URL: ${path}`)
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('拒绝')) throw error
+    // Non-URL strings that merely look similar are ignored unless patterns matched above.
+  }
+}
+
+/**
+ * baseUrl persistence rules: no userinfo, no sensitive query keys.
+ * Non-sensitive query such as api-version may remain.
+ */
+export function assertSafePersistedBaseUrl(baseUrl: string, path = 'llm.baseUrl'): void {
+  let url: URL
+  try {
+    url = new URL(baseUrl)
+  } catch {
+    throw new Error(`拒绝持久化无效的模型端点: ${path}`)
+  }
+  if (url.username || url.password) {
+    throw new Error(`拒绝持久化含用户凭据的模型端点: ${path}`)
+  }
+  for (const key of url.searchParams.keys()) {
+    if (isSensitiveQueryKey(key)) {
+      throw new Error(`拒绝持久化含敏感查询参数的模型端点: ${path}`)
+    }
+  }
+  assertNoSensitiveStringValue(baseUrl, path)
+}
+
+/**
+ * Recursively reject secret-bearing keys and string values. Throws rather than
+ * silently stripping so callers never persist untrusted secrets by omission.
  */
 export function assertNoSensitiveTaskInput(
   value: JsonValue | undefined,
   path = 'input',
 ): void {
   if (value === undefined || value === null) return
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+  if (typeof value === 'string') {
+    assertNoSensitiveStringValue(value, path)
+    return
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
     return
   }
   if (Array.isArray(value)) {
@@ -68,5 +175,23 @@ export function assertNoSensitiveTaskInput(
       throw new Error(`拒绝持久化敏感字段: ${path}.${key}`)
     }
     assertNoSensitiveTaskInput(child, `${path}.${key}`)
+  }
+}
+
+/**
+ * Dual-layer validation for task start payloads (IPC + TaskManager).
+ * Covers nested request, prompt text, and llm.baseUrl query/userinfo.
+ */
+export function assertSafeTaskStartSecrets(input: {
+  prompt?: string
+  input?: JsonObject
+  llm?: { baseUrl?: string }
+}): void {
+  if (typeof input.prompt === 'string') {
+    assertNoSensitiveStringValue(input.prompt, 'prompt')
+  }
+  assertNoSensitiveTaskInput(input.input ?? {}, 'request')
+  if (typeof input.llm?.baseUrl === 'string' && input.llm.baseUrl.trim() !== '') {
+    assertSafePersistedBaseUrl(input.llm.baseUrl, 'llm.baseUrl')
   }
 }

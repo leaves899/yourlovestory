@@ -9,7 +9,12 @@ import type {
   ParagraphRevisionOptions,
   NarrativeWorkbenchService,
 } from '../../shared/narrativeWorkbench'
-import { CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION } from '../../shared/taskRecovery'
+import {
+  CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
+  parseStrictPolishCheckpoint,
+  polishCheckpointToJson,
+  type StrictPolishCheckpoint,
+} from '../../shared/taskRecovery'
 import type { JsonObject, JsonValue } from '../database'
 import type { TaskRunner, TaskRunnerContext, TaskRunnerResult } from './taskManager'
 
@@ -66,33 +71,23 @@ function readRequest(context: TaskRunnerContext): ChapterPolishRequest {
 }
 
 function checkpointFromJson(value: JsonObject | null): NarrativeOperationCheckpoint | null {
-  if (!value) return null
-  const operation = value.operation
-  const status = value.status
-  if (
-    (operation !== 'paragraph_revision' && operation !== 'chapter_polish') ||
-    (status !== 'running' && status !== 'completed' && status !== 'fallback' && status !== 'cancelled')
-  ) {
-    return null
-  }
-  if (typeof value.schema_version !== 'number') {
-    return null
-  }
+  const parsed = parseStrictPolishCheckpoint(value)
+  if (!parsed) return null
   return {
-    schema_version: value.schema_version,
-    operation,
-    source_content: typeof value.source_content === 'string' ? value.source_content : '',
-    generated_content: typeof value.generated_content === 'string' ? value.generated_content : '',
-    revision_id: typeof value.revision_id === 'string' ? value.revision_id : null,
-    status,
-    error: typeof value.error === 'string' ? value.error : null,
-    applied: value.applied === true,
-    updated_at: typeof value.updated_at === 'string' ? value.updated_at : undefined,
+    schema_version: parsed.schema_version,
+    operation: parsed.operation,
+    source_content: parsed.source_content,
+    generated_content: parsed.generated_content,
+    revision_id: parsed.revision_id,
+    status: parsed.status,
+    error: parsed.error,
+    applied: parsed.applied,
+    ...(parsed.updated_at ? { updated_at: parsed.updated_at } : {}),
   }
 }
 
-function checkpointToJson(checkpoint: NarrativeOperationCheckpoint): JsonObject {
-  return {
+function checkpointToJson(checkpoint: NarrativeOperationCheckpoint | StrictPolishCheckpoint): JsonObject {
+  return polishCheckpointToJson({
     schema_version: checkpoint.schema_version,
     operation: checkpoint.operation,
     source_content: checkpoint.source_content,
@@ -102,7 +97,7 @@ function checkpointToJson(checkpoint: NarrativeOperationCheckpoint): JsonObject 
     error: checkpoint.error,
     applied: checkpoint.applied === true,
     ...(checkpoint.updated_at ? { updated_at: checkpoint.updated_at } : {}),
-  }
+  })
 }
 
 class AgentNarrativeTextGenerator implements NarrativeTextGenerator {
@@ -188,6 +183,7 @@ function finishFromExistingRevision(
     throw new Error('已落库修订与任务目标章节不一致，任务不可恢复。')
   }
 
+  context.assertStillOwnsExecution()
   context.setExecutionPhase('persisting_result')
   const report = service.ensureReportForTask(
     request.project_id,
@@ -203,6 +199,7 @@ function finishFromExistingRevision(
     applied = true
   }
   if (request.auto_apply && !applied) {
+    context.assertStillOwnsExecution()
     service.applyRevision(request.project_id, existing.id)
     applied = true
   }
@@ -238,11 +235,19 @@ export function createChapterPolishTaskRunner(
   return {
     execute: async (context): Promise<TaskRunnerResult> => {
       const request = readRequest(context)
-      const savedCheckpoint = checkpointFromJson(context.task.checkpoint)
 
       // Final entity first: never create agent / call model when revision is already durable.
       const finished = finishFromExistingRevision(context, request, options.service)
       if (finished) return finished
+
+      // Shared strict validator with classifier.
+      if (context.task.checkpoint) {
+        const strict = parseStrictPolishCheckpoint(context.task.checkpoint)
+        if (!strict) {
+          throw new Error('章节润色检查点语义损坏或字段不合法，已拒绝恢复并禁止调用模型。')
+        }
+      }
+      const savedCheckpoint = checkpointFromJson(context.task.checkpoint)
 
       let agent: ProjectSessionAgent | undefined
       try {
@@ -250,6 +255,7 @@ export function createChapterPolishTaskRunner(
           let applied = savedCheckpoint.applied === true
           if (request.auto_apply && !applied) {
             context.setExecutionPhase('persisting_result')
+            context.assertStillOwnsExecution()
             options.service.applyRevision(request.project_id, savedCheckpoint.revision_id)
             applied = true
             context.saveCheckpoint(checkpointToJson({ ...savedCheckpoint, applied: true }))
@@ -270,6 +276,7 @@ export function createChapterPolishTaskRunner(
         }
 
         context.setExecutionPhase('preparing')
+        context.assertStillOwnsExecution()
         agent = await options.agentFactory.create({
           projectId: request.project_id,
           sessionId: context.input.sessionId,
@@ -282,11 +289,13 @@ export function createChapterPolishTaskRunner(
           on_chunk: (operation: NarrativeTextGenerationRequest['operation'], chunk: string) => {
             if (context.input.llm.streamingEnabled !== false) context.emitChunk(chunk, operation)
           },
-          on_checkpoint: (checkpoint: NarrativeOperationCheckpoint) =>
+          on_checkpoint: (checkpoint: NarrativeOperationCheckpoint) => {
+            context.assertStillOwnsExecution()
             context.saveCheckpoint(checkpointToJson({
               ...checkpoint,
               schema_version: CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
-            })),
+            }))
+          },
           task_id: context.task.id,
         }
         context.setStage(request.mode === 'paragraph' ? 'paragraph-revision' : 'polish', 0.1)

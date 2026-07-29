@@ -3,7 +3,10 @@ import { normalizeLlmBaseUrl } from '../../agent/llm/config'
 import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveData'
 import type { JsonObject } from '../database'
 import type { StartTaskInput, TaskManager } from '../tasks'
-import { assertNoSensitiveTaskInput } from '../tasks/sensitiveInput'
+import {
+  assertNoSensitiveTaskInput,
+  assertSafeTaskStartSecrets,
+} from '../tasks/sensitiveInput'
 import {
   assertTrustedIpcSender,
   isRecord,
@@ -62,6 +65,10 @@ function parseTaskStartInput(value: unknown): StartTaskInput {
     && Object.values(rawInput).every(isJsonValue)
     ? rawInput as JsonObject
     : undefined
+  const prompt = readString(value.prompt, 'prompt')
+  const llm = parseLlmConfig(value.llm)
+  // Dual-layer secret guard with TaskManager: reject keys, string values, and baseUrl secrets.
+  assertSafeTaskStartSecrets({ prompt, input, llm })
   if (input) {
     assertNoSensitiveTaskInput(input, 'request')
   }
@@ -69,8 +76,8 @@ function parseTaskStartInput(value: unknown): StartTaskInput {
     projectId: readString(value.projectId, 'projectId'),
     sessionId: readString(value.sessionId, 'sessionId'),
     taskType: readString(value.taskType, 'taskType'),
-    prompt: readString(value.prompt, 'prompt'),
-    llm: parseLlmConfig(value.llm),
+    prompt,
+    llm,
     chapterId: typeof value.chapterId === 'string' ? value.chapterId : undefined,
     parentTaskId: typeof value.parentTaskId === 'string' ? value.parentTaskId : undefined,
     input,

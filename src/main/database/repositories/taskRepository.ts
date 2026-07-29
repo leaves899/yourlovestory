@@ -123,6 +123,11 @@ export interface ClaimTaskInput {
   timeoutAt?: string | null
   /** When true, clear cancel and move failed/cancelled into running/queued atomically. */
   manualConfirmed?: boolean
+  /**
+   * Zero-model final-entity finish may claim even at the attempt ceiling.
+   * Must not be used for model-replay paths.
+   */
+  ignoreAttemptLimit?: boolean
 }
 
 export interface ClaimTaskResult {
@@ -139,12 +144,26 @@ export interface RenewLeaseInput {
   nowIso: string
 }
 
+export interface LeaseFence {
+  owner: string
+  leaseToken: string
+}
+
 export interface TaskStore {
   create(input: CreateTaskInput): Task
   getById(id: string): Task | null
   listByProject(projectId: string): Task[]
   listRecoveryCandidates(): Task[]
   update(id: string, input: UpdateTaskInput): Task | null
+  /**
+   * Conditional task mutation: succeeds only when the caller still holds
+   * lease_owner + lease_token. Prevents a lost owner from overwriting a new owner.
+   */
+  updateOwned(
+    id: string,
+    fence: LeaseFence,
+    input: UpdateTaskInput,
+  ): Task | null
   requestCancellation(id: string): boolean
   claimForRecovery(input: ClaimTaskInput): ClaimTaskResult
   renewLease(input: RenewLeaseInput): boolean
@@ -396,8 +415,29 @@ export class TaskRepository implements TaskStore {
   }
 
   public update(id: string, input: UpdateTaskInput): Task | null {
+    return this.applyUpdate(id, input, null)
+  }
+
+  public updateOwned(
+    id: string,
+    fence: LeaseFence,
+    input: UpdateTaskInput,
+  ): Task | null {
+    return this.applyUpdate(id, input, fence)
+  }
+
+  private applyUpdate(
+    id: string,
+    input: UpdateTaskInput,
+    fence: LeaseFence | null,
+  ): Task | null {
     const current = this.getById(id)
     if (!current) return null
+    if (fence) {
+      if (current.lease_owner !== fence.owner || current.lease_token !== fence.leaseToken) {
+        return null
+      }
+    }
     const next = {
       chapter_id: input.chapter_id === undefined ? current.chapter_id : input.chapter_id,
       status: input.status ?? current.status,
@@ -452,7 +492,10 @@ export class TaskRepository implements TaskStore {
       recovery_metadata_version:
         input.recovery_metadata_version ?? current.recovery_metadata_version,
     }
-    this.database
+    const fenceClause = fence
+      ? ' AND lease_owner = ? AND lease_token = ?'
+      : ''
+    const result = this.database
       .prepare(
         `UPDATE tasks
          SET chapter_id = ?, status = ?, stage = ?, progress = ?, checkpoint_json = ?, result_json = ?,
@@ -462,7 +505,7 @@ export class TaskRepository implements TaskStore {
              last_recovery_error = ?, idempotency_key = ?, checkpoint_schema_version = ?,
              recovery_root_task_id = ?, lease_owner = ?, lease_token = ?, lease_expires_at = ?,
              timeout_at = ?, shutdown_kind = ?, runtime_session_id = ?, recovery_metadata_version = ?
-         WHERE id = ?`,
+         WHERE id = ?${fenceClause}`,
       )
       .run(
         next.chapter_id,
@@ -495,7 +538,9 @@ export class TaskRepository implements TaskStore {
         next.runtime_session_id,
         next.recovery_metadata_version,
         id,
+        ...(fence ? [fence.owner, fence.leaseToken] : []),
       )
+    if (result.changes === 0) return null
     return this.getById(id)
   }
 
@@ -519,10 +564,10 @@ export class TaskRepository implements TaskStore {
     const classificationClause = allowed && allowed.length > 0
       ? `AND recovery_classification IN (${allowed.map(() => '?').join(', ')})`
       : ''
-    const incrementAttempt = input.incrementAttempt !== false
-    // Auto path always enforces the recovery attempt ceiling.
-    // Manual confirmed path may claim when already at the auto ceiling so the user can continue.
-    const attemptClause = input.manualConfirmed
+    const incrementAttempt = input.incrementAttempt !== false && !input.ignoreAttemptLimit
+    // Auto and manual claims share the same persisted attempt ceiling.
+    // Final-entity zero-model finish may ignore the ceiling without incrementing.
+    const attemptClause = input.ignoreAttemptLimit
       ? ''
       : 'AND recovery_attempt_count < max_recovery_attempts'
     const manualPrep = input.manualConfirmed

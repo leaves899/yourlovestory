@@ -124,7 +124,7 @@ describe('classifyTaskRecovery', () => {
     expect(decision.classification).toBe('manual-retry-required')
   })
 
-  test('attempt limit blocks automatic recovery', () => {
+  test('attempt limit blocks automatic and manual recovery', () => {
     const decision = classifyTaskRecovery(base({
       recovery_attempt_count: 3,
       max_recovery_attempts: 3,
@@ -132,6 +132,65 @@ describe('classifyTaskRecovery', () => {
     }))
     expect(decision.classification).toBe('manual-retry-required')
     expect(decision.autoAllowed).toBe(false)
+    expect(decision.manualRetryAllowed).toBe(false)
+  })
+
+  test('final entity is resumable despite missing credential, expired deadline, and attempt cap', () => {
+    const decision = classifyTaskRecovery(base({
+      hasChapterVersionForTask: true,
+      credentialAvailable: false,
+      timeout_at: '2020-01-01T00:00:00.000Z',
+      recovery_attempt_count: 99,
+      max_recovery_attempts: 3,
+      execution_phase: 'persisting_result',
+    }))
+    expect(decision.classification).toBe('resumable')
+    expect(decision.autoAllowed).toBe(true)
+  })
+
+  test('old deadline does not demote queued restartable generation', () => {
+    const decision = classifyTaskRecovery(base({
+      execution_phase: 'queued',
+      checkpoint: null,
+      timeout_at: '2020-01-01T00:00:00.000Z',
+    }))
+    expect(decision.classification).toBe('restartable')
+    expect(decision.autoAllowed).toBe(true)
+  })
+
+  test('model_in_flight stays manual even with expired deadline', () => {
+    const decision = classifyTaskRecovery(base({
+      execution_phase: 'model_in_flight',
+      checkpoint: { schema_version: 1, stage: 'body', body: 'partial' },
+      timeout_at: '2020-01-01T00:00:00.000Z',
+    }))
+    expect(decision.classification).toBe('manual-retry-required')
+    expect(decision.autoAllowed).toBe(false)
+  })
+
+  test('semantically corrupt polish checkpoint is non-recoverable', () => {
+    const decision = classifyTaskRecovery(base({
+      task_type: 'chapter-polish',
+      checkpoint: {
+        schema_version: 1,
+        status: 'completed',
+        revision_id: 'x',
+        operation: 'bad',
+      },
+    }))
+    expect(decision.classification).toBe('non-recoverable')
+    expect(decision.autoAllowed).toBe(false)
+  })
+
+  test('semantically corrupt generation checkpoint is non-recoverable', () => {
+    const decision = classifyTaskRecovery(base({
+      checkpoint: {
+        schema_version: 1,
+        stage: 'not-a-stage',
+        body: 'x',
+      },
+    }))
+    expect(decision.classification).toBe('non-recoverable')
   })
 
   test('recovery gate closed blocks recovery', () => {

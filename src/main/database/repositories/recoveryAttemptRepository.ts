@@ -31,6 +31,8 @@ function toAttempt(row: RecoveryAttemptRow): RecoveryAttemptRecord {
     || row.outcome === 'timeout'
     || row.outcome === 'lost_lease'
     || row.outcome === 'aborted'
+    || row.outcome === 'interrupted'
+    || row.outcome === 'crashed'
       ? row.outcome
       : null
   return {
@@ -154,5 +156,30 @@ export class RecoveryAttemptRepository {
         'SELECT COUNT(*) AS count FROM recovery_attempts WHERE finished_at IS NULL',
       )
       .get()?.count ?? 0
+  }
+
+  /**
+   * Deterministically finish open attempts belonging to crashed runtime sessions.
+   * Does not touch attempts for sessions outside the provided id set.
+   */
+  public finishOpenForRuntimeSessions(
+    sessionIds: readonly string[],
+    outcome: Extract<RecoveryAttemptOutcome, 'interrupted' | 'crashed'>,
+    finishedAt: string,
+    errorMessage: string,
+  ): number {
+    if (sessionIds.length === 0) return 0
+    const placeholders = sessionIds.map(() => '?').join(', ')
+    const result = this.database
+      .prepare(
+        `UPDATE recovery_attempts
+         SET finished_at = ?,
+             outcome = ?,
+             error_message = ?
+         WHERE finished_at IS NULL
+           AND runtime_session_id IN (${placeholders})`,
+      )
+      .run(finishedAt, outcome, errorMessage, ...sessionIds)
+    return result.changes
   }
 }

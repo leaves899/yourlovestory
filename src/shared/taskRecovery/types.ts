@@ -44,6 +44,12 @@ export type RecoveryAttemptOutcome =
   | 'timeout'
   | 'lost_lease'
   | 'aborted'
+  | 'interrupted'
+  | 'crashed'
+
+/** Fixed reason when a crashed runtime session forces open attempts closed. */
+export const CRASHED_ATTEMPT_REASON =
+  '运行时会话异常中断，恢复尝试已稳定结束，未写入业务结果。'
 
 /** Current checkpoint schema version for chapter-generation. */
 export const CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION = 1

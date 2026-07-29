@@ -56,15 +56,24 @@ CREATE UNIQUE INDEX idx_chapter_revisions_task
   WHERE task_id IS NOT NULL;
 
 -- v8 allowed multiple postprocess_reports with the same non-null task_id.
--- Keep all report rows; retain a single authoritative task linkage (latest by created_at/id).
+-- Keep all report rows; retain a single authoritative task linkage
+-- (latest by created_at DESC, id DESC). Content is preserved; only task_id is cleared.
 UPDATE postprocess_reports
 SET task_id = NULL
 WHERE task_id IS NOT NULL
-  AND rowid NOT IN (
-    SELECT MAX(rowid)
-    FROM postprocess_reports
-    WHERE task_id IS NOT NULL
-    GROUP BY task_id
+  AND id NOT IN (
+    SELECT keep_id FROM (
+      SELECT (
+        SELECT p2.id
+        FROM postprocess_reports p2
+        WHERE p2.task_id = p1.task_id
+        ORDER BY p2.created_at DESC, p2.id DESC
+        LIMIT 1
+      ) AS keep_id
+      FROM postprocess_reports p1
+      WHERE p1.task_id IS NOT NULL
+      GROUP BY p1.task_id
+    )
   );
 
 CREATE UNIQUE INDEX idx_postprocess_reports_task

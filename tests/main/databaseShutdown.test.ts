@@ -34,6 +34,7 @@ describe('database restore shutdown boundary', () => {
     expect(result).toEqual({
       databaseClosed: true,
       serviceCleanupFailed: true,
+      drained: true,
     })
     expect(assistantDispose).toHaveBeenCalledTimes(1)
     expect(databaseClose).toHaveBeenCalledTimes(1)
@@ -57,6 +58,7 @@ describe('database restore shutdown boundary', () => {
     expect(result).toEqual({
       databaseClosed: true,
       serviceCleanupFailed: true,
+      drained: true,
     })
     expect(taskDispose).toHaveBeenCalledTimes(1)
     expect(databaseClose).toHaveBeenCalledTimes(1)
@@ -76,6 +78,7 @@ describe('database restore shutdown boundary', () => {
     expect(result).toEqual({
       databaseClosed: false,
       serviceCleanupFailed: false,
+      drained: true,
     })
   })
 
@@ -94,6 +97,7 @@ describe('database restore shutdown boundary', () => {
       expect(closed).toBe(false)
       resolveCompletion?.()
       await completion
+      return { drained: true }
     })
     const databaseClose = jest.fn(() => {
       closed = true
@@ -111,9 +115,29 @@ describe('database restore shutdown boundary', () => {
     })
 
     expect(result.databaseClosed).toBe(true)
+    expect(result.drained).toBe(true)
     expect(quiesce).toHaveBeenCalledTimes(1)
     expect(databaseClose).toHaveBeenCalledTimes(1)
     expect(closed).toBe(true)
+  })
+
+  test('does not close database when quiesce times out undrained', async () => {
+    const databaseClose = jest.fn()
+    const result = await shutdownDatabaseResources({
+      taskManager: {
+        dispose: jest.fn(),
+        quiesceForShutdown: async () => ({ drained: false }),
+      },
+      assistantService: { dispose: jest.fn() },
+      database: { close: databaseClose },
+      awaitQuiesce: true,
+    })
+    expect(result).toEqual({
+      databaseClosed: false,
+      serviceCleanupFailed: false,
+      drained: false,
+    })
+    expect(databaseClose).not.toHaveBeenCalled()
   })
 
   test('isolates status event sink failures from authoritative state transitions', () => {
