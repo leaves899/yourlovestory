@@ -8,8 +8,47 @@
 
 interface MockCall {
   channel: string
-  params: any
+  params: unknown
   timestamp: number
+}
+
+/** Structured createBackup outcomes mirrored from shared BackupCreationOutcome. */
+type MockBackupCreationOutcome =
+  | 'backup-created'
+  | 'backup-created-policy-cleanup-partial'
+  | 'backup-created-policy-cleanup-failed'
+
+interface MockBackupRecord {
+  id: string
+  filename: string
+  createdAt: string
+  reason: 'scheduled' | 'manual' | 'pre-migration' | 'pre-restore'
+  appVersion: string
+  schemaVersion: number
+  size: number
+  sha256: string
+}
+
+interface MockBackupCreationResult {
+  backup: MockBackupRecord
+  outcome: MockBackupCreationOutcome
+  cleanupCompleted: boolean
+  cleanupPartialFailure: boolean
+  warning: {
+    code: 'BACKUP_CLEANUP_PARTIAL' | 'BACKUP_CLEANUP_FAILED'
+    message: string
+  } | null
+  prune: {
+    deleted: string[]
+    failed: Array<{ id: string; error: string }>
+    retained: string[]
+    policyExceeded: boolean
+  }
+  cleanupSummary: {
+    deletedCount: number
+    failedCount: number
+    retainedCount: number
+  }
 }
 
 interface MockElectronOptions {
@@ -18,20 +57,21 @@ interface MockElectronOptions {
     | 'credential-migration-required'
     | 'restoring'
     | 'recovery-required'
-  backups?: Array<{
-    id: string
-    filename: string
-    createdAt: string
-    reason: 'scheduled' | 'manual' | 'pre-migration' | 'pre-restore'
-    appVersion: string
-    schemaVersion: number
-    size: number
-    sha256: string
-  }>
+  backups?: MockBackupRecord[]
   backupPolicy?: {
     maxBackups: number
     maxAgeDays: number
   }
+  /**
+   * Structured createBackup result. Defaults to full success
+   * (`backup-created`) so other E2E suites keep existing behaviour.
+   */
+  createBackupResult?: MockBackupCreationResult
+  /**
+   * When true, getDatabaseStatus / listBackups / getBackupPolicy succeed on
+   * initial load, then reject after createBackup is invoked (post-create refresh).
+   */
+  failDataSafetyRefreshAfterCreate?: boolean
   diagnosticsExport?:
     | { canceled: true }
     | { canceled: false; fileName: string; size: number; sha256: string }
@@ -98,6 +138,8 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
     size: 256,
     sha256: 'd'.repeat(64),
   }
+  /** After createBackup, post-create refresh calls reject when option is set. */
+  let rejectDataSafetyRefresh = false
   const databaseStatusListeners = new Set<(status: {
     state: NonNullable<MockElectronOptions['databaseState']>
     integrity: 'ok' | 'unknown'
@@ -111,8 +153,48 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
   const PHASE_NAMES = ['陌生人', '认识', '暧昧', '表白', '热恋']
   const PHASE_THRESHOLDS = [60, 70, -1, -1, -1]
 
-  function track(channel: string, params: any) {
+  function track(channel: string, params: unknown) {
     mockCalls.push({ channel, params, timestamp: Date.now() })
+  }
+
+  function defaultCreateBackupResult(): MockBackupCreationResult {
+    return {
+      backup: {
+        id: 'mock-manual-1',
+        filename: 'mock-manual-1.sqlite',
+        createdAt: new Date().toISOString(),
+        reason: 'manual',
+        appVersion: 'test',
+        schemaVersion: 8,
+        size: 1,
+        sha256: 'a'.repeat(64),
+      },
+      outcome: 'backup-created',
+      cleanupCompleted: true,
+      cleanupPartialFailure: false,
+      warning: null,
+      prune: {
+        deleted: [],
+        failed: [],
+        retained: ['mock-manual-1'],
+        policyExceeded: false,
+      },
+      cleanupSummary: {
+        deletedCount: 0,
+        failedCount: 0,
+        retainedCount: 1,
+      },
+    }
+  }
+
+  function resolveCreateBackupResult(): MockBackupCreationResult {
+    return options.createBackupResult ?? defaultCreateBackupResult()
+  }
+
+  function assertDataSafetyRefreshAllowed(): void {
+    if (rejectDataSafetyRefresh) {
+      throw new Error('mock data-safety refresh failed after create')
+    }
   }
 
   function nextId(): string {
@@ -181,6 +263,7 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
   ;(window as any).electronAPI = {
     getDatabaseStatus: async () => {
       track('backup:get-status', undefined)
+      assertDataSafetyRefreshAllowed()
       return {
         success: true,
         data: currentDatabaseStatus(),
@@ -192,38 +275,20 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
     },
     listBackups: async () => {
       track('backup:list', undefined)
+      assertDataSafetyRefreshAllowed()
       return { success: true, data: options.backups ?? [] }
     },
-    createBackup: async () => ({
-      success: true,
-      data: {
-        backup: {
-          id: 'mock-manual-1',
-          filename: 'mock-manual-1.sqlite',
-          createdAt: new Date().toISOString(),
-          reason: 'manual' as const,
-          appVersion: 'test',
-          schemaVersion: 8,
-          size: 1,
-          sha256: 'a'.repeat(64),
-        },
-        outcome: 'backup-created' as const,
-        cleanupCompleted: true,
-        cleanupPartialFailure: false,
-        warning: null,
-        prune: {
-          deleted: [],
-          failed: [],
-          retained: ['mock-manual-1'],
-          policyExceeded: false,
-        },
-        cleanupSummary: {
-          deletedCount: 0,
-          failedCount: 0,
-          retainedCount: 1,
-        },
-      },
-    }),
+    createBackup: async () => {
+      // Renderer must not pass arbitrary file paths; record channel with no payload.
+      track('backup:create', undefined)
+      if (options.failDataSafetyRefreshAfterCreate) {
+        rejectDataSafetyRefresh = true
+      }
+      return {
+        success: true,
+        data: resolveCreateBackupResult(),
+      }
+    },
     verifyBackup: async (id: string) => {
       track('backup:verify', { id })
       return {
@@ -245,6 +310,7 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
     },
     getBackupPolicy: async () => {
       track('backup:get-policy', undefined)
+      assertDataSafetyRefreshAllowed()
       return {
         success: true,
         data: {

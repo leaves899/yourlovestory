@@ -164,3 +164,149 @@ test('settings diagnostics cancel and failure restore the export button', async 
   await page.getByTestId('export-diagnostics').click()
   await expect(page.getByTestId('export-diagnostics')).toBeEnabled()
 })
+
+const mockManualBackup = {
+  id: 'mock-manual-1',
+  filename: 'mock-manual-1.sqlite',
+  createdAt: '2026-03-20T00:00:00.000Z',
+  reason: 'manual' as const,
+  appVersion: 'test',
+  schemaVersion: 8,
+  size: 1,
+  sha256: 'a'.repeat(64),
+}
+
+test('settings backup create success shows created toast and restores button', async ({ page }) => {
+  await injectMockElectronAPI(page, {
+    createBackupResult: {
+      backup: mockManualBackup,
+      outcome: 'backup-created',
+      cleanupCompleted: true,
+      cleanupPartialFailure: false,
+      warning: null,
+      prune: {
+        deleted: [],
+        failed: [],
+        retained: ['mock-manual-1'],
+        policyExceeded: false,
+      },
+      cleanupSummary: {
+        deletedCount: 0,
+        failedCount: 0,
+        retainedCount: 1,
+      },
+    },
+  })
+  await page.goto('/#/settings')
+  await expect(page.getByRole('heading', { name: '设置' })).toBeVisible()
+  await page.getByRole('tab', { name: '数据安全' }).click()
+
+  const backupButton = page.getByRole('button', { name: '立即备份' })
+  await expect(backupButton).toBeEnabled()
+  await backupButton.click()
+
+  await expect(page.getByText('数据库备份已创建')).toBeVisible()
+  await expect(page.getByText('创建备份失败')).toHaveCount(0)
+  await expect(backupButton).toBeEnabled()
+
+  const calls = await page.evaluate(() => (
+    window as typeof window & {
+      __mockCalls: Array<{ channel: string; params: unknown }>
+    }
+  ).__mockCalls)
+  const createCall = calls.find((call) => call.channel === 'backup:create')
+  expect(createCall).toBeTruthy()
+  expect(createCall?.params).toBeUndefined()
+  expect(JSON.stringify(createCall)).not.toMatch(/[A-Za-z]:\\/)
+})
+
+test('settings backup cleanup partial shows warning without create failure', async ({ page }) => {
+  await injectMockElectronAPI(page, {
+    createBackupResult: {
+      backup: mockManualBackup,
+      outcome: 'backup-created-policy-cleanup-partial',
+      cleanupCompleted: true,
+      cleanupPartialFailure: true,
+      warning: {
+        code: 'BACKUP_CLEANUP_PARTIAL',
+        message: '新备份已创建，但部分旧备份未清理',
+      },
+      prune: {
+        deleted: [],
+        failed: [{ id: 'old-1', error: '本地备份操作失败，请重试。' }],
+        retained: ['mock-manual-1', 'old-1'],
+        policyExceeded: false,
+      },
+      cleanupSummary: {
+        deletedCount: 0,
+        failedCount: 1,
+        retainedCount: 2,
+      },
+    },
+  })
+  await page.goto('/#/settings')
+  await expect(page.getByRole('heading', { name: '设置' })).toBeVisible()
+  await page.getByRole('tab', { name: '数据安全' }).click()
+
+  const backupButton = page.getByRole('button', { name: '立即备份' })
+  await expect(backupButton).toBeEnabled()
+  await backupButton.click()
+
+  await expect(page.getByText('数据库备份已创建')).toBeVisible()
+  await expect(page.getByText('新备份已创建，但部分旧备份未清理')).toBeVisible()
+  await expect(page.getByText('创建备份失败')).toHaveCount(0)
+  await expect(backupButton).toBeEnabled()
+})
+
+test('settings backup cleanup failed still succeeds when post-create refresh rejects', async ({
+  page,
+}) => {
+  await injectMockElectronAPI(page, {
+    failDataSafetyRefreshAfterCreate: true,
+    createBackupResult: {
+      backup: mockManualBackup,
+      outcome: 'backup-created-policy-cleanup-failed',
+      cleanupCompleted: false,
+      cleanupPartialFailure: false,
+      warning: {
+        code: 'BACKUP_CLEANUP_FAILED',
+        message: '新备份已创建，但旧备份清理失败或未完成',
+      },
+      prune: {
+        deleted: [],
+        failed: [],
+        retained: [],
+        policyExceeded: false,
+      },
+      cleanupSummary: {
+        deletedCount: 0,
+        failedCount: 0,
+        retainedCount: 0,
+      },
+    },
+  })
+  await page.goto('/#/settings')
+  await expect(page.getByRole('heading', { name: '设置' })).toBeVisible()
+  await page.getByRole('tab', { name: '数据安全' }).click()
+
+  const backupButton = page.getByRole('button', { name: '立即备份' })
+  await expect(backupButton).toBeEnabled()
+  await backupButton.click()
+
+  await expect(page.getByText('数据库备份已创建')).toBeVisible()
+  await expect(page.getByText('新备份已创建，但旧备份清理失败或未完成')).toBeVisible()
+  await expect(page.getByText('创建备份失败')).toHaveCount(0)
+  await expect(page.getByText('mock data-safety refresh failed after create')).toHaveCount(0)
+  await expect(backupButton).toBeEnabled()
+
+  const calls = await page.evaluate(() => (
+    window as typeof window & {
+      __mockCalls: Array<{ channel: string; params: unknown }>
+    }
+  ).__mockCalls)
+  const createCall = calls.find((call) => call.channel === 'backup:create')
+  expect(createCall).toBeTruthy()
+  expect(createCall?.params).toBeUndefined()
+  expect(JSON.stringify(createCall)).not.toMatch(/[A-Za-z]:\\/)
+  expect(JSON.stringify(createCall)).not.toMatch(/[/\\]Users[/\\]/)
+})

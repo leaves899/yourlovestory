@@ -294,9 +294,9 @@ function SettingsPage() {
       if (!result.success || !result.data) {
         throw new Error(result.error?.message ?? '创建备份失败')
       }
-      await loadDataSafety()
-      // Backup is on disk whenever success+data is returned. Cleanup warnings
-      // must not be presented as create failure.
+      // Backup is on disk whenever success+data is returned. Report that
+      // outcome immediately so a later list/status/policy refresh failure
+      // cannot reclassify a successful create as "创建备份失败".
       const feedback = describeBackupCreationFeedback(result.data)
       toast({
         title: feedback.title,
@@ -304,6 +304,12 @@ function SettingsPage() {
         status: feedback.status,
         duration: feedback.status === 'success' ? 3000 : 5000,
       })
+      try {
+        await loadDataSafety()
+      } catch {
+        // Keep the previous list/status quietly. Never surface raw refresh
+        // errors or re-toast create failure after a successful create.
+      }
     } catch (error: unknown) {
       toast({
         title: '创建备份失败',
