@@ -41,7 +41,8 @@
 
 按 `task_id` 找到最终 version/revision 后，恢复器仍会校验项目、章节和任务归属。
 章节版本会补齐 chapter 的 `review` / `completed` 状态、摘要、字数和允许的自动确认；
-归属冲突或已拒绝实体会稳定终止为 `non-recoverable`，不会再次进入恢复循环。
+但仅限该 version 仍是最新版本，且已批准版本仍为 current。归属冲突、旧版本或已拒绝
+实体会稳定终止为 `non-recoverable`，不会覆盖后来采用/编辑的章节，也不会再次进入恢复循环。
 
 ## 数据模型要点（migration 9）
 
@@ -57,6 +58,9 @@
 - `timeout_at`
 - `shutdown_kind`：`graceful` | `crash`
 - `runtime_session_id` / `recovery_metadata_version`
+
+未知的未来 `execution_phase` 会 fail closed 为 `non-recoverable`，但保留格式有效的
+input/checkpoint/result JSON 作为诊断与降级兼容证据；只有不可解析的损坏 JSON 才会被清理。
 
 另有 `runtime_sessions` 表记录启动会话。启动时，旧 session 标记 crash、旧 lease
 释放、open attempt 关闭和新 session 创建在同一 SQLite 事务完成；任一步失败都会整体回滚。
@@ -97,7 +101,8 @@
 
 drain 超时时不得提前结束 runtime session，也不得关闭仍可能被异步写入的数据库。
 应用退出仅在 `drained=true` 且数据库已确认关闭后继续；restore 的 drain 超时会撤销
-`restoring` 状态、保留当前数据库并返回稳定错误，不 relaunch、不退出进程。
+`restoring` 状态、重新开放 TaskManager、保留当前数据库并返回稳定错误，不 relaunch、
+不退出进程。超时前已中止的旧执行仍受 lease fence 约束，不会在恢复开放后落库。
 
 优雅停止的任务不得在下次启动被误判为“崩溃后的安全自动 resume”，除非结果已按 task_id 持久化（可幂等收尾）。
 

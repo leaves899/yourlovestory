@@ -315,8 +315,19 @@ export class ChapterGenerationService {
     ) {
       throw new ChapterGenerationBoundaryError('Chapter version does not match the task target')
     }
+    const latestVersion = this.options.versions.listByChapter(chapter.id)[0]
+    if (!latestVersion || latestVersion.id !== version.id) {
+      throw new ChapterGenerationBoundaryError(
+        'A newer chapter version exists; the recovered task cannot overwrite it',
+      )
+    }
     if (version.status === 'rejected') {
       throw new ChapterGenerationBoundaryError('Rejected chapter version cannot finish a task')
+    }
+    if (version.status === 'approved' && !version.is_current) {
+      throw new ChapterGenerationBoundaryError(
+        'Approved chapter version is no longer current',
+      )
     }
 
     if (input.auto_confirm && version.status === 'review' && version.fact_check.passed) {

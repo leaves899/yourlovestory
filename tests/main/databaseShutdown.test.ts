@@ -147,10 +147,12 @@ describe('database restore shutdown boundary', () => {
 
   test('does not close database when quiesce times out undrained', async () => {
     const databaseClose = jest.fn()
+    const resumeAfterAbortedShutdown = jest.fn()
     const result = await shutdownDatabaseResources({
       taskManager: {
         dispose: jest.fn(),
         quiesceForShutdown: async () => ({ drained: false }),
+        resumeAfterAbortedShutdown,
       },
       assistantService: { dispose: jest.fn() },
       database: { close: databaseClose },
@@ -162,6 +164,7 @@ describe('database restore shutdown boundary', () => {
       drained: false,
     })
     expect(databaseClose).not.toHaveBeenCalled()
+    expect(resumeAfterAbortedShutdown).toHaveBeenCalledTimes(1)
   })
 
   test('isolates status event sink failures from authoritative state transitions', () => {

@@ -740,6 +740,15 @@ export class TaskManager {
   }
 
   /**
+   * Restore task admission after a coordinated shutdown stopped before DB close.
+   * Existing aborted executions remain lease-fenced and must settle independently.
+   */
+  public resumeAfterAbortedShutdown(): void {
+    this.quitting = false
+    this.recoveryGateOpen = true
+  }
+
+  /**
    * Coordinated quiesce: forbid new work, abort, wait for active completions.
    * Returns drained=true only when every completion settled. Callers must not
    * close/replace the DB when drained=false.

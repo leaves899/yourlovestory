@@ -21,6 +21,8 @@ interface DisposableResource {
 interface QuiesceableTaskManager extends DisposableResource {
   quiesceForShutdown?(timeoutMs?: number): Promise<QuiesceResult | void>
   invalidateActiveRuntimes?(): void
+  /** Re-open task admission when shutdown was aborted before DB close. */
+  resumeAfterAbortedShutdown?(): void
 }
 
 interface ClosableDatabaseResource {
@@ -62,16 +64,22 @@ export async function shutdownDatabaseResources(
     if (awaitQuiesce) {
       // Quiesce path: do not close DB when drain/cleanup is uncertain.
       drained = false
-    }
-    try {
-      options.taskManager?.dispose()
-    } catch {
-      // keep going; DB close still gated on drained for awaitQuiesce
+    } else {
+      try {
+        options.taskManager?.dispose()
+      } catch {
+        // Continue with the non-quiescing best-effort shutdown path.
+      }
     }
   }
 
   if (awaitQuiesce && !drained) {
     // Never close/replace the live DB when completions may still write.
+    try {
+      options.taskManager?.resumeAfterAbortedShutdown?.()
+    } catch {
+      serviceCleanupFailed = true
+    }
     return {
       databaseClosed: false,
       serviceCleanupFailed,

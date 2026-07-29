@@ -268,9 +268,16 @@ const actions: readonly RecoveryAction[] = [
   'none',
 ]
 
+class UnsupportedExecutionPhaseError extends Error {
+  public constructor() {
+    super(UNKNOWN_PHASE_REASON)
+    this.name = 'UnsupportedExecutionPhaseError'
+  }
+}
+
 function parseExecutionPhase(value: string): ExecutionPhase {
   if (executionPhases.includes(value as ExecutionPhase)) return value as ExecutionPhase
-  throw new Error(UNKNOWN_PHASE_REASON)
+  throw new UnsupportedExecutionPhaseError()
 }
 
 function parseClassification(value: string | null): RecoveryClassification | null {
@@ -400,10 +407,8 @@ export class TaskRepository implements TaskStore {
     if (!row) return null
     try {
       return toTask(row)
-    } catch {
-      this.markTaskCorrupt(row.id, TASK_CORRUPTION_REASON, now())
-      const fixed = this.database.prepare<TaskRow>('SELECT * FROM tasks WHERE id = ?').get(id)
-      return fixed ? toTask(fixed) : null
+    } catch (error) {
+      return this.normalizeUnreadableRow(row, error, now())
     }
   }
 
@@ -823,15 +828,69 @@ export class TaskRepository implements TaskStore {
     for (const row of rows) {
       try {
         result.push(toTask(row))
-      } catch {
-        this.markTaskCorrupt(row.id, TASK_CORRUPTION_REASON, timestamp)
-        const fixed = this.database
-          .prepare<TaskRow>('SELECT * FROM tasks WHERE id = ?')
-          .get(row.id)
-        if (fixed) result.push(toTask(fixed))
+      } catch (error) {
+        const normalized = this.normalizeUnreadableRow(row, error, timestamp)
+        if (normalized) result.push(normalized)
       }
     }
     return result
+  }
+
+  private normalizeUnreadableRow(
+    row: TaskRow,
+    error: unknown,
+    nowIso: string,
+  ): Task | null {
+    if (error instanceof UnsupportedExecutionPhaseError) {
+      this.markTaskUnsupportedPhase(row.id, nowIso)
+      const phaseNormalized = this.database
+        .prepare<TaskRow>('SELECT * FROM tasks WHERE id = ?')
+        .get(row.id)
+      if (!phaseNormalized) return null
+      try {
+        return toTask(phaseNormalized)
+      } catch {
+        // A row may contain both an unsupported phase and corrupt JSON.
+        this.markTaskCorrupt(row.id, TASK_CORRUPTION_REASON, nowIso)
+      }
+    } else {
+      this.markTaskCorrupt(row.id, TASK_CORRUPTION_REASON, nowIso)
+    }
+    const fixed = this.database
+      .prepare<TaskRow>('SELECT * FROM tasks WHERE id = ?')
+      .get(row.id)
+    return fixed ? toTask(fixed) : null
+  }
+
+  /** Fail closed for a forward phase while preserving valid JSON evidence for audit/export. */
+  private markTaskUnsupportedPhase(taskId: string, nowIso: string): void {
+    this.database
+      .prepare(
+        `UPDATE tasks
+         SET status = 'failed',
+             stage = 'failed',
+             execution_phase = 'failed',
+             recovery_classification = 'non-recoverable',
+             recovery_reason = ?,
+             recovery_action = 'none',
+             last_recovery_error = ?,
+             error_message = ?,
+             finished_at = COALESCE(finished_at, ?),
+             lease_owner = NULL,
+             lease_token = NULL,
+             lease_expires_at = NULL,
+             cancel_requested = 0,
+             updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        UNKNOWN_PHASE_REASON,
+        UNKNOWN_PHASE_REASON,
+        UNKNOWN_PHASE_REASON,
+        nowIso,
+        nowIso,
+        taskId,
+      )
   }
 
   /**

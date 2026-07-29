@@ -439,8 +439,7 @@ app.on('window-all-closed', () => {
 })
 
 async function performGracefulAppShutdown(): Promise<boolean> {
-  void projectPortabilityCoordinator?.dispose()
-  projectPortabilityCoordinator = null
+  const portabilityCoordinator = projectPortabilityCoordinator
   const manager = taskManager
   const assistant = assistantService
   const db = database
@@ -452,6 +451,8 @@ async function performGracefulAppShutdown(): Promise<boolean> {
     awaitQuiesce: true,
   })
   if (!canExitAfterShutdown(result)) return false
+  await portabilityCoordinator?.dispose()
+  projectPortabilityCoordinator = null
   taskManager = null
   assistantService = null
   credentialService = null

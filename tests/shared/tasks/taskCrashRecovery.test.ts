@@ -30,6 +30,7 @@ import {
   RECOVERY_METADATA_VERSION,
   TASK_CORRUPTION_REASON,
   TIMEOUT_RECOVERY_REASON,
+  UNKNOWN_PHASE_REASON,
 } from '@/shared/taskRecovery'
 
 function successfulResult(text = 'done'): AgentRunResult {
@@ -109,6 +110,7 @@ describe('task crash recovery fault matrix', () => {
   })
 
   function createManager(overrides: {
+    database?: SqliteDatabase
     agentFactory?: AgentFactory
     ownerId?: string
     leaseMs?: number
@@ -127,7 +129,8 @@ describe('task crash recovery fault matrix', () => {
     }
     runners?: ConstructorParameters<typeof TaskManager>[0]['runners']
   } = {}): TaskManager {
-    const workbench = new WorkbenchService(database)
+    const managerDatabase = overrides.database ?? database
+    const workbench = new WorkbenchService(managerDatabase)
     const agentFactory = overrides.agentFactory ?? {
       create: async (input) => ({
         projectId: input.projectId,
@@ -138,12 +141,12 @@ describe('task crash recovery fault matrix', () => {
       }),
     }
     return new TaskManager({
-      store: new TaskRepository(database),
+      store: new TaskRepository(managerDatabase),
       agentFactory,
       events: { publish: () => undefined },
       ownerId: overrides.ownerId ?? 'owner-a',
-      runtimeSessions: new RuntimeSessionRepository(database),
-      recoveryAttempts: new RecoveryAttemptRepository(database),
+      runtimeSessions: new RuntimeSessionRepository(managerDatabase),
+      recoveryAttempts: new RecoveryAttemptRepository(managerDatabase),
       leaseMs: overrides.leaseMs,
       leaseRenewMs: overrides.leaseRenewMs,
       taskTimeoutMs: overrides.taskTimeoutMs,
@@ -165,12 +168,13 @@ describe('task crash recovery fault matrix', () => {
         }),
       },
       recoveryLookups: {
-        projectExists: (projectId) => new ProjectRepository(database).getById(projectId) !== null,
+        projectExists: (projectId) =>
+          new ProjectRepository(managerDatabase).getById(projectId) !== null,
         targetExists: () => true,
         hasChapterVersionForTask: (taskId) =>
-          new ChapterVersionRepository(database).getByTaskId(taskId) !== null,
+          new ChapterVersionRepository(managerDatabase).getByTaskId(taskId) !== null,
         hasChapterRevisionForTask: (taskId) =>
-          new ChapterRevisionRepository(database).getByTaskId(taskId) !== null,
+          new ChapterRevisionRepository(managerDatabase).getByTaskId(taskId) !== null,
         credentialAvailable: () => true,
       },
     })
@@ -512,7 +516,12 @@ describe('task crash recovery fault matrix', () => {
       recovery_metadata_version: RECOVERY_METADATA_VERSION,
     })
     database.prepare(
-      `UPDATE tasks SET status = 'running', execution_phase = 'future_phase_v9' WHERE id = ?`,
+      `UPDATE tasks
+       SET status = 'running',
+           execution_phase = 'future_phase_v9',
+           checkpoint_json = '{"future":"checkpoint-evidence"}',
+           result_json = '{"future":"result-evidence"}'
+       WHERE id = ?`,
     ).run(unknownPhase.id)
 
     const manager = createManager({
@@ -561,6 +570,10 @@ describe('task crash recovery fault matrix', () => {
     const unknownAfter = tasks.getById(unknownPhase.id)!
     expect(unknownAfter.recovery_classification).toBe('non-recoverable')
     expect(unknownAfter.status).toBe('failed')
+    expect(unknownAfter.recovery_reason).toBe(UNKNOWN_PHASE_REASON)
+    expect(unknownAfter.input.sessionId).toBe('s')
+    expect(unknownAfter.checkpoint).toEqual({ future: 'checkpoint-evidence' })
+    expect(unknownAfter.result).toEqual({ future: 'result-evidence' })
 
     // Healthy restartable candidate was still processed
     expect(scan.autoStarted).toBeGreaterThanOrEqual(1)
@@ -1049,7 +1062,7 @@ describe('task crash recovery fault matrix', () => {
   })
 
   test('P1-10b abort-ignoring runner: quiesce timeout never closes DB; later drain can close', async () => {
-    const { projectId } = seedProject('quiesce-timeout')
+    const { projectId, outlineId } = seedProject('quiesce-timeout')
     let resolveBlock: (() => void) | null = null
     const block = new Promise<void>((resolve) => {
       resolveBlock = resolve
@@ -1057,7 +1070,7 @@ describe('task crash recovery fault matrix', () => {
     let closeCount = 0
     const manager = createManager({
       runners: {
-        assistant: {
+        'chapter-generation': {
           execute: async (context) => {
             // Ignore AbortSignal completely (simulates bad runner / stuck I/O).
             await block
@@ -1071,18 +1084,14 @@ describe('task crash recovery fault matrix', () => {
     const handle = manager.start({
       projectId,
       sessionId: 's',
-      taskType: 'assistant',
-      prompt: 'stuck',
+      taskType: 'chapter-generation',
+      prompt: '',
       llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+      input: { project_id: projectId, chapter_outline_id: outlineId },
     })
 
-    const timedOut = await manager.quiesceForShutdown(30)
-    expect(timedOut.drained).toBe(false)
     const firstShutdown = await shutdownDatabaseResources({
-      taskManager: {
-        dispose: () => undefined,
-        quiesceForShutdown: async () => ({ drained: false }),
-      },
+      taskManager: manager,
       assistantService: null,
       database: {
         close: () => {
@@ -1090,27 +1099,38 @@ describe('task crash recovery fault matrix', () => {
         },
       },
       awaitQuiesce: true,
+      quiesceTimeoutMs: 30,
     })
     expect(firstShutdown.databaseClosed).toBe(false)
     expect(firstShutdown.drained).toBe(false)
     expect(closeCount).toBe(0)
+    expect(manager.isQuitting()).toBe(false)
+
+    const fresh = manager.start({
+      projectId,
+      sessionId: 'after-aborted-shutdown',
+      taskType: 'assistant',
+      prompt: 'still available',
+      llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+    })
+    expect((await fresh.completion).status).toBe('completed')
 
     resolveBlock?.()
     await handle.completion
-    const drained = await manager.quiesceForShutdown(1_000)
-    expect(drained.drained).toBe(true)
     // Mock close only: do not close the live test database handle here.
     const secondShutdown = await shutdownDatabaseResources({
-      taskManager: null,
+      taskManager: manager,
       assistantService: null,
       database: {
         close: () => {
           closeCount += 1
         },
       },
-      awaitQuiesce: false,
+      awaitQuiesce: true,
+      quiesceTimeoutMs: 1_000,
     })
     expect(secondShutdown.databaseClosed).toBe(true)
+    expect(secondShutdown.drained).toBe(true)
     expect(closeCount).toBe(1)
   })
 
@@ -1489,24 +1509,27 @@ describe('task crash recovery fault matrix', () => {
 
   test('P1-1 lease fence atomically guards revision, report, and auto-apply writes', () => {
     const { projectId, chapterId } = seedProject('fenced-polish-side-effects')
-    const tasks = new TaskRepository(database)
-    const revisions = new ChapterRevisionRepository(database)
-    const reports = new PostprocessReportRepository(database)
-    const workbench = new WorkbenchService(database)
-    const task = tasks.create({
+    const ownerADatabase = database
+    const ownerBDatabase = initializeDatabase(tempRoot)
+    const tasksA = new TaskRepository(ownerADatabase)
+    const tasksB = new TaskRepository(ownerBDatabase)
+    const revisions = new ChapterRevisionRepository(ownerBDatabase)
+    const reports = new PostprocessReportRepository(ownerBDatabase)
+    const workbench = new WorkbenchService(ownerBDatabase)
+    const task = tasksA.create({
       project_id: projectId,
       chapter_id: chapterId,
       task_type: 'chapter-polish',
       input: {},
       recovery_metadata_version: RECOVERY_METADATA_VERSION,
     })
-    tasks.update(task.id, {
+    tasksB.update(task.id, {
       status: 'running',
       lease_owner: 'owner-b',
       lease_token: 'token-b',
       lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
     })
-    const originalContent = new ChapterRepository(database).getById(chapterId)!.content
+    const originalContent = new ChapterRepository(ownerADatabase).getById(chapterId)!.content
     const createAllSideEffects = () => {
       const revision = revisions.create({
         chapter_id: chapterId,
@@ -1530,42 +1553,47 @@ describe('task crash recovery fault matrix', () => {
       return { revision, report }
     }
 
-    expect(() =>
-      tasks.runOwnedTransaction(
-        task.id,
-        { owner: 'owner-a', leaseToken: 'token-a' },
-        new Date().toISOString(),
-        createAllSideEffects,
-      ),
-    ).toThrow(/lease/i)
-    expect(revisions.getByTaskId(task.id)).toBeNull()
-    expect(reports.getByTaskId(task.id)).toBeNull()
+    try {
+      expect(() =>
+        tasksA.runOwnedTransaction(
+          task.id,
+          { owner: 'owner-a', leaseToken: 'token-a' },
+          new Date().toISOString(),
+          createAllSideEffects,
+        ),
+      ).toThrow(/lease/i)
+      expect(revisions.getByTaskId(task.id)).toBeNull()
+      expect(reports.getByTaskId(task.id)).toBeNull()
 
-    expect(() =>
-      tasks.runOwnedTransaction(
+      expect(() =>
+        tasksB.runOwnedTransaction(
+          task.id,
+          { owner: 'owner-b', leaseToken: 'token-b' },
+          new Date().toISOString(),
+          () => {
+            createAllSideEffects()
+            throw new Error('inject rollback after polish side effects')
+          },
+        ),
+      ).toThrow(/inject rollback/)
+      expect(revisions.getByTaskId(task.id)).toBeNull()
+      expect(reports.getByTaskId(task.id)).toBeNull()
+      expect(new ChapterRepository(ownerADatabase).getById(chapterId)?.content)
+        .toBe(originalContent)
+
+      const committed = tasksB.runOwnedTransaction(
         task.id,
         { owner: 'owner-b', leaseToken: 'token-b' },
         new Date().toISOString(),
-        () => {
-          createAllSideEffects()
-          throw new Error('inject rollback after polish side effects')
-        },
-      ),
-    ).toThrow(/inject rollback/)
-    expect(revisions.getByTaskId(task.id)).toBeNull()
-    expect(reports.getByTaskId(task.id)).toBeNull()
-    expect(new ChapterRepository(database).getById(chapterId)?.content).toBe(originalContent)
-
-    const committed = tasks.runOwnedTransaction(
-      task.id,
-      { owner: 'owner-b', leaseToken: 'token-b' },
-      new Date().toISOString(),
-      createAllSideEffects,
-    )
-    expect(revisions.getByTaskId(task.id)?.id).toBe(committed.revision.id)
-    expect(reports.getByTaskId(task.id)?.id).toBe(committed.report.id)
-    expect(new ChapterRepository(database).getById(chapterId)?.content)
-      .toBe('fenced polished content')
+        createAllSideEffects,
+      )
+      expect(revisions.getByTaskId(task.id)?.id).toBe(committed.revision.id)
+      expect(reports.getByTaskId(task.id)?.id).toBe(committed.report.id)
+      expect(new ChapterRepository(ownerADatabase).getById(chapterId)?.content)
+        .toBe('fenced polished content')
+    } finally {
+      ownerBDatabase.close()
+    }
   })
 
   test('P1-1 stale runner cannot persist a business entity after another owner takes the lease', async () => {
@@ -1661,26 +1689,29 @@ describe('task crash recovery fault matrix', () => {
       ownerId: 'mgr-a',
       runners: { 'chapter-generation': makeRunner() },
     })
+    const managerBDatabase = initializeDatabase(tempRoot)
     const managerB = createManager({
+      database: managerBDatabase,
       ownerId: 'mgr-b',
       runners: { 'chapter-generation': makeRunner() },
     })
-    managerA.beginRuntimeSession()
-    managerB.beginRuntimeSession()
-
-    const started = await Promise.all([
-      Promise.resolve().then(() => managerA.resume(task.id)),
-      Promise.resolve().then(() => managerB.resume(task.id)),
-    ])
-    const claimed = started.filter((item) => item !== null)
-    expect(claimed.length).toBe(1)
-    const owner = tasks.getById(task.id)!
-    expect(['mgr-a', 'mgr-b']).toContain(owner.lease_owner)
-    // Only one runner should be blocked waiting.
-    expect(releases.length).toBe(1)
-    releases[0]!()
-    await claimed[0]!.completion
-    expect(tasks.getById(task.id)?.status).toBe('completed')
+    try {
+      const started = await Promise.all([
+        Promise.resolve().then(() => managerA.resume(task.id)),
+        Promise.resolve().then(() => managerB.resume(task.id)),
+      ])
+      const claimed = started.filter((item) => item !== null)
+      expect(claimed.length).toBe(1)
+      const owner = tasks.getById(task.id)!
+      expect(['mgr-a', 'mgr-b']).toContain(owner.lease_owner)
+      // Only one runner should be blocked waiting across two SQLite connections.
+      expect(releases.length).toBe(1)
+      releases[0]!()
+      await claimed[0]!.completion
+      expect(tasks.getById(task.id)?.status).toBe('completed')
+    } finally {
+      managerBDatabase.close()
+    }
   })
 
   test('P1-3 final entity finishes with zero model under credential/timeout/attempt caps', async () => {
@@ -1820,6 +1851,85 @@ describe('task crash recovery fault matrix', () => {
       synopsis: 'durable final summary',
       actual_words: 'durable final body'.length,
     })
+    expect(blocking.createCount()).toBe(0)
+    expect(blocking.promptCount()).toBe(0)
+  })
+
+  test('P1-3 stale approved version cannot overwrite a newer adopted chapter version', async () => {
+    const { projectId, outlineId, chapterId } = seedProject('stale-approved-version')
+    const workbench = new WorkbenchService(database)
+    const tasks = new TaskRepository(database)
+    const versions = new ChapterVersionRepository(database)
+    const blocking = createBlockingAgent()
+    const persistedInput = {
+      sessionId: 's',
+      taskType: 'chapter-generation',
+      prompt: '',
+      llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+      request: {
+        project_id: projectId,
+        chapter_outline_id: outlineId,
+        chapter_id: chapterId,
+        auto_confirm: true,
+      },
+    }
+    const staleTask = tasks.create({
+      project_id: projectId,
+      chapter_id: chapterId,
+      task_type: 'chapter-generation',
+      input: persistedInput,
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      checkpoint_schema_version: 1,
+    })
+    const staleVersion = versions.create({
+      chapter_id: chapterId,
+      task_id: staleTask.id,
+      content: 'stale approved body',
+      summary: 'stale approved summary',
+      fact_check: { passed: true, summary: 'ok', findings: [] },
+    })
+    workbench.chapterGeneration.confirmVersion(projectId, staleVersion.id)
+
+    const newerTask = tasks.create({
+      project_id: projectId,
+      chapter_id: chapterId,
+      task_type: 'chapter-generation',
+      input: persistedInput,
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      checkpoint_schema_version: 1,
+    })
+    const newerVersion = versions.create({
+      chapter_id: chapterId,
+      task_id: newerTask.id,
+      content: 'newer adopted body',
+      summary: 'newer adopted summary',
+      fact_check: { passed: true, summary: 'ok', findings: [] },
+    })
+    workbench.chapterGeneration.confirmVersion(projectId, newerVersion.id)
+    tasks.update(newerTask.id, {
+      status: 'completed',
+      execution_phase: 'completed',
+      finished_at: new Date().toISOString(),
+    })
+    tasks.update(staleTask.id, {
+      status: 'running',
+      execution_phase: 'persisting_result',
+    })
+    expect(versions.getById(staleVersion.id)?.is_current).toBe(false)
+
+    const manager = createManager({ agentFactory: blocking.agentFactory })
+    manager.beginRuntimeSession()
+    expect((await manager.scanAndRecoverOnStartup()).autoStarted).toBe(1)
+
+    const failed = tasks.getById(staleTask.id)!
+    expect(failed.status).toBe('failed')
+    expect(failed.recovery_classification).toBe('non-recoverable')
+    expect(new ChapterRepository(database).getById(chapterId)).toMatchObject({
+      status: 'completed',
+      content: 'newer adopted body',
+      synopsis: 'newer adopted summary',
+    })
+    expect(versions.getById(newerVersion.id)?.is_current).toBe(true)
     expect(blocking.createCount()).toBe(0)
     expect(blocking.promptCount()).toBe(0)
   })
