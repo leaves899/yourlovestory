@@ -206,6 +206,26 @@ describe('LlmCredentialController', () => {
     }).credentialId).not.toBe('renderer-controlled-id')
   })
 
+  it('probes actual runtime credential decryptability without exposing plaintext', () => {
+    const subject = controller()
+    expect(subject.hasUsableRuntimeCredential(projectId)).toBe(false)
+    expect(subject.save({ scope: 'project', projectId }, TEST_SECRET).success).toBe(true)
+    expect(subject.hasUsableRuntimeCredential(projectId)).toBe(true)
+
+    const credentialPath = path.join(root, 'security', 'llm-credentials.json')
+    const file = JSON.parse(fs.readFileSync(credentialPath, 'utf8')) as {
+      credentials: Record<string, { payload: string }>
+    }
+    const credentialId = Object.keys(file.credentials)[0]!
+    file.credentials[credentialId]!.payload = Buffer.from(
+      'not-encrypted-credential-data',
+      'utf8',
+    ).toString('base64')
+    fs.writeFileSync(credentialPath, JSON.stringify(file), 'utf8')
+
+    expect(subject.hasUsableRuntimeCredential(projectId)).toBe(false)
+  })
+
   it('returns a safe timeout and sanitizes provider errors', async () => {
     const hangingFetch = jest.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       new Promise<Response>((_resolve, reject) => {

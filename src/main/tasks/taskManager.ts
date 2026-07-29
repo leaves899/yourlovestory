@@ -40,8 +40,11 @@ import type { TaskEventSink } from './events'
 import { sanitizeErrorMessage } from '../../shared/security/sanitizeSensitiveData'
 import {
   assertNoSensitiveTaskInput,
+  assertSafePersistedString,
   assertSafePersistedBaseUrl,
   assertSafeTaskStartSecrets,
+  assertSupportedPersistedProvider,
+  assertSupportedPersistedTaskType,
 } from './sensitiveInput'
 import type { QuiesceResult } from '../database/shutdown'
 
@@ -214,8 +217,13 @@ function toPersistedInput(input: StartTaskInput): JsonObject {
     llm: input.llm,
   })
   assertSafePersistedBaseUrl(input.llm.baseUrl)
+  const provider = input.llm.provider ?? 'openai-compatible'
+  assertSupportedPersistedTaskType(input.taskType)
+  assertSupportedPersistedProvider(provider)
+  assertSafePersistedString(input.sessionId, 'sessionId', 256)
+  assertSafePersistedString(input.llm.model, 'llm.model', 512)
   const llm: JsonObject = {
-    provider: input.llm.provider ?? 'openai-compatible',
+    provider,
     baseUrl: input.llm.baseUrl,
     model: input.llm.model,
     ...(input.llm.contextBudget === undefined ? {} : { contextBudget: input.llm.contextBudget }),
@@ -224,7 +232,7 @@ function toPersistedInput(input: StartTaskInput): JsonObject {
     ...(input.llm.streamingEnabled === undefined ? {} : { streamingEnabled: input.llm.streamingEnabled }),
     ...(input.llm.maxRetries === undefined ? {} : { maxRetries: input.llm.maxRetries }),
   }
-  return {
+  const persisted: JsonObject = {
     // Prompt is not required for crash recovery and must not carry secrets.
     prompt: '',
     sessionId: input.sessionId,
@@ -232,6 +240,8 @@ function toPersistedInput(input: StartTaskInput): JsonObject {
     llm,
     request: minimizePersistedRequest(input.taskType, input.input),
   }
+  assertNoSensitiveTaskInput(persisted, 'task.input')
+  return persisted
 }
 
 function isRecord(value: JsonValue | undefined): value is JsonObject {
@@ -258,20 +268,29 @@ function resultChapterId(result: JsonObject | undefined): string | undefined {
 }
 
 function inputFromTask(task: Task): StartTaskInput {
+  assertNoSensitiveTaskInput(task.input, 'task.input')
   const llmValue = task.input.llm
   if (!isRecord(llmValue)) throw new Error(`Invalid persisted task llm: ${task.id}`)
   const request = task.input.request
   if (!isRecord(request)) throw new Error(`Invalid persisted task request: ${task.id}`)
   assertNoSensitiveTaskInput(request, 'request')
+  const sessionId = requiredString(task.input.sessionId, 'sessionId')
+  const taskType = requiredString(task.input.taskType, 'taskType')
+  const provider = typeof llmValue.provider === 'string' ? llmValue.provider : 'openai-compatible'
+  const model = requiredString(llmValue.model, 'llm.model')
+  assertSupportedPersistedTaskType(taskType)
+  assertSupportedPersistedProvider(provider)
+  assertSafePersistedString(sessionId, 'sessionId', 256)
+  assertSafePersistedString(model, 'llm.model', 512)
   return {
     projectId: task.project_id,
-    sessionId: requiredString(task.input.sessionId, 'sessionId'),
-    taskType: requiredString(task.input.taskType, 'taskType'),
+    sessionId,
+    taskType,
     prompt: typeof task.input.prompt === 'string' ? task.input.prompt : '',
     llm: {
-      provider: typeof llmValue.provider === 'string' ? llmValue.provider : undefined,
+      provider,
       baseUrl: normalizeLlmBaseUrl(requiredString(llmValue.baseUrl, 'llm.baseUrl')),
-      model: requiredString(llmValue.model, 'llm.model'),
+      model,
       contextBudget: optionalNumber(llmValue.contextBudget),
       maxOutputTokens: optionalNumber(llmValue.maxOutputTokens),
       temperature: optionalNumber(llmValue.temperature),
@@ -405,6 +424,11 @@ export class TaskManager {
 
   public start(input: StartTaskInput): TaskHandle {
     this.assertCanStartTasks()
+    assertSafePersistedString(input.projectId, 'projectId', 256)
+    assertSafePersistedString(input.sessionId, 'sessionId', 256)
+    if (input.chapterId) assertSafePersistedString(input.chapterId, 'chapterId', 256)
+    if (input.parentTaskId) assertSafePersistedString(input.parentTaskId, 'parentTaskId', 256)
+    assertSupportedPersistedTaskType(input.taskType)
     assertSafeTaskStartSecrets({
       prompt: input.prompt,
       input: input.input,
@@ -422,6 +446,13 @@ export class TaskManager {
     const provisionalId = randomUUID()
     const rootId = provisionalId
     const logicalTarget = this.logicalTargetFor(validatedInput)
+    const idempotencyKey = buildIdempotencyKey(
+      validatedInput.taskType,
+      validatedInput.projectId,
+      logicalTarget,
+      rootId,
+    )
+    assertSafePersistedString(idempotencyKey, 'idempotencyKey', 1024)
     const createInput: CreateTaskInput = {
       id: provisionalId,
       project_id: validatedInput.projectId,
@@ -429,12 +460,7 @@ export class TaskManager {
       parent_task_id: validatedInput.parentTaskId,
       task_type: validatedInput.taskType,
       input: toPersistedInput(validatedInput),
-      idempotency_key: buildIdempotencyKey(
-        validatedInput.taskType,
-        validatedInput.projectId,
-        logicalTarget,
-        rootId,
-      ),
+      idempotency_key: idempotencyKey,
       recovery_root_task_id: rootId,
       recovery_metadata_version: RECOVERY_METADATA_VERSION,
       max_recovery_attempts: DEFAULT_MAX_RECOVERY_ATTEMPTS,
@@ -846,7 +872,11 @@ export class TaskManager {
     let input: StartTaskInput
     try {
       const persisted = inputFromTask(claim.task)
-      const resolvedLlm = this.resolveCurrentCredential(claim.task.project_id, persisted.llm)
+      // A durable final entity lets the runner perform a zero-model idempotent
+      // finish. Do not make that safe path depend on credential resolution.
+      const resolvedLlm = finalEntity
+        ? persisted.llm
+        : this.resolveCurrentCredential(claim.task.project_id, persisted.llm)
       input = {
         ...persisted,
         llm: {

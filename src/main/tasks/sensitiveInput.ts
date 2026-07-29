@@ -60,6 +60,20 @@ const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   /(?:^|[?&])(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|token|authorization|password)=/i,
 ]
 
+const SUPPORTED_PERSISTED_TASK_TYPES = new Set([
+  'assistant',
+  'chapter-generation',
+  'chapter-polish',
+])
+
+const SUPPORTED_PERSISTED_PROVIDERS = new Set([
+  'anthropic',
+  'deepseek',
+  'google',
+  'openai',
+  'openai-compatible',
+])
+
 function normalizeKey(key: string): string {
   return key.replace(/[^a-z0-9]/gi, '').toLowerCase()
 }
@@ -122,6 +136,29 @@ export function assertNoSensitiveStringValue(value: string, path: string): void 
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('拒绝')) throw error
     // Non-URL strings that merely look similar are ignored unless patterns matched above.
+  }
+}
+
+export function assertSafePersistedString(
+  value: string,
+  path: string,
+  maxLength = 512,
+): void {
+  if (value.trim() === '' || value.length > maxLength || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error(`拒绝持久化无效字符串: ${path}`)
+  }
+  assertNoSensitiveStringValue(value, path)
+}
+
+export function assertSupportedPersistedTaskType(taskType: string): void {
+  if (!SUPPORTED_PERSISTED_TASK_TYPES.has(taskType)) {
+    throw new Error('拒绝持久化不受支持的任务类型: taskType')
+  }
+}
+
+export function assertSupportedPersistedProvider(provider: string): void {
+  if (!SUPPORTED_PERSISTED_PROVIDERS.has(provider)) {
+    throw new Error('拒绝持久化不受支持的模型提供商: llm.provider')
   }
 }
 

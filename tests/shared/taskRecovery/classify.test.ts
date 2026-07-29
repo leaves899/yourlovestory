@@ -94,6 +94,28 @@ describe('classifyTaskRecovery', () => {
     expect(decision.autoAllowed).toBe(false)
   })
 
+  test('future recovery metadata fails closed as non-recoverable', () => {
+    const decision = classifyTaskRecovery(base({
+      recovery_metadata_version: RECOVERY_METADATA_VERSION + 1,
+    }))
+    expect(decision.classification).toBe('non-recoverable')
+    expect(decision.autoAllowed).toBe(false)
+    expect(decision.manualRetryAllowed).toBe(false)
+  })
+
+  test('task-level and embedded checkpoint schemas must match the current type', () => {
+    const missingTaskLevel = classifyTaskRecovery(base({
+      checkpoint: { schema_version: 1, stage: 'body', body: 'x' },
+      checkpoint_schema_version: null,
+    }))
+    const mismatched = classifyTaskRecovery(base({
+      checkpoint: { schema_version: 1, stage: 'body', body: 'x' },
+      checkpoint_schema_version: 2,
+    }))
+    expect(missingTaskLevel.classification).toBe('non-recoverable')
+    expect(mismatched.classification).toBe('non-recoverable')
+  })
+
   test('graceful shutdown is not treated as safe auto resume without persisted result', () => {
     const decision = classifyTaskRecovery(base({
       shutdown_kind: 'graceful',

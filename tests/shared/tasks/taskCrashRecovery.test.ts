@@ -871,9 +871,61 @@ describe('task crash recovery fault matrix', () => {
           })
         },
       },
+      {
+        label: 'model',
+        start: () => {
+          manager.start({
+            projectId,
+            sessionId: 's',
+            taskType: 'assistant',
+            prompt: 'safe',
+            llm: { baseUrl: 'https://example.invalid/v1', model: 'sk-secret-marker-model' },
+          })
+        },
+      },
+      {
+        label: 'provider',
+        start: () => {
+          manager.start({
+            projectId,
+            sessionId: 's',
+            taskType: 'assistant',
+            prompt: 'safe',
+            llm: {
+              provider: 'sk-secret-marker-provider',
+              baseUrl: 'https://example.invalid/v1',
+              model: 'm',
+            },
+          })
+        },
+      },
+      {
+        label: 'session-id',
+        start: () => {
+          manager.start({
+            projectId,
+            sessionId: 'sk-secret-marker-session',
+            taskType: 'assistant',
+            prompt: 'safe',
+            llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+          })
+        },
+      },
+      {
+        label: 'task-type',
+        start: () => {
+          manager.start({
+            projectId,
+            sessionId: 's',
+            taskType: 'sk-secret-marker-task',
+            prompt: 'safe',
+            llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+          })
+        },
+      },
     ]
     for (const item of valueCases) {
-      expect(item.start).toThrow(/敏感|模型端点/)
+      expect(item.start).toThrow(/敏感|模型端点|不受支持/)
     }
 
     const rows = database.prepare<{ input_json: string }>('SELECT input_json FROM tasks').all()
@@ -1393,7 +1445,7 @@ describe('task crash recovery fault matrix', () => {
     const manager = createManager({
       ownerId: 'owner-a',
       runners: {
-        'fenced-business': {
+        assistant: {
           execute: async (context) => {
             markStarted?.()
             await new Promise<void>((resolve) => {
@@ -1418,7 +1470,7 @@ describe('task crash recovery fault matrix', () => {
       projectId,
       chapterId,
       sessionId: 's',
-      taskType: 'fenced-business',
+      taskType: 'assistant',
       prompt: '',
       llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
     })
@@ -1542,6 +1594,9 @@ describe('task crash recovery fault matrix', () => {
         ownerId: `owner-${kind}`,
         runtimeSessions: new RuntimeSessionRepository(database),
         recoveryAttempts: new RecoveryAttemptRepository(database),
+        resolveLlmConfig: () => {
+          throw new Error('credential unavailable')
+        },
         runners: {
           'chapter-generation': createChapterGenerationTaskRunner({
             service: new WorkbenchService(database).chapterGeneration,

@@ -383,17 +383,8 @@ if (gotSingleInstanceLock) app.whenReady().then(async () => {
       },
       hasChapterVersionForTask: (taskId) => chapterVersionRepository.getByTaskId(taskId) !== null,
       hasChapterRevisionForTask: (taskId) => chapterRevisionRepository.getByTaskId(taskId) !== null,
-      credentialAvailable: (projectId) => {
-        try {
-          llmCredentialController.runtimeConfig(projectId, {
-            baseUrl: 'https://example.invalid/v1',
-            model: 'probe',
-          })
-          return true
-        } catch {
-          return false
-        }
-      },
+      credentialAvailable: (projectId) =>
+        llmCredentialController.hasUsableRuntimeCredential(projectId),
     },
   })
   taskManager.beginRuntimeSession()

@@ -4,6 +4,8 @@ import {
   parseStrictPolishCheckpoint,
 } from './checkpoints'
 import {
+  CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
+  CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
   RECOVERY_METADATA_VERSION,
   type ExecutionPhase,
   type RecoveryDecision,
@@ -98,6 +100,34 @@ function restartable(reason: string): RecoveryDecision {
 
 function corruptCheckpoint(kind: string): RecoveryDecision {
   return nonRecoverable(`${kind}检查点语义损坏或字段不合法，已拒绝自动恢复。`)
+}
+
+function expectedCheckpointSchema(taskType: string): number | null {
+  if (taskType === 'chapter-generation') {
+    return CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION
+  }
+  if (taskType === 'chapter-polish') {
+    return CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION
+  }
+  return null
+}
+
+function classifyCheckpointVersion(input: ClassifyTaskInput): RecoveryDecision | null {
+  if (input.checkpoint === null) return null
+  const embedded = input.checkpoint.schema_version
+  const expected = expectedCheckpointSchema(input.task_type)
+  if (
+    expected === null
+    || typeof embedded !== 'number'
+    || !Number.isInteger(embedded)
+    || input.checkpoint_schema_version === null
+    || !Number.isInteger(input.checkpoint_schema_version)
+    || embedded !== input.checkpoint_schema_version
+    || embedded !== expected
+  ) {
+    return nonRecoverable('检查点 schema 版本缺失、不一致或不受支持，已拒绝恢复。')
+  }
+  return null
 }
 
 /**
@@ -245,6 +275,10 @@ export function classifyTaskRecovery(input: ClassifyTaskInput): RecoveryDecision
   const finalEntity = classifyFinalEntity(input)
   if (finalEntity) return finalEntity
 
+  if (input.recovery_metadata_version > RECOVERY_METADATA_VERSION) {
+    return nonRecoverable('任务恢复元数据来自未来版本，当前版本无法安全解释，已拒绝恢复。')
+  }
+
   if (input.recovery_attempt_count >= input.max_recovery_attempts) {
     return manualRequired(
       `恢复尝试次数已达上限（${input.max_recovery_attempts}），停止自动与人工重试以免启动循环。`,
@@ -257,6 +291,9 @@ export function classifyTaskRecovery(input: ClassifyTaskInput): RecoveryDecision
       '旧任务缺少 Phase D 恢复元数据，默认 fail closed，禁止批量自动重放。',
     )
   }
+
+  const checkpointVersion = classifyCheckpointVersion(input)
+  if (checkpointVersion) return checkpointVersion
 
   if (input.shutdown_kind === 'graceful') {
     return manualRequired(
