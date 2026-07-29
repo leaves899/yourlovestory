@@ -462,9 +462,19 @@ describe('modular IPC registration', () => {
       retained: ['kept-backup'],
       policyExceeded: false,
     }))
+    const createBackup = jest.fn(async () => ({
+      id: 'manual-1',
+      filename: 'manual-1.sqlite',
+      createdAt: '2026-03-10T00:00:00.000Z',
+      reason: 'manual' as const,
+      appVersion: '0.2.0-alpha.1',
+      schemaVersion: 8,
+      size: 100,
+      sha256: 'a'.repeat(64),
+    }))
     const backupService = {
       listBackups: jest.fn(async () => []),
-      createBackup: jest.fn(),
+      createBackup,
       verifyBackup: jest.fn(),
       restoreBackup: jest.fn(),
       pruneBackups,
@@ -525,6 +535,7 @@ describe('modular IPC registration', () => {
       data: {
         policy: { maxBackups: 4, maxAgeDays: 12 },
         prunePartialFailure: true,
+        pruneCompleted: true,
         prune: {
           deleted: ['old-backup'],
           failed: [{ id: 'stuck-backup' }],
@@ -534,6 +545,49 @@ describe('modular IPC registration', () => {
     expect(pruneBackups).toHaveBeenCalledWith({ maxBackups: 4, maxAgeDays: 12 })
     expect(new BackupPolicyStore(policyRoot).load()).toMatchObject({
       policy: { maxBackups: 4, maxAgeDays: 12 },
+      source: 'file',
+    })
+
+    // Manual create must read the persisted policy and prune in this process.
+    pruneBackups.mockClear()
+    createBackup.mockClear()
+    await expect(invoke('backup:create', undefined, trustedEvent)).resolves.toMatchObject({
+      success: true,
+      data: { id: 'manual-1', reason: 'manual' },
+    })
+    expect(createBackup).toHaveBeenCalledWith({ reason: 'manual' })
+    expect(pruneBackups).toHaveBeenCalledWith({ maxBackups: 4, maxAgeDays: 12 })
+
+    // Policy is already saved; a total prune throw must not report save failure.
+    const absolutePathError = new Error(
+      'EPERM: operation not permitted, unlink \'C:\\\\Users\\\\Alice\\\\AppData\\\\Roaming\\\\yourcrush\\\\backups\\\\x.sqlite\'',
+    )
+    pruneBackups.mockImplementationOnce(async () => {
+      throw absolutePathError
+    })
+    const pruneThrowResult = await invoke('backup:update-policy', {
+      maxBackups: 5,
+      maxAgeDays: 15,
+    }, trustedEvent)
+    expect(pruneThrowResult).toMatchObject({
+      success: true,
+      data: {
+        policy: { maxBackups: 5, maxAgeDays: 15 },
+        pruneCompleted: false,
+        prunePartialFailure: false,
+        prune: {
+          deleted: [],
+          failed: [],
+          retained: [],
+          policyExceeded: false,
+        },
+      },
+    })
+    expect(JSON.stringify(pruneThrowResult)).not.toContain('C:\\\\Users')
+    expect(JSON.stringify(pruneThrowResult)).not.toContain('Alice')
+    expect(JSON.stringify(pruneThrowResult)).not.toContain('AppData')
+    expect(new BackupPolicyStore(policyRoot).load()).toMatchObject({
+      policy: { maxBackups: 5, maxAgeDays: 15 },
       source: 'file',
     })
 

@@ -11,6 +11,7 @@ import {
   parseBackupPolicyUpdateInput,
   toBackupError,
 } from '../backup'
+import { EMPTY_PRUNE_RESULT } from '../../shared/backup/types'
 import {
   assertTrustedIpcSender,
   isRecord,
@@ -77,10 +78,16 @@ export function registerBackupIPC(
     data: await requireService(dependencies.backupService).listBackups(),
   }), { parse: parseNoInput, authorize, formatError })
 
-  ipc.register('backup:create', async () => ({
-    success: true,
-    data: await requireService(dependencies.backupService).createBackup({ reason: 'manual' }),
-  }), { parse: parseNoInput, authorize, formatError })
+  ipc.register('backup:create', async () => {
+    const service = requireService(dependencies.backupService)
+    const store = requirePolicyStore(dependencies.policyStore)
+    const record = await service.createBackup({ reason: 'manual' })
+    // Apply the current persisted retention policy in this process so users
+    // cannot unbounded-grow backups without restarting or re-saving policy.
+    const policy = store.load().policy
+    await service.pruneBackups(policy)
+    return { success: true as const, data: record }
+  }, { parse: parseNoInput, authorize, formatError })
 
   ipc.register('backup:verify', async (_, input) => ({
     success: true,
@@ -119,14 +126,29 @@ export function registerBackupIPC(
   ipc.register('backup:update-policy', async (_, input) => {
     const store = requirePolicyStore(dependencies.policyStore)
     const service = requireService(dependencies.backupService)
+    // Persist first. Prune failures after a successful write must not be
+    // reported as "policy invalid / save failed".
     const policy = await store.save(input)
-    const prune = await service.pruneBackups(policy)
-    const result: UpdateBackupPolicyResult = {
-      policy,
-      prune,
-      prunePartialFailure: prune.failed.length > 0,
+    try {
+      const prune = await service.pruneBackups(policy)
+      const result: UpdateBackupPolicyResult = {
+        policy,
+        prune,
+        prunePartialFailure: prune.failed.length > 0,
+        pruneCompleted: true,
+      }
+      return { success: true as const, data: result }
+    } catch {
+      // Policy is already on disk. Return a typed success with a stable, path-free
+      // empty prune summary (do not invent backup IDs from underlying errors).
+      const result: UpdateBackupPolicyResult = {
+        policy,
+        prune: { ...EMPTY_PRUNE_RESULT, failed: [], deleted: [], retained: [] },
+        prunePartialFailure: false,
+        pruneCompleted: false,
+      }
+      return { success: true as const, data: result }
     }
-    return { success: true as const, data: result }
   }, {
     parse: parsePolicyUpdate,
     authorize,

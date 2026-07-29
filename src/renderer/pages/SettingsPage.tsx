@@ -359,7 +359,15 @@ function SettingsPage() {
       setMaxBackupsInput(String(result.data.policy.maxBackups))
       setMaxAgeDaysInput(String(result.data.policy.maxAgeDays))
       await loadDataSafety()
-      if (result.data.prunePartialFailure) {
+      if (!result.data.pruneCompleted) {
+        setPolicyMessage('策略已保存，但清理失败或未完成。')
+        toast({
+          title: '策略已保存',
+          description: '过期备份清理未完成，请稍后重试。',
+          status: 'warning',
+          duration: 5000,
+        })
+      } else if (result.data.prunePartialFailure) {
         setPolicyMessage('策略已保存，但部分过期备份清理失败。')
         toast({
           title: '策略已保存',

@@ -46,6 +46,26 @@ describe('backup policy store', () => {
     })
   })
 
+  test('saves twice in the same store and restarts to the second policy', async () => {
+    await store.save({ maxBackups: 3, maxAgeDays: 5 })
+    await store.save({ maxBackups: 8, maxAgeDays: 21 })
+    expect(store.load()).toEqual({
+      policy: { maxBackups: 8, maxAgeDays: 21 },
+      source: 'file',
+    })
+    const restarted = new BackupPolicyStore(root)
+    expect(restarted.load()).toEqual({
+      policy: { maxBackups: 8, maxAgeDays: 21 },
+      source: 'file',
+    })
+    const onDisk = JSON.parse(fs.readFileSync(store.getPolicyPath(), 'utf8')) as Record<string, unknown>
+    expect(onDisk).toEqual({
+      version: 1,
+      maxBackups: 8,
+      maxAgeDays: 21,
+    })
+  })
+
   test.each([
     ['corrupted json', '{not-json'],
     ['unknown version', JSON.stringify({ version: 99, maxBackups: 10, maxAgeDays: 30 })],
@@ -89,10 +109,11 @@ describe('backup policy store', () => {
     })).toThrow(expect.objectContaining({ code: 'BACKUP_POLICY_INVALID' }))
   })
 
-  test('keeps the previous valid policy when rename fails and cleans temp files', async () => {
+  test('keeps the previous valid policy when install rename fails and cleans temp files', async () => {
     await store.save({ maxBackups: 5, maxAgeDays: 9 })
     const previous = fs.readFileSync(store.getPolicyPath(), 'utf8')
     const removedTemps: string[] = []
+    const policyPath = store.getPolicyPath()
     const failingStore = new BackupPolicyStore(root, {
       existsSync: (target) => fs.existsSync(target),
       mkdirSync: (target, options) => {
@@ -103,7 +124,9 @@ describe('backup policy store', () => {
         fs.writeFileSync(target, data, options)
       },
       renameSync: (from, to) => {
-        if (to === store.getPolicyPath()) {
+        // Fail only the install step (temp -> formal path), not displace/restore.
+        const isInstall = to === policyPath && !String(from).includes('.displaced.')
+        if (isInstall) {
           throw new Error('injected rename failure')
         }
         fs.renameSync(from, to)
@@ -121,6 +144,10 @@ describe('backup policy store', () => {
     expect(removedTemps.some((entry) => entry.endsWith('.tmp'))).toBe(true)
     expect(fs.readdirSync(path.dirname(store.getPolicyPath()))
       .filter((entry) => entry.endsWith('.tmp'))).toEqual([])
+    expect(failingStore.load()).toEqual({
+      policy: { maxBackups: 5, maxAgeDays: 9 },
+      source: 'file',
+    })
   })
 
   test('serializes concurrent saves without losing a valid policy file', async () => {

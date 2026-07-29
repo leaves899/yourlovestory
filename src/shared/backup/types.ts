@@ -63,11 +63,34 @@ export interface BackupPolicyLoadResult {
   fallbackReason?: BackupPolicyFallbackReason
 }
 
+/**
+ * Result of updating the persisted backup retention policy.
+ *
+ * `pruneCompleted` is false when the policy was saved but the prune step threw
+ * entirely (distinct from per-item prune failures in `prune.failed`).
+ * Callers must not treat a successful policy save as a failed save when prune
+ * fails after persistence.
+ */
 export interface UpdateBackupPolicyResult {
   policy: BackupRetentionPolicy
   prune: PruneResult
+  /** True when prune finished but some individual deletions failed. */
   prunePartialFailure: boolean
+  /**
+   * False when prune threw after the policy was already saved.
+   * Never invents backup IDs; `prune.failed` stays empty in that case.
+   */
+  pruneCompleted: boolean
 }
+
+/** Empty prune summary used when cleanup throws after a successful policy save. */
+export const EMPTY_PRUNE_RESULT: PruneResult = {
+  deleted: [],
+  failed: [],
+  retained: [],
+  policyExceeded: false,
+}
+
 
 export interface PruneFailure {
   id: string

@@ -1,18 +1,19 @@
 import { randomBytes } from 'node:crypto'
 import * as fsp from 'node:fs/promises'
-import { basename } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import type { BackupRecord, BackupRetentionPolicy, DatabaseStatus } from '../../shared/backup/types'
 import {
   DIAGNOSTIC_FILE_EXTENSION,
   type DiagnosticExportResult,
 } from '../../shared/diagnostics'
 import { diagnosticError } from '../../shared/diagnostics/errors'
-import { buildDiagnosticPackage } from './diagnosticService'
+import { buildDiagnosticPackage } from '../../shared/diagnostics/buildDiagnosticPackage'
 
 export interface DiagnosticExportFileIo {
   open: typeof fsp.open
   rename: typeof fsp.rename
   rm: typeof fsp.rm
+  access: typeof fsp.access
 }
 
 export interface DiagnosticExportCoordinatorOptions {
@@ -32,6 +33,71 @@ const defaultFileIo: DiagnosticExportFileIo = {
   open: (...args) => fsp.open(...args),
   rename: (...args) => fsp.rename(...args),
   rm: (...args) => fsp.rm(...args),
+  access: (...args) => fsp.access(...args),
+}
+
+function randomTempName(prefix: string): string {
+  return `${prefix}.${randomBytes(12).toString('hex')}.tmp`
+}
+
+async function pathExists(io: DiagnosticExportFileIo, target: string): Promise<boolean> {
+  try {
+    await io.access(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Cross-platform replace: displace existing target, install new file, restore
+ * previous bytes if install fails. Never truncate or delete-then-write the only
+ * valid target. Windows cannot rename-over an existing file.
+ */
+async function replaceFileSafely(
+  io: DiagnosticExportFileIo,
+  temporaryFile: string,
+  targetFile: string,
+): Promise<void> {
+  const directory = dirname(targetFile)
+  const displacedPath = join(directory, randomTempName('diagnostics.displaced'))
+  let targetDisplaced = false
+  let installed = false
+
+  try {
+    if (await pathExists(io, targetFile)) {
+      await io.rename(targetFile, displacedPath)
+      targetDisplaced = true
+    }
+    await io.rename(temporaryFile, targetFile)
+    installed = true
+    if (targetDisplaced) {
+      await io.rm(displacedPath, { force: true }).catch(() => undefined)
+    }
+  } catch (error: unknown) {
+    if (targetDisplaced && await pathExists(io, displacedPath)) {
+      if (installed && await pathExists(io, targetFile)) {
+        const failedInstallPath = join(
+          directory,
+          randomTempName('diagnostics.failed-install'),
+        )
+        await io.rename(targetFile, failedInstallPath).catch(async () => {
+          await io.rm(targetFile, { force: true }).catch(() => undefined)
+        })
+        await io.rm(failedInstallPath, { force: true }).catch(() => undefined)
+      }
+      if (!(await pathExists(io, targetFile))) {
+        try {
+          await io.rename(displacedPath, targetFile)
+        } catch {
+          // Keep displaced when restore also fails so prior bytes are not lost.
+        }
+      }
+    }
+    await io.rm(temporaryFile, { force: true }).catch(() => undefined)
+    // Never delete displaced if it is still the only copy of the previous file.
+    throw error
+  }
 }
 
 export class DiagnosticExportCoordinator {
@@ -61,7 +127,10 @@ export class DiagnosticExportCoordinator {
         backups,
       })
 
-      const temporaryFile = `${targetFile}.${randomBytes(12).toString('hex')}.tmp`
+      const temporaryFile = join(
+        dirname(targetFile),
+        randomTempName(`${basename(targetFile)}.part`),
+      )
       let handle: Awaited<ReturnType<typeof fsp.open>> | undefined
       try {
         handle = await this.fileIo.open(temporaryFile, 'wx', 0o600)
@@ -69,7 +138,7 @@ export class DiagnosticExportCoordinator {
         await handle.sync()
         await handle.close()
         handle = undefined
-        await this.fileIo.rename(temporaryFile, targetFile)
+        await replaceFileSafely(this.fileIo, temporaryFile, targetFile)
         return {
           canceled: false,
           fileName: basename(targetFile),

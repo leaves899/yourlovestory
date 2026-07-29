@@ -242,6 +242,7 @@ function mockElectronAPIScript(options: MockElectronOptions = {}) {
             policyExceeded: false,
           },
           prunePartialFailure: false,
+          pruneCompleted: true,
         },
       }
     },

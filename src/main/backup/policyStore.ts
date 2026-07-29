@@ -79,6 +79,10 @@ function toPolicyFile(policy: BackupRetentionPolicy): BackupPolicyFileV1 {
   }
 }
 
+function randomTempName(prefix: string): string {
+  return `${prefix}.${randomBytes(12).toString('hex')}.tmp`
+}
+
 export interface BackupPolicyStoreIo {
   existsSync: (target: string) => boolean
   mkdirSync: (target: string, options?: fs.MakeDirectoryOptions) => void
@@ -107,6 +111,78 @@ const defaultIo: BackupPolicyStoreIo = {
   rmSync: (target, options) => {
     fs.rmSync(target, options)
   },
+}
+
+/**
+ * Cross-platform replace: never rely on rename overwriting an existing file
+ * (Windows cannot). Displace the previous target first; restore it if the new
+ * install rename fails. Never truncate or delete the only valid target first.
+ */
+function replaceFileSafely(
+  io: BackupPolicyStoreIo,
+  temporaryPath: string,
+  targetPath: string,
+): void {
+  const directory = path.dirname(targetPath)
+  const displacedPath = path.join(directory, randomTempName('backup-policy.displaced'))
+  let targetDisplaced = false
+  let installed = false
+
+  try {
+    if (io.existsSync(targetPath)) {
+      io.renameSync(targetPath, displacedPath)
+      targetDisplaced = true
+    }
+    io.renameSync(temporaryPath, targetPath)
+    installed = true
+    if (targetDisplaced) {
+      try {
+        io.rmSync(displacedPath, { force: true })
+      } catch {
+        // Best-effort cleanup of the previous policy file.
+      }
+    }
+  } catch (error: unknown) {
+    if (targetDisplaced && io.existsSync(displacedPath)) {
+      if (installed) {
+        try {
+          const failedInstallPath = path.join(
+            directory,
+            randomTempName('backup-policy.failed-install'),
+          )
+          if (io.existsSync(targetPath)) {
+            io.renameSync(targetPath, failedInstallPath)
+            try {
+              io.rmSync(failedInstallPath, { force: true })
+            } catch {
+              // Best-effort.
+            }
+          }
+        } catch {
+          try {
+            io.rmSync(targetPath, { force: true })
+          } catch {
+            // Best-effort before restore.
+          }
+        }
+      }
+      if (!io.existsSync(targetPath)) {
+        try {
+          io.renameSync(displacedPath, targetPath)
+        } catch {
+          // Keep displaced file when restore also fails so the last valid
+          // policy is not discarded.
+        }
+      }
+    }
+    try {
+      io.rmSync(temporaryPath, { force: true })
+    } catch {
+      // Best-effort temp cleanup.
+    }
+    // Never delete displaced if it is still the only copy of the previous policy.
+    throw error
+  }
 }
 
 export class BackupPolicyStore {
@@ -157,10 +233,7 @@ export class BackupPolicyStore {
     const run = async (): Promise<BackupRetentionPolicy> => {
       const directory = path.dirname(this.policyPath)
       this.io.mkdirSync(directory, { recursive: true })
-      const temporaryPath = path.join(
-        directory,
-        `backup-policy.${randomBytes(12).toString('hex')}.tmp`,
-      )
+      const temporaryPath = path.join(directory, randomTempName('backup-policy'))
       const payload = `${JSON.stringify(toPolicyFile(validated), null, 2)}\n`
       try {
         this.io.writeFileSync(temporaryPath, payload, {
@@ -168,7 +241,7 @@ export class BackupPolicyStore {
           flag: 'wx',
           mode: 0o600,
         })
-        this.io.renameSync(temporaryPath, this.policyPath)
+        replaceFileSafely(this.io, temporaryPath, this.policyPath)
         return validated
       } catch {
         try {
