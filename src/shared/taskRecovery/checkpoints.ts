@@ -14,6 +14,7 @@ export interface StrictGenerationCheckpoint {
   fact_check_text: string
   fact_check: JsonObject | null
   version_id: string | null
+  source_content?: string
   updated_at?: string
 }
 
@@ -65,6 +66,7 @@ export function parseStrictGenerationCheckpoint(
   if (value.body !== undefined && typeof value.body !== 'string') return null
   if (value.summary !== undefined && typeof value.summary !== 'string') return null
   if (value.fact_check_text !== undefined && typeof value.fact_check_text !== 'string') return null
+  if (value.source_content !== undefined && typeof value.source_content !== 'string') return null
   if (
     value.version_id !== undefined
     && value.version_id !== null
@@ -87,6 +89,7 @@ export function parseStrictGenerationCheckpoint(
     fact_check_text: readString(value.fact_check_text),
     fact_check: isRecord(value.fact_check) ? value.fact_check : null,
     version_id: typeof value.version_id === 'string' ? value.version_id : null,
+    ...(typeof value.source_content === 'string' ? { source_content: value.source_content } : {}),
     ...(typeof value.updated_at === 'string' ? { updated_at: value.updated_at } : {}),
   }
 }

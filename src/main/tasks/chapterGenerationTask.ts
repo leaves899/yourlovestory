@@ -114,10 +114,17 @@ function finishFromExistingVersion(
   const existing = service.getVersionByTaskId(context.task.id)
   if (!existing) return null
 
+  const strictCheckpoint = context.task.checkpoint
+    ? parseStrictGenerationCheckpoint(context.task.checkpoint)
+    : null
+  if (context.task.checkpoint && !strictCheckpoint) {
+    throw new NonRecoverableTaskError('章节生成检查点语义损坏或字段不合法，已拒绝恢复并禁止自动确认。')
+  }
+
   let finalized: ReturnType<ChapterGenerationService['finalizePersistedVersion']>
   try {
     finalized = context.runOwnedSideEffect(() =>
-      service.finalizePersistedVersion(request, existing.id),
+      service.finalizePersistedVersion(request, existing.id, strictCheckpoint?.source_content ?? null),
     )
   } catch (error) {
     if (
@@ -140,6 +147,9 @@ function finishFromExistingVersion(
     fact_check_text: '',
     fact_check: finalVersion.fact_check,
     version_id: finalVersion.id,
+    ...(strictCheckpoint?.source_content !== undefined
+      ? { source_content: strictCheckpoint.source_content }
+      : {}),
   }))
   context.setStage('review', 1)
   context.setExecutionPhase('finalizing')

@@ -691,44 +691,51 @@ export class TaskManager {
         return decision.autoAllowed
       })
 
-    let index = 0
+    const cursor = { index: 0 }
     const workers = Array.from(
       { length: Math.max(1, this.startupConcurrency) },
-      async () => {
-        while (index < autoCandidates.length) {
-          const current = autoCandidates[index]
-          index += 1
-          if (!current) break
-          try {
-            const handle = this.claimAndStart(current.id, {
-              kind: 'auto',
-              allowedClassifications: ['resumable', 'restartable'],
-              incrementAttempt: true,
-              timeoutAt: addMs(this.now(), this.taskTimeoutMs),
-            })
-            if (!handle) {
-              result.skipped += 1
-              continue
-            }
-            result.claimed += 1
-            result.autoStarted += 1
-            // Wait for this recovery execution before claiming the next one.
-            try {
-              const finished = await handle.completion
-              if (finished.status === 'failed') {
-                result.failed += 1
-              }
-            } catch {
-              result.failed += 1
-            }
-          } catch {
-            result.skipped += 1
-          }
-        }
-      },
+      () => this.runStartupRecoveryWorker(autoCandidates, cursor, result),
     )
     await Promise.all(workers)
     return result
+  }
+
+  private async runStartupRecoveryWorker(
+    autoCandidates: readonly Task[],
+    cursor: { index: number },
+    result: RecoveryScanResult,
+  ): Promise<void> {
+    while (cursor.index < autoCandidates.length) {
+      const current = autoCandidates[cursor.index]
+      cursor.index += 1
+      if (!current) break
+      try {
+        const handle = this.claimAndStart(current.id, {
+          kind: 'auto',
+          allowedClassifications: ['resumable', 'restartable'],
+          incrementAttempt: true,
+          timeoutAt: addMs(this.now(), this.taskTimeoutMs),
+        })
+        if (!handle) {
+          result.skipped += 1
+          continue
+        }
+        result.claimed += 1
+        result.autoStarted += 1
+        if (await this.recoveryFailed(handle)) result.failed += 1
+      } catch {
+        result.skipped += 1
+      }
+    }
+  }
+
+  private async recoveryFailed(handle: TaskHandle): Promise<boolean> {
+    try {
+      const finished = await handle.completion
+      return finished.status === 'failed'
+    } catch {
+      return true
+    }
   }
 
   public beginGracefulShutdown(): void {
@@ -948,7 +955,7 @@ export class TaskManager {
   private fenceFor(taskId: string, leaseToken?: string): LeaseFence | null {
     const token = leaseToken ?? this.leaseTokens.get(taskId)
     if (!token) return null
-    return { owner: this.ownerId, leaseToken: token }
+    return { owner: this.ownerId, leaseToken: token, nowIso: this.now() }
   }
 
   /**

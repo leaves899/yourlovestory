@@ -147,6 +147,8 @@ export interface RenewLeaseInput {
 export interface LeaseFence {
   owner: string
   leaseToken: string
+  /** Optional caller clock for deterministic workers/tests; production defaults to wall clock. */
+  nowIso?: string
 }
 
 export class TaskLeaseLostError extends Error {
@@ -488,6 +490,7 @@ export class TaskRepository implements TaskStore {
     input: UpdateTaskInput,
     fence: LeaseFence | null,
   ): Task | null {
+    const nowIso = fence?.nowIso ?? now()
     const current = this.getById(id)
     if (!current) return null
     if (fence) {
@@ -550,7 +553,7 @@ export class TaskRepository implements TaskStore {
         input.recovery_metadata_version ?? current.recovery_metadata_version,
     }
     const fenceClause = fence
-      ? ' AND lease_owner = ? AND lease_token = ?'
+      ? ' AND lease_owner = ? AND lease_token = ? AND lease_expires_at IS NOT NULL AND lease_expires_at > ?'
       : ''
     const result = this.database
       .prepare(
@@ -575,7 +578,7 @@ export class TaskRepository implements TaskStore {
         next.cancel_requested ? 1 : 0,
         next.started_at,
         next.finished_at,
-        now(),
+        nowIso,
         next.execution_phase,
         next.recovery_classification,
         next.recovery_reason,
@@ -595,7 +598,7 @@ export class TaskRepository implements TaskStore {
         next.runtime_session_id,
         next.recovery_metadata_version,
         id,
-        ...(fence ? [fence.owner, fence.leaseToken] : []),
+        ...(fence ? [fence.owner, fence.leaseToken, nowIso] : []),
       )
     if (result.changes === 0) return null
     return this.getById(id)
@@ -851,10 +854,10 @@ export class TaskRepository implements TaskStore {
         return toTask(phaseNormalized)
       } catch {
         // A row may contain both an unsupported phase and corrupt JSON.
-        this.markTaskCorrupt(row.id, TASK_CORRUPTION_REASON, nowIso)
+        this.markTaskCorrupt(row, TASK_CORRUPTION_REASON, nowIso)
       }
     } else {
-      this.markTaskCorrupt(row.id, TASK_CORRUPTION_REASON, nowIso)
+      this.markTaskCorrupt(row, TASK_CORRUPTION_REASON, nowIso)
     }
     const fixed = this.database
       .prepare<TaskRow>('SELECT * FROM tasks WHERE id = ?')
@@ -897,7 +900,10 @@ export class TaskRepository implements TaskStore {
    * Fail-closed terminal write for unreadable rows. Clears bad checkpoint bytes without
    * re-parsing them, and never embeds raw payload content into the reason.
    */
-  private markTaskCorrupt(taskId: string, reason: string, nowIso: string): void {
+  private markTaskCorrupt(row: TaskRow, reason: string, nowIso: string): void {
+    const inputJson = this.isValidJsonObject(row.input_json) ? row.input_json : '{}'
+    const checkpointJson = this.preserveJsonObject(row.checkpoint_json)
+    const resultJson = this.preserveJsonObject(row.result_json)
     this.database
       .prepare(
         `UPDATE tasks
@@ -909,9 +915,9 @@ export class TaskRepository implements TaskStore {
              recovery_action = 'none',
              last_recovery_error = ?,
              error_message = ?,
-             input_json = '{}',
-             checkpoint_json = NULL,
-             result_json = NULL,
+             input_json = ?,
+             checkpoint_json = ?,
+             result_json = ?,
              finished_at = COALESCE(finished_at, ?),
              lease_owner = NULL,
              lease_token = NULL,
@@ -920,6 +926,30 @@ export class TaskRepository implements TaskStore {
              updated_at = ?
          WHERE id = ?`,
       )
-      .run(reason, reason, reason, nowIso, nowIso, taskId)
+      .run(
+        reason,
+        reason,
+        reason,
+        inputJson,
+        checkpointJson,
+        resultJson,
+        nowIso,
+        nowIso,
+        row.id,
+      )
+  }
+
+  private isValidJsonObject(value: string): boolean {
+    try {
+      parseJsonObject(value, 'task')
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  private preserveJsonObject(value: string | null): string | null {
+    if (value === null || this.isValidJsonObject(value)) return value
+    return null
   }
 }

@@ -713,13 +713,18 @@ export class NarrativeWorkbenchService {
       throw new NarrativeBoundaryError('Recovered revision is no longer latest and current')
     }
     const chapter = this.requireChapter(projectId, revision.chapter_id)
+    if (expectedSourceContent === null) {
+      throw new NarrativeBoundaryError(
+        'Recovered revision has no source-content evidence; explicit review is required',
+      )
+    }
     if (
       chapter.content === revision.content
       && chapter.status === 'completed'
     ) {
       return chapter
     }
-    if (expectedSourceContent === null || chapter.content !== expectedSourceContent) {
+    if (chapter.content !== expectedSourceContent) {
       throw new NarrativeBoundaryError(
         'Chapter changed after the revision checkpoint; explicit review is required',
       )

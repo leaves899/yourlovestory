@@ -209,7 +209,7 @@ function finishFromExistingRevision(
       )
       let applied = savedCheckpoint?.applied === true
         && savedCheckpoint.revision_id === existing.id
-      if (request.auto_apply && !applied) {
+      if (request.auto_apply) {
         const sourceContent = typeof context.task.checkpoint?.source_content === 'string'
           ? context.task.checkpoint.source_content
           : null

@@ -687,28 +687,34 @@ describe('task crash recovery fault matrix', () => {
     expect(corruptAfter.status).toBe('failed')
     expect(corruptAfter.recovery_reason).toBe(TASK_CORRUPTION_REASON)
     expect(corruptAfter.checkpoint).toBeNull()
+    expect(corruptAfter.input.sessionId).toBe('s')
     expect(JSON.stringify(corruptAfter)).not.toContain('{bad')
 
-    for (const taskId of [corruptInput.id, corruptResult.id]) {
-      const normalized = tasks.getById(taskId)!
-      expect(normalized.status).toBe('failed')
-      expect(normalized.recovery_classification).toBe('non-recoverable')
-      expect(normalized.recovery_reason).toBe(TASK_CORRUPTION_REASON)
-      expect(normalized.input).toEqual({})
-      expect(normalized.checkpoint).toBeNull()
-      expect(normalized.result).toBeNull()
-      expect(manager.listRecoverable(projectId).some((item) => item.id === taskId)).toBe(true)
-    }
+    const normalizedInput = tasks.getById(corruptInput.id)!
+    expect(normalizedInput.status).toBe('failed')
+    expect(normalizedInput.recovery_classification).toBe('non-recoverable')
+    expect(normalizedInput.recovery_reason).toBe(TASK_CORRUPTION_REASON)
+    expect(normalizedInput.input).toEqual({})
+    expect(normalizedInput.checkpoint).toBeNull()
+    expect(normalizedInput.result).toBeNull()
+    expect(manager.listRecoverable(projectId).some((item) => item.id === corruptInput.id)).toBe(true)
+
+    const normalizedResult = tasks.getById(corruptResult.id)!
+    expect(normalizedResult.status).toBe('failed')
+    expect(normalizedResult.recovery_classification).toBe('non-recoverable')
+    expect(normalizedResult.recovery_reason).toBe(TASK_CORRUPTION_REASON)
+    expect(normalizedResult.input.sessionId).toBe('bad-result')
+    expect(normalizedResult.checkpoint).toBeNull()
+    expect(normalizedResult.result).toBeNull()
+    expect(manager.listRecoverable(projectId).some((item) => item.id === corruptResult.id)).toBe(true)
     const normalizedBytes = database
       .prepare<{ input_json: string; checkpoint_json: string | null; result_json: string | null }>(
         'SELECT input_json, checkpoint_json, result_json FROM tasks WHERE id = ?',
       )
       .get(corruptResult.id)
-    expect(normalizedBytes).toEqual({
-      input_json: '{}',
-      checkpoint_json: null,
-      result_json: null,
-    })
+    expect(normalizedBytes?.input_json).toContain('"sessionId":"bad-result"')
+    expect(normalizedBytes?.checkpoint_json).toBeNull()
+    expect(normalizedBytes?.result_json).toBeNull()
 
     const unknownAfter = tasks.getById(unknownPhase.id)!
     expect(unknownAfter.recovery_classification).toBe('non-recoverable')
@@ -1983,6 +1989,7 @@ describe('task crash recovery fault matrix', () => {
     const versions = new ChapterVersionRepository(database)
     const blocking = createBlockingAgent()
     const chapter = chapters.getById(chapterId)!
+    const sourceContent = chapter.content
     chapters.update(chapterId, { status: 'drafting' }, chapter.version)
     const task = tasks.create({
       project_id: projectId,
@@ -2013,6 +2020,16 @@ describe('task crash recovery fault matrix', () => {
     tasks.update(task.id, {
       status: 'running',
       execution_phase: 'persisting_result',
+      checkpoint: {
+        schema_version: 1,
+        stage: 'review',
+        body: version.content,
+        summary: version.summary,
+        fact_check_text: '',
+        fact_check: version.fact_check,
+        version_id: version.id,
+        source_content: sourceContent,
+      },
     })
     const manager = createManager({
       agentFactory: blocking.agentFactory,
@@ -2034,6 +2051,124 @@ describe('task crash recovery fault matrix', () => {
     })
     expect(blocking.createCount()).toBe(0)
     expect(blocking.promptCount()).toBe(0)
+  })
+
+  test('P1-3 review version cannot auto-confirm after a later chapter edit', async () => {
+    const { projectId, outlineId, chapterId } = seedProject('review-manual-edit')
+    const tasks = new TaskRepository(database)
+    const chapters = new ChapterRepository(database)
+    const versions = new ChapterVersionRepository(database)
+    const blocking = createBlockingAgent()
+    const source = chapters.getById(chapterId)!
+    const task = tasks.create({
+      project_id: projectId,
+      chapter_id: chapterId,
+      task_type: 'chapter-generation',
+      input: {
+        sessionId: 's',
+        taskType: 'chapter-generation',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: {
+          project_id: projectId,
+          chapter_outline_id: outlineId,
+          chapter_id: chapterId,
+          auto_confirm: true,
+        },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      checkpoint_schema_version: 1,
+    })
+    const version = versions.create({
+      chapter_id: chapterId,
+      task_id: task.id,
+      content: 'recovered review body',
+      summary: 'recovered review summary',
+      fact_check: { passed: true, summary: 'ok', findings: [] },
+    })
+    tasks.update(task.id, {
+      status: 'running',
+      execution_phase: 'persisting_result',
+      checkpoint: {
+        schema_version: 1,
+        stage: 'review',
+        body: version.content,
+        summary: version.summary,
+        fact_check_text: '',
+        fact_check: version.fact_check,
+        version_id: version.id,
+        source_content: source.content,
+      },
+    })
+    chapters.update(chapterId, { content: 'manual edit after generation crash' }, source.version)
+
+    const manager = createManager({ agentFactory: blocking.agentFactory })
+    manager.beginRuntimeSession()
+    expect((await manager.scanAndRecoverOnStartup()).autoStarted).toBe(1)
+    await manager.wait(task.id)
+
+    expect(tasks.getById(task.id)).toMatchObject({
+      status: 'failed',
+      recovery_classification: 'non-recoverable',
+    })
+    expect(versions.getById(version.id)).toMatchObject({
+      status: 'review',
+      is_current: false,
+    })
+    expect(chapters.getById(chapterId)?.content).toBe('manual edit after generation crash')
+    expect(blocking.createCount()).toBe(0)
+  })
+
+  test('P1-3 auto-confirm fails closed when generation source evidence is missing', async () => {
+    const { projectId, outlineId, chapterId } = seedProject('missing-generation-source')
+    const tasks = new TaskRepository(database)
+    const versions = new ChapterVersionRepository(database)
+    const blocking = createBlockingAgent()
+    const task = tasks.create({
+      project_id: projectId,
+      chapter_id: chapterId,
+      task_type: 'chapter-generation',
+      input: {
+        sessionId: 's',
+        taskType: 'chapter-generation',
+        prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: {
+          project_id: projectId,
+          chapter_outline_id: outlineId,
+          chapter_id: chapterId,
+          auto_confirm: true,
+        },
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      checkpoint_schema_version: 1,
+    })
+    const version = versions.create({
+      chapter_id: chapterId,
+      task_id: task.id,
+      content: 'missing-source body',
+      summary: 'missing-source summary',
+      fact_check: { passed: true, summary: 'ok', findings: [] },
+    })
+    tasks.update(task.id, {
+      status: 'running',
+      execution_phase: 'persisting_result',
+    })
+
+    const manager = createManager({ agentFactory: blocking.agentFactory })
+    manager.beginRuntimeSession()
+    expect((await manager.scanAndRecoverOnStartup()).autoStarted).toBe(1)
+    await manager.wait(task.id)
+
+    expect(tasks.getById(task.id)).toMatchObject({
+      status: 'failed',
+      recovery_classification: 'non-recoverable',
+    })
+    expect(versions.getById(version.id)).toMatchObject({
+      status: 'review',
+      is_current: false,
+    })
+    expect(blocking.createCount()).toBe(0)
   })
 
   test('P1-3 stale approved version cannot overwrite a newer adopted chapter version', async () => {

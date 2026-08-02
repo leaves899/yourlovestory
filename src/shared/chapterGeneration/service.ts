@@ -128,6 +128,7 @@ export function checkpointToJson(checkpoint: ChapterGenerationCheckpoint): JsonO
     fact_check_text: checkpoint.fact_check_text,
     fact_check: checkpoint.fact_check ? factCheckToJson(checkpoint.fact_check) : null,
     version_id: checkpoint.version_id,
+    ...(checkpoint.source_content !== undefined ? { source_content: checkpoint.source_content } : {}),
     ...(checkpoint.updated_at ? { updated_at: checkpoint.updated_at } : {}),
   }
 }
@@ -143,6 +144,7 @@ export function checkpointFromJson(value: JsonObject | null): ChapterGenerationC
     fact_check_text: readString(value.fact_check_text),
     fact_check: parseFactCheck(value.fact_check),
     version_id: readNullableString(value.version_id),
+    ...(typeof value.source_content === 'string' ? { source_content: value.source_content } : {}),
     updated_at: readString(value.updated_at) || undefined,
   }
 }
@@ -299,6 +301,7 @@ export class ChapterGenerationService {
   public finalizePersistedVersion(
     input: ChapterGenerationRequest,
     versionId: string,
+    expectedSourceContent: string | null = null,
   ): { chapter: Chapter; version: ChapterVersion; autoConfirmed: boolean } {
     let version = this.getVersion(input.project_id, versionId)
     if (version.task_id !== input.task_id) {
@@ -331,6 +334,11 @@ export class ChapterGenerationService {
     }
 
     if (input.auto_confirm && version.status === 'review' && version.fact_check.passed) {
+      if (expectedSourceContent === null || chapter.content !== expectedSourceContent) {
+        throw new ChapterGenerationBoundaryError(
+          'Chapter changed after the generation checkpoint or source evidence is missing; recovery cannot auto-confirm',
+        )
+      }
       version = this.confirmVersion(input.project_id, version.id)
       chapter = this.requireChapter(input.project_id, version.chapter_id)
       return { chapter, version, autoConfirmed: true }
@@ -423,6 +431,9 @@ export class ChapterGenerationService {
       options,
       () => this.prepareInternal(input, !canReuseSavedVersion),
     )
+    if (checkpoint.source_content === undefined) {
+      checkpoint = { ...checkpoint, source_content: preparation.chapter.content }
+    }
     let chapter = preparation.chapter
 
     if (canReuseSavedVersion) {

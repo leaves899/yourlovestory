@@ -280,24 +280,24 @@ export function classifyTaskRecovery(input: ClassifyTaskInput): RecoveryDecision
     return nonRecoverable('目标章节、大纲或源修订已删除，任务不可恢复。')
   }
 
-  // Zero-model final-entity finish: not blocked by credential, deadline, or attempt cap.
-  const finalEntity = classifyFinalEntity(input)
-  if (finalEntity) return finalEntity
-
   if (input.recovery_metadata_version > RECOVERY_METADATA_VERSION) {
     return nonRecoverable('任务恢复元数据来自未来版本，当前版本无法安全解释，已拒绝恢复。')
-  }
-
-  if (input.recovery_attempt_count >= input.max_recovery_attempts) {
-    return manualRequired(
-      `恢复尝试次数已达上限（${input.max_recovery_attempts}），停止自动与人工重试以免启动循环。`,
-      false,
-    )
   }
 
   if (input.recovery_metadata_version < RECOVERY_METADATA_VERSION) {
     return manualRequired(
       '旧任务缺少 Phase D 恢复元数据，默认 fail closed，禁止批量自动重放。',
+    )
+  }
+
+  // Zero-model final-entity finish: not blocked by credential, deadline, or attempt cap.
+  const finalEntity = classifyFinalEntity(input)
+  if (finalEntity) return finalEntity
+
+  if (input.recovery_attempt_count >= input.max_recovery_attempts) {
+    return manualRequired(
+      `恢复尝试次数已达上限（${input.max_recovery_attempts}），停止自动与人工重试以免启动循环。`,
+      false,
     )
   }
 

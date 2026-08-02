@@ -108,6 +108,8 @@ export interface ChapterGenerationCheckpoint {
   fact_check_text: string
   fact_check: FactCheckReport | null
   version_id: string | null
+  /** Original chapter text captured before generation for recovery compare-and-apply. */
+  source_content?: string
   updated_at?: string
 }
 

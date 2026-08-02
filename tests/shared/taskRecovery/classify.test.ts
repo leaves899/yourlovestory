@@ -184,6 +184,29 @@ describe('classifyTaskRecovery', () => {
     expect(decision.autoAllowed).toBe(true)
   })
 
+  test('legacy final entities still require manual review before recovery', () => {
+    const decision = classifyTaskRecovery(base({
+      hasChapterVersionForTask: true,
+      recovery_metadata_version: 0,
+      credentialAvailable: false,
+      execution_phase: 'persisting_result',
+    }))
+    expect(decision.classification).toBe('manual-retry-required')
+    expect(decision.autoAllowed).toBe(false)
+    expect(decision.manualRetryAllowed).toBe(true)
+  })
+
+  test('future metadata cannot be bypassed by a durable final entity', () => {
+    const decision = classifyTaskRecovery(base({
+      hasChapterVersionForTask: true,
+      recovery_metadata_version: RECOVERY_METADATA_VERSION + 1,
+      execution_phase: 'persisting_result',
+    }))
+    expect(decision.classification).toBe('non-recoverable')
+    expect(decision.autoAllowed).toBe(false)
+    expect(decision.manualRetryAllowed).toBe(false)
+  })
+
   test('old deadline does not demote queued restartable generation', () => {
     const decision = classifyTaskRecovery(base({
       execution_phase: 'queued',
