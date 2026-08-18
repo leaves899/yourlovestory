@@ -39,6 +39,15 @@ describe('chapter generation IPC input validation', () => {
     })
   })
 
+  test('parses debug boolean and rejects invalid debug', () => {
+    expect(parseChapterGenerationStartParams({ ...valid, debug: true })).toEqual(
+      expect.objectContaining({ debug: true }),
+    )
+    expect(() => parseChapterGenerationStartParams({ ...valid, debug: 'yes' })).toThrow(
+      'debug must be a boolean',
+    )
+  })
+
   test.each([
     ['project_id', { ...valid, project_id: '' }],
     ['session_id', { ...valid, session_id: '' }],
@@ -48,6 +57,7 @@ describe('chapter generation IPC input validation', () => {
     ['llm.streamingEnabled', { ...valid, llm: { ...valid.llm, streamingEnabled: 'yes' } }],
     ['auto_confirm', { ...valid, auto_confirm: 'yes' }],
     ['chapter_id', { ...valid, chapter_id: 3 }],
+    ['debug', { ...valid, debug: 'yes' }],
   ])('rejects invalid %s', (_field, input) => {
     expect(() => parseChapterGenerationStartParams(input)).toThrow()
   })

@@ -31,6 +31,8 @@ export interface StartChapterGenerationInput {
   chapterOutlineId: string
   chapterId?: string | null
   autoConfirm?: boolean
+  /** When true, persisted compiler traces include final_prompt. */
+  debug?: boolean
   llm: LlmConfigInput
 }
 
@@ -184,6 +186,7 @@ function chapterRequest(input: StartChapterGenerationInput): JsonObject {
     chapter_outline_id: input.chapterOutlineId,
     ...(input.chapterId ? { chapter_id: input.chapterId } : {}),
     ...(input.autoConfirm === undefined ? {} : { auto_confirm: input.autoConfirm }),
+    ...(input.debug === undefined ? {} : { debug: input.debug }),
   }
 }
 

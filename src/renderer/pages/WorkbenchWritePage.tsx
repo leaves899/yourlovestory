@@ -21,6 +21,7 @@ import {
 } from '@chakra-ui/react'
 import { FaPlay, FaRedo, FaStop } from 'react-icons/fa'
 import { useNavigate } from 'react-router-dom'
+import { ContextCompilerPanel } from '../components/ContextCompilerPanel'
 import { WorkbenchEmpty, WorkbenchError, WorkbenchPage, outlineStatusLabel, statusColor } from '../components/WorkbenchPrimitives'
 import { WorkflowCheckList } from '../components/WorkflowCheckList'
 import { useFirstChapterWorkflow } from '../hooks/useFirstChapterWorkflow'
@@ -60,6 +61,8 @@ function WorkbenchWritePage() {
   } = useTaskStore()
   const [chapterId, setChapterId] = useState('')
   const [llm, setLlm] = useState<AssistantLlmForm>(defaultLlm)
+  /** Context compiler debug for generation input + final_prompt display. Must default false. */
+  const [contextDebug, setContextDebug] = useState(false)
   const endpointInputRef = useRef<HTMLInputElement>(null)
   const endpointSecurity = inspectLlmEndpoint(llm.baseUrl)
 
@@ -104,6 +107,8 @@ function WorkbenchWritePage() {
       sessionId,
       chapterOutlineId: selectedChapter.id,
       autoConfirm: false,
+      // Explicit boolean: default path always false; only true when user enables Debug.
+      debug: contextDebug === true,
       llm: createLlmConfig(llm),
     })
   }
@@ -163,6 +168,14 @@ function WorkbenchWritePage() {
             <CardBody><VStack align="stretch" spacing={3}>{recoverableTasks.length > 0 && <Alert status="warning"><AlertIcon /><Text fontSize="sm">有 {recoverableTasks.length} 个任务可以恢复。</Text></Alert>}{recoverableTasks.map((task) => <HStack key={task.id} justify="space-between"><Text fontSize="sm" noOfLines={1}>{task.task_type} · {task.stage}</Text><Button size="xs" leftIcon={<FaRedo />} onClick={() => void resume(task.id)} isDisabled={busy}>恢复</Button></HStack>)}<Stack maxH="280px" overflowY="auto" spacing={1}>{logs.map((log, index) => <Text key={`${log}-${index}`} fontSize="xs" color="ink.600">{log}</Text>)}</Stack></VStack></CardBody>
           </Card>
         </SimpleGrid>
+
+        <ContextCompilerPanel
+          tasks={tasks}
+          activeTaskId={activeTaskId}
+          chapterOutlineId={selectedChapter?.id}
+          debug={contextDebug}
+          onDebugChange={setContextDebug}
+        />
 
         <Card>
           <CardHeader><HStack justify="space-between"><Text fontWeight="bold">待审核版本</Text><Badge>{selectedVersions.length}</Badge></HStack></CardHeader>
