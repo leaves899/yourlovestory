@@ -1,5 +1,5 @@
 import type { JsonObject } from '../novelProject'
-import type { TOKEN_ESTIMATION_METHOD } from './tokenEstimate'
+import type { CONTEXT_ESTIMATION_METHOD } from './tokenEstimate'
 
 export type ContextTaskKind = 'chapter_body' | 'outline' | 'summary' | 'fact_check'
 
@@ -73,7 +73,7 @@ export interface ContextBudgetSummary {
   selected_tokens: number
   discarded_tokens: number
   remaining_tokens: number
-  estimation_method: typeof TOKEN_ESTIMATION_METHOD
+  estimation_method: typeof CONTEXT_ESTIMATION_METHOD
   estimation_note: string
 }
 

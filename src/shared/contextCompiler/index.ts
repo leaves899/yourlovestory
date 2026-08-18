@@ -69,6 +69,6 @@ export {
   estimateJoinedTextTokens,
   estimateLinesTokens,
   estimateTextTokens,
-  TOKEN_ESTIMATION_METHOD,
+  CONTEXT_ESTIMATION_METHOD,
   TOKEN_ESTIMATION_NOTE,
 } from './tokenEstimate'

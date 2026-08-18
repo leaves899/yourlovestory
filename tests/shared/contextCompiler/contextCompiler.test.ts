@@ -9,7 +9,7 @@ import {
   scoreRelevance,
   serializeCandidates,
   tokenizeForRelevance,
-  TOKEN_ESTIMATION_METHOD,
+  CONTEXT_ESTIMATION_METHOD,
   type ContextCompilerInput,
   type ContextCandidate,
 } from '@/shared/contextCompiler'
@@ -264,7 +264,7 @@ describe('compileContext', () => {
     expect(result.prompt).toContain('夜潮')
     expect(result.selected.length).toBeGreaterThan(0)
     expect(result.selected.every((item) => item.reason && item.estimated_tokens >= 0)).toBe(true)
-    expect(result.budget.estimation_method).toBe(TOKEN_ESTIMATION_METHOD)
+    expect(result.budget.estimation_method).toBe(CONTEXT_ESTIMATION_METHOD)
     expect(result.budget.available_for_prompt).toBe(8_000 - 200 - 1_500)
     expect(result.budget.selected_tokens).toBeLessThanOrEqual(result.budget.available_for_prompt)
     expect(result.prompt_structure).toBeNull()

@@ -19,7 +19,7 @@ import {
   serializeCandidates,
 } from './serialize'
 import { CONTEXT_PROMPT_VERSION, getContextTaskStrategy } from './strategies'
-import { estimateTextTokens, TOKEN_ESTIMATION_METHOD, TOKEN_ESTIMATION_NOTE } from './tokenEstimate'
+import { CONTEXT_ESTIMATION_METHOD, estimateTextTokens, TOKEN_ESTIMATION_NOTE } from './tokenEstimate'
 
 function resolveSystemReserved(input: ContextCompilerInput): number {
   if (input.budget.system_reserved_tokens != null) {
@@ -48,7 +48,7 @@ function computeBudgetSummary(
     selected_tokens: selectedTokens,
     discarded_tokens: discardedTokens,
     remaining_tokens: Math.max(0, available_for_prompt - selectedTokens),
-    estimation_method: TOKEN_ESTIMATION_METHOD,
+    estimation_method: CONTEXT_ESTIMATION_METHOD,
     estimation_note: TOKEN_ESTIMATION_NOTE,
   }
 }

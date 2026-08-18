@@ -9,7 +9,7 @@
  *
  * This is intentionally an upper-bound-ish estimate vs chars/4 on Chinese, not a model tokenizer.
  */
-export const TOKEN_ESTIMATION_METHOD = 'cjk1_latin4_utf8_ceil' as const
+export const CONTEXT_ESTIMATION_METHOD = 'cjk1_latin4_utf8_ceil' as const
 
 export const TOKEN_ESTIMATION_NOTE =
   'Deterministic conservative estimate: 1 token per CJK/fullwidth code point; ' +
