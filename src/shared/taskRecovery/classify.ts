@@ -375,9 +375,8 @@ export function buildIdempotencyKey(
   taskType: string,
   projectId: string,
   logicalTarget: string,
-  rootTaskId: string,
 ): string {
-  return `${taskType}:${projectId}:${logicalTarget}:${rootTaskId}`
+  return `${taskType}:${projectId}:${logicalTarget}`
 }
 
 export function readRequestField(

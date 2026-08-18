@@ -212,6 +212,40 @@ describe('task crash recovery fault matrix', () => {
     return { projectId: project.id, outlineId: outline.id, chapterId: chapter.id }
   }
 
+  test('P1-0 stable idempotency key rejects a duplicate active business target', async () => {
+    const { projectId } = seedProject('idempotency')
+    const blocking = createBlockingAgent()
+    const manager = createManager({ agentFactory: blocking.agentFactory })
+    const tasks = new TaskRepository(database)
+    manager.beginRuntimeSession()
+    const input = {
+      projectId,
+      sessionId: 'same-session',
+      taskType: 'assistant',
+      prompt: 'same request',
+      llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+    }
+
+    const first = manager.start(input)
+    const completions = [first.completion]
+    let duplicateError: unknown = null
+    try {
+      completions.push(manager.start(input).completion)
+    } catch (error) {
+      duplicateError = error
+    }
+
+    const activeTasks = tasks.listByProject(projectId).filter((task) =>
+      task.status === 'pending' || task.status === 'running',
+    )
+    manager.invalidateActiveRuntimes()
+    await Promise.all(completions)
+
+    expect(duplicateError).not.toBeNull()
+    expect(activeTasks).toHaveLength(1)
+    expect(blocking.createCount()).toBe(1)
+  })
+
   test('P1-3 migration 9 normalizes duplicate v8 reports and rolls back on failure', () => {
     database.close()
     const legacyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'yourcrush-mig9-'))

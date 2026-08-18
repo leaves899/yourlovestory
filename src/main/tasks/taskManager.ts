@@ -442,7 +442,6 @@ export class TaskManager {
       validatedInput.taskType,
       validatedInput.projectId,
       logicalTarget,
-      rootId,
     )
     assertSafePersistedString(idempotencyKey, 'idempotencyKey', 1024)
     const createInput: CreateTaskInput = {
