@@ -8,11 +8,14 @@ import type { DatabaseShutdownResult } from './shutdown'
 export interface ExecuteDatabaseRestoreOptions {
   backupService: DatabaseBackupService
   backupId: string
-  closeDatabase: () => DatabaseShutdownResult
+  /** May return a promise so callers can quiesce active tasks before DB close. */
+  closeDatabase: () => DatabaseShutdownResult | Promise<DatabaseShutdownResult>
   relaunch: () => void
   exit: () => void
   markRecoveryRequired?: () => void
   markRestoring?: () => void
+  /** Restores the pre-restore ready state when quiesce times out before DB close. */
+  markRestoreAborted?: () => void
   databaseAvailable?: boolean
   replaceDatabase?: (databasePath: string, stagedPath: string) => void
   verifyDatabase?: (filename: string) => void
@@ -63,6 +66,14 @@ function markRecoveryRequired(options: ExecuteDatabaseRestoreOptions): void {
   }
 }
 
+function markRestoreAborted(options: ExecuteDatabaseRestoreOptions): void {
+  try {
+    options.markRestoreAborted?.()
+  } catch {
+    // The current database remains authoritative; keep the stable restore error.
+  }
+}
+
 export async function executeDatabaseRestore(
   options: ExecuteDatabaseRestoreOptions,
 ): Promise<RestoreExecutionResult> {
@@ -95,12 +106,18 @@ export async function executeDatabaseRestore(
 
   let shutdown: DatabaseShutdownResult
   try {
-    shutdown = options.closeDatabase()
+    shutdown = await Promise.resolve(options.closeDatabase())
   } catch {
     shutdown = {
       databaseClosed: false,
       serviceCleanupFailed: true,
+      drained: false,
     }
+  }
+  if (shutdown.drained === false) {
+    removeStagedDatabase(staged)
+    markRestoreAborted(options)
+    throw backupError('RESTORE_FAILED')
   }
   if (!shutdown.databaseClosed) {
     removeStagedDatabase(staged)

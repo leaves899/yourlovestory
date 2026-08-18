@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { StartChapterGenerationInput, StartChapterPolishInput } from '../../main/tasks'
 import type { ChapterVersion } from '../../shared/chapterGeneration'
+import type { RecoverableTaskView } from '../../shared/taskRecovery'
 import taskService from '../services/taskService'
 
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -28,7 +29,7 @@ export interface TaskView {
 interface TaskStoreState {
   projectId: string | null
   tasks: TaskView[]
-  recoverableTasks: TaskView[]
+  recoverableTasks: RecoverableTaskView[]
   versions: ChapterVersion[]
   activeTaskId: string | null
   stream: string
@@ -43,6 +44,7 @@ interface TaskStoreState {
   startPolish: (input: StartChapterPolishInput) => Promise<string>
   cancel: (taskId?: string) => Promise<void>
   resume: (taskId: string) => Promise<string | null>
+  manualRetry: (taskId: string) => Promise<string | null>
   loadVersions: (projectId: string, chapterId: string) => Promise<void>
   confirmVersion: (projectId: string, versionId: string) => Promise<void>
   rejectVersion: (projectId: string, versionId: string) => Promise<void>
@@ -261,6 +263,20 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     set({ busy: true, error: null })
     try {
       const nextTaskId = await taskService.resume(taskId)
+      set({ activeTaskId: nextTaskId, busy: Boolean(nextTaskId) })
+      const projectId = get().projectId
+      if (projectId) void get().load(projectId)
+      return nextTaskId
+    } catch (error) {
+      set({ busy: false, error: readError(error) })
+      return null
+    }
+  },
+
+  manualRetry: async (taskId) => {
+    set({ busy: true, error: null })
+    try {
+      const nextTaskId = await taskService.manualRetry(taskId)
       set({ activeTaskId: nextTaskId, busy: Boolean(nextTaskId) })
       const projectId = get().projectId
       if (projectId) void get().load(projectId)

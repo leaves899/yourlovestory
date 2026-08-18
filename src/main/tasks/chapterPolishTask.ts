@@ -9,8 +9,20 @@ import type {
   ParagraphRevisionOptions,
   NarrativeWorkbenchService,
 } from '../../shared/narrativeWorkbench'
+import { NarrativeBoundaryError } from '../../shared/narrativeWorkbench'
+import {
+  CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
+  parseStrictPolishCheckpoint,
+  polishCheckpointToJson,
+  type StrictPolishCheckpoint,
+} from '../../shared/taskRecovery'
 import type { JsonObject, JsonValue } from '../database'
-import type { TaskRunner, TaskRunnerContext, TaskRunnerResult } from './taskManager'
+import {
+  NonRecoverableTaskError,
+  type TaskRunner,
+  type TaskRunnerContext,
+  type TaskRunnerResult,
+} from './taskManager'
 
 export interface ChapterPolishTaskRunnerOptions {
   service: NarrativeWorkbenchService
@@ -65,36 +77,33 @@ function readRequest(context: TaskRunnerContext): ChapterPolishRequest {
 }
 
 function checkpointFromJson(value: JsonObject | null): NarrativeOperationCheckpoint | null {
-  if (!value) return null
-  const operation = value.operation
-  const status = value.status
-  if (
-    (operation !== 'paragraph_revision' && operation !== 'chapter_polish') ||
-    (status !== 'running' && status !== 'completed' && status !== 'fallback' && status !== 'cancelled')
-  ) {
-    return null
-  }
+  const parsed = parseStrictPolishCheckpoint(value)
+  if (!parsed) return null
   return {
-    operation,
-    source_content: typeof value.source_content === 'string' ? value.source_content : '',
-    generated_content: typeof value.generated_content === 'string' ? value.generated_content : '',
-    revision_id: typeof value.revision_id === 'string' ? value.revision_id : null,
-    status,
-    error: typeof value.error === 'string' ? value.error : null,
-    updated_at: typeof value.updated_at === 'string' ? value.updated_at : undefined,
+    schema_version: parsed.schema_version,
+    operation: parsed.operation,
+    source_content: parsed.source_content,
+    generated_content: parsed.generated_content,
+    revision_id: parsed.revision_id,
+    status: parsed.status,
+    error: parsed.error,
+    applied: parsed.applied,
+    ...(parsed.updated_at ? { updated_at: parsed.updated_at } : {}),
   }
 }
 
-function checkpointToJson(checkpoint: NarrativeOperationCheckpoint): JsonObject {
-  return {
+function checkpointToJson(checkpoint: NarrativeOperationCheckpoint | StrictPolishCheckpoint): JsonObject {
+  return polishCheckpointToJson({
+    schema_version: checkpoint.schema_version,
     operation: checkpoint.operation,
     source_content: checkpoint.source_content,
     generated_content: checkpoint.generated_content,
     revision_id: checkpoint.revision_id,
     status: checkpoint.status,
     error: checkpoint.error,
+    applied: checkpoint.applied === true,
     ...(checkpoint.updated_at ? { updated_at: checkpoint.updated_at } : {}),
-  }
+  })
 }
 
 class AgentNarrativeTextGenerator implements NarrativeTextGenerator {
@@ -137,6 +146,7 @@ function resultToJson(
 
 interface ChapterRevisionOperationResultLike {
   status: 'completed' | 'fallback' | 'cancelled'
+  content?: string
   revision: { id: string } | null
   report: { id: string } | null
   diff: {
@@ -148,15 +158,130 @@ interface ChapterRevisionOperationResultLike {
   error: string | null
 }
 
+function emptyDiff() {
+  return {
+    unchanged_count: 0,
+    added_count: 0,
+    removed_count: 0,
+    modified_count: 0,
+  }
+}
+
+/**
+ * Idempotent finish when a final revision already exists for this task, even if the
+ * completed checkpoint was lost. Never creates an agent or calls the model.
+ */
+function finishFromExistingRevision(
+  context: TaskRunnerContext,
+  request: ChapterPolishRequest,
+  service: NarrativeWorkbenchService,
+): TaskRunnerResult | null {
+  const existing = service.getRevisionByTaskId(context.task.id)
+  if (!existing) return null
+
+  // Entity must still belong to the target project/chapter for this task.
+  try {
+    service.getRevision(request.project_id, existing.id)
+  } catch {
+    throw new NonRecoverableTaskError('已落库修订与任务目标项目不一致，任务不可恢复。')
+  }
+  if (existing.chapter_id !== request.chapter_id) {
+    throw new NonRecoverableTaskError('已落库修订与任务目标章节不一致，任务不可恢复。')
+  }
+  const latest = service.listRevisions(request.project_id, request.chapter_id)[0]
+  if (!existing.is_current || !latest || latest.id !== existing.id) {
+    throw new NonRecoverableTaskError(
+      '已落库修订已不是当前最新修订，禁止自动覆盖后来采用的内容。',
+    )
+  }
+
+  context.setExecutionPhase('persisting_result')
+  const savedCheckpoint = checkpointFromJson(context.task.checkpoint)
+  let committed: { report: ReturnType<NarrativeWorkbenchService['ensureReportForTask']>; applied: boolean }
+  try {
+    committed = context.runOwnedSideEffect(() => {
+      const report = service.ensureReportForTask(
+        request.project_id,
+        request.chapter_id,
+        context.task.id,
+        existing.id,
+        request.mode === 'paragraph' ? 'paragraph-revision' : 'chapter-polish',
+      )
+      let applied = savedCheckpoint?.applied === true
+        && savedCheckpoint.revision_id === existing.id
+      if (request.auto_apply) {
+        const sourceContent = typeof context.task.checkpoint?.source_content === 'string'
+          ? context.task.checkpoint.source_content
+          : null
+        service.applyRecoveredRevision(request.project_id, existing.id, sourceContent)
+        applied = true
+      }
+      return { report, applied }
+    })
+  } catch (error) {
+    if (error instanceof NarrativeBoundaryError) {
+      throw new NonRecoverableTaskError(
+        '章节内容在崩溃后已变化或缺少源内容证据，禁止自动应用旧修订。',
+      )
+    }
+    throw error
+  }
+
+  context.saveCheckpoint(checkpointToJson({
+    schema_version: CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
+    operation: request.mode === 'paragraph' ? 'paragraph_revision' : 'chapter_polish',
+    source_content: savedCheckpoint?.source_content ?? '',
+    generated_content: existing.content,
+    revision_id: existing.id,
+    status: 'completed',
+    error: null,
+    applied: committed.applied,
+  }))
+  context.setStage('review', 1)
+  context.setExecutionPhase('finalizing')
+  return {
+    status: 'completed',
+    result: {
+      status: 'completed',
+      revision_id: existing.id,
+      report_id: committed.report?.id ?? null,
+      applied: committed.applied,
+      error: null,
+      diff: emptyDiff(),
+    },
+  }
+}
+
 export function createChapterPolishTaskRunner(
   options: ChapterPolishTaskRunnerOptions,
 ): TaskRunner {
   return {
     execute: async (context): Promise<TaskRunnerResult> => {
       const request = readRequest(context)
+
+      // Final entity first: never create agent / call model when revision is already durable.
+      const finished = finishFromExistingRevision(context, request, options.service)
+      if (finished) return finished
+
+      // Shared strict validator with classifier.
+      if (context.task.checkpoint) {
+        const strict = parseStrictPolishCheckpoint(context.task.checkpoint)
+        if (!strict) {
+          throw new Error('章节润色检查点语义损坏或字段不合法，已拒绝恢复并禁止调用模型。')
+        }
+      }
       const savedCheckpoint = checkpointFromJson(context.task.checkpoint)
+
       let agent: ProjectSessionAgent | undefined
       try {
+        if (savedCheckpoint?.status === 'completed' && savedCheckpoint.revision_id) {
+          throw new NonRecoverableTaskError(
+            '完成检查点引用的修订未按当前 task_id 持久化，无法验证归属，任务不可恢复。',
+          )
+        }
+
+        context.setExecutionPhase('preparing')
+        context.assertStillOwnsExecution()
         agent = await options.agentFactory.create({
           projectId: request.project_id,
           sessionId: context.input.sessionId,
@@ -169,12 +294,21 @@ export function createChapterPolishTaskRunner(
           on_chunk: (operation: NarrativeTextGenerationRequest['operation'], chunk: string) => {
             if (context.input.llm.streamingEnabled !== false) context.emitChunk(chunk, operation)
           },
-          on_checkpoint: (checkpoint: NarrativeOperationCheckpoint) =>
-            context.saveCheckpoint(checkpointToJson(checkpoint)),
+          on_checkpoint: (checkpoint: NarrativeOperationCheckpoint) => {
+            context.assertStillOwnsExecution()
+            context.saveCheckpoint(checkpointToJson({
+              ...checkpoint,
+              schema_version: CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
+            }))
+          },
+          commit: <T>(operation: () => T): T =>
+            context.runOwnedSideEffect(operation),
           task_id: context.task.id,
         }
         context.setStage(request.mode === 'paragraph' ? 'paragraph-revision' : 'polish', 0.1)
+        context.setExecutionPhase('awaiting_model')
         const generator = new AgentNarrativeTextGenerator(agent)
+        context.setExecutionPhase('model_in_flight')
         const result = request.mode === 'paragraph'
           ? await options.service.reviseParagraph(
               request.project_id,
@@ -198,12 +332,34 @@ export function createChapterPolishTaskRunner(
         if (result.status === 'cancelled') {
           return { status: 'cancelled', result: resultToJson('cancelled', result, false) }
         }
+        context.setExecutionPhase('persisting_result')
         let applied = false
         if (request.auto_apply && result.revision && result.status === 'completed') {
-          options.service.applyRevision(request.project_id, result.revision.id)
-          applied = true
+          const alreadyApplied = savedCheckpoint?.applied === true
+            && savedCheckpoint.revision_id === result.revision.id
+          if (!alreadyApplied) {
+            context.runOwnedSideEffect(() =>
+              options.service.applyRevision(request.project_id, result.revision!.id),
+            )
+            applied = true
+            if (result.revision) {
+              context.saveCheckpoint(checkpointToJson({
+                schema_version: CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
+                operation: request.mode === 'paragraph' ? 'paragraph_revision' : 'chapter_polish',
+                source_content: savedCheckpoint?.source_content ?? '',
+                generated_content: result.content ?? '',
+                revision_id: result.revision.id,
+                status: 'completed',
+                error: null,
+                applied: true,
+              }))
+            }
+          } else {
+            applied = true
+          }
         }
         context.setStage('review', 1)
+        context.setExecutionPhase('finalizing')
         return {
           status: 'completed',
           result: resultToJson(result.status, result, applied),

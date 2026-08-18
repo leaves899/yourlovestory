@@ -171,6 +171,7 @@ export interface ChapterRevision {
   id: string
   chapter_id: string
   parent_revision_id: string | null
+  task_id: string | null
   revision_number: number
   content: string
   summary: string
@@ -185,6 +186,7 @@ export interface CreateChapterRevisionInput {
   id?: string
   chapter_id: string
   parent_revision_id?: string | null
+  task_id?: string | null
   content: string
   summary?: string
   reason?: string
@@ -265,15 +267,22 @@ export interface NarrativeRunOptions {
   existing_text?: string
   on_chunk?: (operation: NarrativeTextGenerationRequest['operation'], chunk: string) => void
   on_checkpoint?: (checkpoint: NarrativeOperationCheckpoint) => void
+  /**
+   * Optional synchronous commit boundary supplied by the persistent task
+   * runner so durable writes are fenced by the current execution lease.
+   */
+  commit?: <T>(operation: () => T) => T
 }
 
 export interface NarrativeOperationCheckpoint {
+  schema_version: number
   operation: 'paragraph_revision' | 'chapter_polish'
   source_content: string
   generated_content: string
   revision_id: string | null
   status: 'running' | 'completed' | 'fallback' | 'cancelled'
   error: string | null
+  applied?: boolean
   updated_at?: string
 }
 

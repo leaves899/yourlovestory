@@ -60,7 +60,7 @@ describe('database backup service', () => {
     expect(record).toMatchObject({
       reason: 'manual',
       appVersion: 'test-version',
-      schemaVersion: 8,
+      schemaVersion: 9,
     })
     expect(record.sha256).toBe(digest(backupPath))
     expect(record.size).toBe(fs.statSync(backupPath).size)
@@ -221,7 +221,7 @@ describe('database backup service', () => {
         createdAt: '2026-03-20T00:00:00.000Z',
         reason: 'scheduled',
         appVersion: 'test',
-        schemaVersion: 8,
+        schemaVersion: 9,
         size: 10,
         sha256: 'd'.repeat(64),
       },
@@ -333,7 +333,7 @@ describe('database backup service', () => {
       createdAt: '2026-03-10T00:00:00.000Z',
       reason: 'manual',
       appVersion: 'test',
-      schemaVersion: 8,
+      schemaVersion: 9,
       size: 1,
       sha256: 'e'.repeat(64),
     }
@@ -859,6 +859,46 @@ describe('database backup service', () => {
     expect(exit).toHaveBeenCalledTimes(1)
     expect(fs.readdirSync(path.dirname(getDatabasePath(root)))
       .filter((entry) => entry.includes('.restore-'))).toEqual([])
+  })
+
+  test('quiesce timeout aborts restore without relaunching or abandoning the current database', async () => {
+    const target = await service.createBackup({ reason: 'manual' })
+    const replaceDatabase = jest.fn()
+    const markRecoveryRequired = jest.fn()
+    const runtimeStatus = {
+      state: 'ready' as 'ready' | 'restoring',
+    }
+    const markRestoreAborted = jest.fn(() => {
+      runtimeStatus.state = 'ready'
+    })
+    const relaunch = jest.fn()
+    const exit = jest.fn()
+
+    await expect(executeDatabaseRestore({
+      backupService: service,
+      backupId: target.id,
+      markRestoring: () => {
+        runtimeStatus.state = 'restoring'
+      },
+      closeDatabase: () => ({
+        databaseClosed: false,
+        serviceCleanupFailed: false,
+        drained: false,
+      }),
+      replaceDatabase,
+      markRecoveryRequired,
+      markRestoreAborted,
+      relaunch,
+      exit,
+    })).rejects.toMatchObject({ code: 'RESTORE_FAILED' })
+
+    expect(replaceDatabase).not.toHaveBeenCalled()
+    expect(markRestoreAborted).toHaveBeenCalledTimes(1)
+    expect(markRecoveryRequired).not.toHaveBeenCalled()
+    expect(relaunch).not.toHaveBeenCalled()
+    expect(exit).not.toHaveBeenCalled()
+    expect(runtimeStatus.state).toBe('ready')
+    expect(await service.verifyBackup(target.id)).toMatchObject({ valid: true })
   })
 
   test('keeps recovery available when database close and relaunch both fail', async () => {

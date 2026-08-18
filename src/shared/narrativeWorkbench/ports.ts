@@ -66,6 +66,7 @@ export interface ForeshadowStore {
 export interface ChapterRevisionStore {
   create(input: CreateChapterRevisionInput): ChapterRevision
   getById(id: string): ChapterRevision | null
+  getByTaskId?(taskId: string): ChapterRevision | null
   getCurrentByChapter(chapterId: string): ChapterRevision | null
   listByChapter(chapterId: string): ChapterRevision[]
   setCurrent(id: string): ChapterRevision | null
@@ -86,6 +87,7 @@ export interface SkillStore {
 
 export interface PostprocessReportStore {
   create(input: CreatePostprocessReportInput): PostprocessReport
+  getByTaskId?(taskId: string): PostprocessReport | null
   listByChapter(projectId: string, chapterId: string): PostprocessReport[]
 }
 

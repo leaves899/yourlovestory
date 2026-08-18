@@ -270,6 +270,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getTask: (taskId: string) => ipcRenderer.invoke('task:get', { taskId }),
   listTasks: (projectId: string) => ipcRenderer.invoke('task:list', { projectId }),
   resumeTask: (taskId: string) => ipcRenderer.invoke('task:resume', { taskId }),
+  manualRetryTask: (taskId: string, confirmed: true) =>
+    ipcRenderer.invoke('task:manual-retry', { taskId, confirmed }),
   listRecoverableTasks: (projectId: string) => ipcRenderer.invoke('task:recoverable', { projectId }),
   onTaskStart: (listener: (event: TaskStartEvent) => void) =>
     subscribeTaskEvent('task:start', listener),

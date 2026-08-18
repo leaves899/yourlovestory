@@ -1,14 +1,22 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { initializeDatabase, type SqliteDatabase } from '@/main/database'
+import {
+  initializeDatabase,
+  RecoveryAttemptRepository,
+  RuntimeSessionRepository,
+  TaskRepository,
+  type SqliteDatabase,
+} from '@/main/database'
 import { createWorkbenchService, type WorkbenchService } from '@/main/workbench'
+import { TaskManager } from '@/main/tasks'
 import {
   CredentialService,
   type SafeStorageAdapter,
 } from '@/main/security/credentialService'
 import { LlmCredentialController } from '@/main/security/llmCredentialController'
 import { INSECURE_LLM_BASE_URL } from '@/shared/security/urlSecurity'
+import { RECOVERY_METADATA_VERSION } from '@/shared/taskRecovery'
 
 const TEST_SECRET = 'sk-test-secret-do-not-expose-123456'
 
@@ -204,6 +212,114 @@ describe('LlmCredentialController', () => {
       baseUrl: 'https://renderer-controlled.example/v1',
       model: 'test-model',
     }).credentialId).not.toBe('renderer-controlled-id')
+  })
+
+  it('probes actual runtime credential decryptability without exposing plaintext', () => {
+    const subject = controller()
+    expect(subject.hasUsableRuntimeCredential(projectId)).toBe(false)
+    expect(subject.save({ scope: 'project', projectId }, TEST_SECRET).success).toBe(true)
+    expect(subject.hasUsableRuntimeCredential(projectId)).toBe(true)
+
+    const credentialPath = path.join(root, 'security', 'llm-credentials.json')
+    const file = JSON.parse(fs.readFileSync(credentialPath, 'utf8')) as {
+      credentials: Record<string, { payload: string }>
+    }
+    const credentialId = Object.keys(file.credentials)[0]!
+    file.credentials[credentialId]!.payload = Buffer.from(
+      'not-encrypted-credential-data',
+      'utf8',
+    ).toString('base64')
+    fs.writeFileSync(credentialPath, JSON.stringify(file), 'utf8')
+
+    expect(subject.hasUsableRuntimeCredential(projectId)).toBe(false)
+  })
+
+  it('does not claim with damaged ciphertext and retries only after a real credential repair', async () => {
+    const subject = controller()
+    expect(subject.save({ scope: 'project', projectId }, TEST_SECRET).success).toBe(true)
+    const credentialPath = path.join(root, 'security', 'llm-credentials.json')
+    const file = JSON.parse(fs.readFileSync(credentialPath, 'utf8')) as {
+      credentials: Record<string, { payload: string }>
+    }
+    const credentialId = Object.keys(file.credentials)[0]!
+    file.credentials[credentialId]!.payload = Buffer.from(
+      'damaged-ciphertext',
+      'utf8',
+    ).toString('base64')
+    fs.writeFileSync(credentialPath, JSON.stringify(file), 'utf8')
+
+    const tasks = new TaskRepository(database)
+    const attempts = new RecoveryAttemptRepository(database)
+    const task = tasks.create({
+      project_id: projectId,
+      task_type: 'chapter-generation',
+      input: {
+        sessionId: 'credential-repair',
+        taskType: 'chapter-generation',
+        prompt: '',
+        llm: {
+          provider: 'anthropic',
+          baseUrl: 'https://project.example/v1',
+          model: 'test-model',
+        },
+        request: {},
+      },
+      recovery_metadata_version: RECOVERY_METADATA_VERSION,
+      checkpoint_schema_version: 1,
+    })
+    tasks.update(task.id, {
+      status: 'failed',
+      execution_phase: 'queued',
+    })
+    let runs = 0
+    const manager = new TaskManager({
+      store: tasks,
+      agentFactory: {
+        create: async () => {
+          throw new Error('custom runner should be used')
+        },
+      },
+      events: { publish: () => undefined },
+      runtimeSessions: new RuntimeSessionRepository(database),
+      recoveryAttempts: attempts,
+      resolveLlmConfig: (candidateProjectId, input) =>
+        subject.runtimeConfig(candidateProjectId, input),
+      runners: {
+        'chapter-generation': {
+          execute: async () => {
+            runs += 1
+            return { status: 'completed', result: { ok: true } }
+          },
+        },
+      },
+      recoveryLookups: {
+        projectExists: () => true,
+        targetExists: () => true,
+        hasChapterVersionForTask: () => false,
+        hasChapterRevisionForTask: () => false,
+        credentialAvailable: (candidateProjectId) =>
+          subject.hasUsableRuntimeCredential(candidateProjectId),
+      },
+    })
+    manager.beginRuntimeSession()
+
+    expect(subject.hasUsableRuntimeCredential(projectId)).toBe(false)
+    expect((await manager.scanAndRecoverOnStartup()).autoStarted).toBe(0)
+    expect(tasks.getById(task.id)?.recovery_attempt_count).toBe(0)
+    expect(attempts.listByTask(task.id)).toHaveLength(0)
+    expect(runs).toBe(0)
+
+    expect(subject.save({
+      scope: 'project',
+      projectId,
+    }, `${TEST_SECRET}-repaired`).success).toBe(true)
+    expect(subject.hasUsableRuntimeCredential(projectId)).toBe(true)
+    const retried = manager.manualRetry(task.id, true)
+    expect(retried).not.toBeNull()
+    expect((await retried!.completion).status).toBe('completed')
+    expect(tasks.getById(task.id)?.recovery_attempt_count).toBe(1)
+    expect(attempts.listByTask(task.id)).toHaveLength(1)
+    expect(runs).toBe(1)
   })
 
   it('returns a safe timeout and sanitizes provider errors', async () => {

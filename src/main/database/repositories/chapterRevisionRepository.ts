@@ -12,6 +12,7 @@ interface ChapterRevisionRow {
   id: string
   chapter_id: string
   parent_revision_id: string | null
+  task_id: string | null
   revision_number: number
   content: string
   summary: string
@@ -79,6 +80,7 @@ function toRevision(row: ChapterRevisionRow): ChapterRevision {
     id: row.id,
     chapter_id: row.chapter_id,
     parent_revision_id: row.parent_revision_id,
+    task_id: row.task_id ?? null,
     revision_number: row.revision_number,
     content: row.content,
     summary: row.summary,
@@ -104,14 +106,15 @@ export class ChapterRevisionRepository {
     this.database
       .prepare(
         `INSERT INTO chapter_revisions (
-          id, chapter_id, parent_revision_id, revision_number, content, summary, reason,
+          id, chapter_id, parent_revision_id, task_id, revision_number, content, summary, reason,
           operation, blocks_json, is_current, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
       )
       .run(
         id,
         input.chapter_id,
         input.parent_revision_id ?? null,
+        input.task_id ?? null,
         revisionNumber,
         input.content,
         input.summary ?? '',
@@ -129,6 +132,13 @@ export class ChapterRevisionRepository {
     const row = this.database
       .prepare<ChapterRevisionRow>('SELECT * FROM chapter_revisions WHERE id = ?')
       .get(id)
+    return row ? toRevision(row) : null
+  }
+
+  public getByTaskId(taskId: string): ChapterRevision | null {
+    const row = this.database
+      .prepare<ChapterRevisionRow>('SELECT * FROM chapter_revisions WHERE task_id = ?')
+      .get(taskId)
     return row ? toRevision(row) : null
   }
 

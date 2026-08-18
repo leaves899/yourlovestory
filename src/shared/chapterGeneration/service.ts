@@ -38,6 +38,11 @@ export interface ChapterGenerationRunOptions {
   signal: AbortSignal
   checkpoint?: ChapterGenerationCheckpoint
   callbacks?: ChapterGenerationCallbacks
+  /**
+   * Optional synchronous commit boundary supplied by a persistent task runner.
+   * The main process uses it to fence durable writes with the task lease.
+   */
+  commit?: <T>(operation: () => T) => T
 }
 
 const stableOutlineStatuses = new Set(['confirmed', 'locked'])
@@ -116,24 +121,30 @@ function factCheckToJson(report: FactCheckReport): JsonObject {
 
 export function checkpointToJson(checkpoint: ChapterGenerationCheckpoint): JsonObject {
   return {
+    schema_version: checkpoint.schema_version,
     stage: checkpoint.stage,
     body: checkpoint.body,
     summary: checkpoint.summary,
     fact_check_text: checkpoint.fact_check_text,
     fact_check: checkpoint.fact_check ? factCheckToJson(checkpoint.fact_check) : null,
     version_id: checkpoint.version_id,
+    ...(checkpoint.source_content !== undefined ? { source_content: checkpoint.source_content } : {}),
+    ...(checkpoint.updated_at ? { updated_at: checkpoint.updated_at } : {}),
   }
 }
 
 export function checkpointFromJson(value: JsonObject | null): ChapterGenerationCheckpoint {
   if (!value || !isStage(value.stage)) return emptyChapterGenerationCheckpoint()
+  const schemaVersion = typeof value.schema_version === 'number' ? value.schema_version : 1
   return {
+    schema_version: schemaVersion,
     stage: value.stage,
     body: readString(value.body),
     summary: readString(value.summary),
     fact_check_text: readString(value.fact_check_text),
     fact_check: parseFactCheck(value.fact_check),
     version_id: readNullableString(value.version_id),
+    ...(typeof value.source_content === 'string' ? { source_content: value.source_content } : {}),
     updated_at: readString(value.updated_at) || undefined,
   }
 }
@@ -278,6 +289,95 @@ export class ChapterGenerationService {
     return version
   }
 
+  /** Lookup chapter version already persisted for a task (idempotent finish path). */
+  public getVersionByTaskId(taskId: string): ChapterVersion | null {
+    return this.options.versions.getByTaskId(taskId)
+  }
+
+  /**
+   * Completes every durable side effect that may remain after a crash occurring
+   * immediately after the task-bound version insert.
+   */
+  public finalizePersistedVersion(
+    input: ChapterGenerationRequest,
+    versionId: string,
+    expectedSourceContent: string | null = null,
+  ): { chapter: Chapter; version: ChapterVersion; autoConfirmed: boolean } {
+    let version = this.getVersion(input.project_id, versionId)
+    if (version.task_id !== input.task_id) {
+      throw new ChapterGenerationBoundaryError('Chapter version does not belong to this task')
+    }
+    const outline = this.options.project.getChapterOutline(
+      input.project_id,
+      input.chapter_outline_id,
+    )
+    let chapter = this.requireChapter(input.project_id, version.chapter_id)
+    if (
+      (input.chapter_id && chapter.id !== input.chapter_id)
+      || chapter.chapter_number !== outline.chapter_number
+    ) {
+      throw new ChapterGenerationBoundaryError('Chapter version does not match the task target')
+    }
+    const latestVersion = this.options.versions.listByChapter(chapter.id)[0]
+    if (!latestVersion || latestVersion.id !== version.id) {
+      throw new ChapterGenerationBoundaryError(
+        'A newer chapter version exists; the recovered task cannot overwrite it',
+      )
+    }
+    if (version.status === 'rejected') {
+      throw new ChapterGenerationBoundaryError('Rejected chapter version cannot finish a task')
+    }
+    if (version.status === 'approved' && !version.is_current) {
+      throw new ChapterGenerationBoundaryError(
+        'Approved chapter version is no longer current',
+      )
+    }
+
+    if (input.auto_confirm && version.status === 'review' && version.fact_check.passed) {
+      if (expectedSourceContent === null || chapter.content !== expectedSourceContent) {
+        throw new ChapterGenerationBoundaryError(
+          'Chapter changed after the generation checkpoint or source evidence is missing; recovery cannot auto-confirm',
+        )
+      }
+      version = this.confirmVersion(input.project_id, version.id)
+      chapter = this.requireChapter(input.project_id, version.chapter_id)
+      return { chapter, version, autoConfirmed: true }
+    }
+
+    if (version.status === 'approved') {
+      if (
+        chapter.status !== 'completed'
+        || chapter.content !== version.content
+        || chapter.synopsis !== version.summary
+        || chapter.actual_words !== version.content.length
+      ) {
+        throw new ChapterGenerationBoundaryError(
+          'Approved version differs from the current chapter; recovery cannot overwrite user content',
+        )
+      }
+      return { chapter, version, autoConfirmed: true }
+    }
+
+    if (
+      chapter.status !== 'review'
+      || chapter.synopsis !== version.summary
+      || chapter.actual_words !== version.content.length
+    ) {
+      const updated = this.options.chapters.update(
+        chapter.id,
+        {
+          status: 'review',
+          synopsis: version.summary,
+          actual_words: version.content.length,
+        },
+        chapter.version,
+      )
+      if (!updated) throw new EntityNotFoundError('Chapter', chapter.id)
+      chapter = updated
+    }
+    return { chapter, version, autoConfirmed: false }
+  }
+
   public confirmVersion(projectId: string, versionId: string): ChapterVersion {
     const version = this.getVersion(projectId, versionId)
     if (version.status !== 'review') {
@@ -327,14 +427,23 @@ export class ChapterGenerationService {
   ): Promise<ChapterGenerationResult> {
     let checkpoint = options.checkpoint ?? emptyChapterGenerationCheckpoint()
     const canReuseSavedVersion = checkpoint.stage === 'review' && checkpoint.version_id !== null
-    const preparation = this.prepareInternal(input, !canReuseSavedVersion)
+    const preparation = this.commit(
+      options,
+      () => this.prepareInternal(input, !canReuseSavedVersion),
+    )
+    if (checkpoint.source_content === undefined) {
+      checkpoint = { ...checkpoint, source_content: preparation.chapter.content }
+    }
     let chapter = preparation.chapter
 
     if (canReuseSavedVersion) {
       const saved = this.options.versions.getById(checkpoint.version_id!)
       if (saved) {
         if (input.auto_confirm && saved.status === 'review' && saved.fact_check.passed) {
-          const confirmed = this.confirmVersion(input.project_id, saved.id)
+          const confirmed = this.commit(
+            options,
+            () => this.confirmVersion(input.project_id, saved.id),
+          )
           checkpoint = { ...checkpoint, stage: 'review' }
           options.callbacks?.on_review?.(confirmed, false)
           return {
@@ -455,36 +564,44 @@ export class ChapterGenerationService {
     options.callbacks?.on_stage?.('saving', 0.9)
     checkpoint = { ...checkpoint, stage: 'saving' }
     this.publishCheckpoint(options, checkpoint)
-    const version = input.task_id
-      ? this.options.versions.getByTaskId(input.task_id) ?? this.options.versions.create({
-          chapter_id: chapter.id,
-          task_id: input.task_id,
-          content: checkpoint.body,
-          summary: checkpoint.summary,
-          fact_check: checkpoint.fact_check ?? parseFactCheckText(checkpoint.fact_check_text),
-        })
-      : this.options.versions.create({
-          chapter_id: chapter.id,
-          content: checkpoint.body,
-          summary: checkpoint.summary,
-          fact_check: checkpoint.fact_check ?? parseFactCheckText(checkpoint.fact_check_text),
-        })
+    const version = this.commit(options, () =>
+      input.task_id
+        ? this.options.versions.getByTaskId(input.task_id) ?? this.options.versions.create({
+            chapter_id: chapter.id,
+            task_id: input.task_id,
+            content: checkpoint.body,
+            summary: checkpoint.summary,
+            fact_check: checkpoint.fact_check ?? parseFactCheckText(checkpoint.fact_check_text),
+          })
+        : this.options.versions.create({
+            chapter_id: chapter.id,
+            content: checkpoint.body,
+            summary: checkpoint.summary,
+            fact_check: checkpoint.fact_check ?? parseFactCheckText(checkpoint.fact_check_text),
+          }),
+    )
     checkpoint = { ...checkpoint, stage: 'review', version_id: version.id }
     this.publishCheckpoint(options, checkpoint)
-    chapter = this.options.chapters.update(
-      chapter.id,
-      {
-        status: 'review',
-        synopsis: version.summary,
-        actual_words: version.content.length,
-      },
-      chapter.version,
-    ) ?? chapter
+    chapter = this.commit(
+      options,
+      () => this.options.chapters.update(
+        chapter.id,
+        {
+          status: 'review',
+          synopsis: version.summary,
+          actual_words: version.content.length,
+        },
+        chapter.version,
+      ) ?? chapter,
+    )
 
     const autoConfirmed = Boolean(input.auto_confirm && version.fact_check.passed)
     options.callbacks?.on_review?.(version, !autoConfirmed)
     if (autoConfirmed && version.status === 'review') {
-      const confirmed = this.confirmVersion(input.project_id, version.id)
+      const confirmed = this.commit(
+        options,
+        () => this.confirmVersion(input.project_id, version.id),
+      )
       options.callbacks?.on_review?.(confirmed, false)
       chapter = this.requireChapter(input.project_id, confirmed.chapter_id)
       options.callbacks?.on_stage?.('review', 1)
@@ -517,6 +634,13 @@ export class ChapterGenerationService {
       checkpoint,
       auto_confirmed: false,
     }
+  }
+
+  private commit<T>(
+    options: ChapterGenerationRunOptions,
+    operation: () => T,
+  ): T {
+    return options.commit ? options.commit(operation) : operation()
   }
 
   private prepareInternal(

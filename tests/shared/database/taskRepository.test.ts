@@ -78,4 +78,30 @@ describe('TaskRepository', () => {
     tasks.update(task.id, { status: 'cancelled' })
     expect(tasks.requestCancellation(task.id)).toBe(false)
   })
+
+  test('rejects fenced updates after the matching lease has expired', () => {
+    const project = new ProjectRepository(database).create({
+      slug: 'expired-lease-project',
+      name: 'Expired Lease Project',
+    })
+    const tasks = new TaskRepository(database)
+    const task = tasks.create({ project_id: project.id, task_type: 'assistant' })
+    tasks.update(task.id, {
+      status: 'running',
+      stage: 'owned',
+      lease_owner: 'owner-a',
+      lease_token: 'token-a',
+      lease_expires_at: '2020-01-01T00:00:00.000Z',
+    })
+
+    expect(tasks.updateOwned(task.id, { owner: 'owner-a', leaseToken: 'token-a' }, {
+      stage: 'must-not-apply',
+    })).toBeNull()
+    expect(tasks.getById(task.id)).toMatchObject({
+      status: 'running',
+      stage: 'owned',
+      lease_owner: 'owner-a',
+      lease_token: 'token-a',
+    })
+  })
 })

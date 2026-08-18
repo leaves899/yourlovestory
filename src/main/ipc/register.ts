@@ -93,7 +93,8 @@ export function setupIPC(options: IpcSetupOptions = {}): void {
 
   const invalidateCredentialRuntimes = (): void => {
     options.assistantService?.dispose()
-    options.taskManager?.dispose()
+    // Abort in-flight work only; do not permanently dispose TaskManager.
+    options.taskManager?.invalidateActiveRuntimes()
   }
 
   const credentialController = options.credentialController

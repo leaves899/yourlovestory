@@ -1,10 +1,28 @@
 export interface DatabaseShutdownResult {
   databaseClosed: boolean
   serviceCleanupFailed: boolean
+  /** True only when active task completions fully settled before close. */
+  drained: boolean
+}
+
+export interface QuiesceResult {
+  drained: boolean
+}
+
+/** The Electron process may exit only after writers drained and the DB closed. */
+export function canExitAfterShutdown(result: DatabaseShutdownResult): boolean {
+  return result.drained && result.databaseClosed
 }
 
 interface DisposableResource {
   dispose(): void
+}
+
+interface QuiesceableTaskManager extends DisposableResource {
+  quiesceForShutdown?(timeoutMs?: number): Promise<QuiesceResult | void>
+  invalidateActiveRuntimes?(): void
+  /** Re-open task admission when shutdown was aborted before DB close. */
+  resumeAfterAbortedShutdown?(): void
 }
 
 interface ClosableDatabaseResource {
@@ -12,20 +30,61 @@ interface ClosableDatabaseResource {
 }
 
 export interface ShutdownDatabaseResourcesOptions {
-  taskManager: DisposableResource | null
+  taskManager: QuiesceableTaskManager | null
   assistantService: DisposableResource | null
   database: ClosableDatabaseResource | null
+  /** When true, wait for active task completions before closing the database. */
+  awaitQuiesce?: boolean
+  quiesceTimeoutMs?: number
 }
 
-export function shutdownDatabaseResources(
+/**
+ * Shut down services then close the database.
+ * DB close/replace is allowed only when quiesce reports drained=true (or no await).
+ * Timeout must never close a live database while async writers may still run.
+ */
+export async function shutdownDatabaseResources(
   options: ShutdownDatabaseResourcesOptions,
-): DatabaseShutdownResult {
+): Promise<DatabaseShutdownResult> {
   let serviceCleanupFailed = false
+  let drained = true
+  const awaitQuiesce = options.awaitQuiesce !== false
 
   try {
-    options.taskManager?.dispose()
+    if (awaitQuiesce && options.taskManager?.quiesceForShutdown) {
+      const result = await options.taskManager.quiesceForShutdown(options.quiesceTimeoutMs)
+      if (result && typeof result === 'object' && 'drained' in result) {
+        drained = result.drained === true
+      }
+    } else {
+      options.taskManager?.dispose()
+    }
   } catch {
     serviceCleanupFailed = true
+    if (awaitQuiesce) {
+      // Quiesce path: do not close DB when drain/cleanup is uncertain.
+      drained = false
+    } else {
+      try {
+        options.taskManager?.dispose()
+      } catch {
+        // Continue with the non-quiescing best-effort shutdown path.
+      }
+    }
+  }
+
+  if (awaitQuiesce && !drained) {
+    // Never close/replace the live DB when completions may still write.
+    try {
+      options.taskManager?.resumeAfterAbortedShutdown?.()
+    } catch {
+      serviceCleanupFailed = true
+    }
+    return {
+      databaseClosed: false,
+      serviceCleanupFailed,
+      drained: false,
+    }
   }
 
   try {
@@ -43,9 +102,17 @@ export function shutdownDatabaseResources(
       databaseClosed = false
     }
   }
+  if (awaitQuiesce && !databaseClosed) {
+    try {
+      options.taskManager?.resumeAfterAbortedShutdown?.()
+    } catch {
+      serviceCleanupFailed = true
+    }
+  }
 
   return {
     databaseClosed,
     serviceCleanupFailed,
+    drained: true,
   }
 }

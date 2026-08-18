@@ -89,6 +89,13 @@ export class PostprocessReportRepository {
     return row ? toReport(row) : null
   }
 
+  public getByTaskId(taskId: string): PostprocessReport | null {
+    const row = this.database
+      .prepare<PostprocessReportRow>('SELECT * FROM postprocess_reports WHERE task_id = ?')
+      .get(taskId)
+    return row ? toReport(row) : null
+  }
+
   public listByChapter(projectId: string, chapterId: string): PostprocessReport[] {
     return this.database
       .prepare<PostprocessReportRow>(

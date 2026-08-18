@@ -218,6 +218,23 @@ describe('narrative workbench', () => {
     expect(chapter.status).toBe('completed')
   })
 
+  test('recovered auto-apply requires source evidence even when the revision is already applied', async () => {
+    const { projectId, chapterId } = createChapter(workbench)
+    const sourceContent = workbench.chapters.getById(chapterId)!.content
+    const result = await workbench.narrative.polishChapter(
+      projectId,
+      chapterId,
+      new FixedGenerator('The recovered revision is safely applied.'),
+    )
+    const revision = result.revision!
+    workbench.narrative.applyRevision(projectId, revision.id)
+
+    expect(() => workbench.narrative.applyRecoveredRevision(projectId, revision.id, null))
+      .toThrow(/source-content|source/i)
+    expect(workbench.narrative.applyRecoveredRevision(projectId, revision.id, sourceContent).content)
+      .toBe(revision.content)
+  })
+
   test('returns original content on polish failure and does not create a revision', async () => {
     const { projectId, chapterId } = createChapter(workbench)
     const before = workbench.chapters.getById(chapterId)!
