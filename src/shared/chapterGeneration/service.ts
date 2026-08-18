@@ -4,11 +4,28 @@ import {
   EntityNotFoundError,
 } from '../novelProject'
 import type { JsonObject, JsonValue } from '../novelProject'
+import {
+  compileContext,
+  ContextBudgetExceededError,
+  CONTEXT_PROMPT_VERSION,
+  type CompiledContext,
+  type ContextCompileTrace,
+  type ContextTraceItem,
+} from '../contextCompiler'
 import type {
+  ChapterGenerationForeshadowPort,
+  ChapterGenerationMemoryPort,
   ChapterGenerationProjectPort,
   ChapterStore,
   ChapterVersionStore,
 } from './ports'
+import {
+  assembleContextCompilerInput,
+  filterApprovedMemories,
+  filterOpenForeshadows,
+  mapPriorChapters,
+  resolveGenerationModelParams,
+} from './contextAssembly'
 import {
   emptyChapterGenerationCheckpoint,
   emptyFactCheckReport,
@@ -16,10 +33,13 @@ import {
   type Chapter,
   type ChapterGenerationCallbacks,
   type ChapterGenerationCheckpoint,
+  type ChapterGenerationModelParams,
   type ChapterGenerationPreparation,
   type ChapterGenerationRequest,
   type ChapterGenerationResult,
   type ChapterGenerationStage,
+  type ChapterGenerationStageCompile,
+  type ChapterGenerationTextStage,
   type ChapterVersion,
   type FactCheckFinding,
   type FactCheckReport,
@@ -31,6 +51,8 @@ export interface ChapterGenerationServiceOptions {
   project: ChapterGenerationProjectPort
   chapters: ChapterStore
   versions: ChapterVersionStore
+  memories?: ChapterGenerationMemoryPort
+  foreshadows?: ChapterGenerationForeshadowPort
   now?: () => string
 }
 
@@ -63,6 +85,10 @@ function readString(value: JsonValue | undefined, fallback = ''): string {
 
 function readNullableString(value: JsonValue | undefined): string | null {
   return typeof value === 'string' ? value : null
+}
+
+function readNumber(value: JsonValue | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 function parseFinding(value: JsonValue): FactCheckFinding | null {
@@ -114,6 +140,222 @@ function factCheckToJson(report: FactCheckReport): JsonObject {
   }
 }
 
+function reasonToJson(reason: ContextTraceItem['reason']): JsonObject {
+  return {
+    code: reason.code,
+    message: reason.message,
+  }
+}
+
+function traceItemToJson(item: ContextTraceItem): JsonObject {
+  return {
+    id: item.id,
+    source: item.source,
+    title: item.title,
+    priority: item.priority,
+    relevance_score: item.relevance_score,
+    importance: item.importance,
+    estimated_tokens: item.estimated_tokens,
+    reason: reasonToJson(item.reason),
+  }
+}
+
+function budgetToJson(budget: ContextCompileTrace['budget']): JsonObject {
+  return {
+    total_budget: budget.total_budget,
+    system_reserved: budget.system_reserved,
+    max_output_reserved: budget.max_output_reserved,
+    available_for_prompt: budget.available_for_prompt,
+    selected_tokens: budget.selected_tokens,
+    discarded_tokens: budget.discarded_tokens,
+    remaining_tokens: budget.remaining_tokens,
+    estimation_method: budget.estimation_method,
+    estimation_note: budget.estimation_note,
+  }
+}
+
+function metadataToJson(metadata: ContextCompileTrace['metadata']): JsonObject {
+  return {
+    prompt_version: metadata.prompt_version,
+    task_kind: metadata.task_kind,
+    strategy_id: metadata.strategy_id,
+    model: metadata.model,
+    temperature: metadata.temperature,
+    max_output_tokens: metadata.max_output_tokens,
+    context_budget: metadata.context_budget,
+  }
+}
+
+export function compileTraceToJson(trace: ContextCompileTrace): JsonObject {
+  const json: JsonObject = {
+    task_kind: trace.task_kind,
+    selected: trace.selected.map(traceItemToJson),
+    discarded: trace.discarded.map(traceItemToJson),
+    budget: budgetToJson(trace.budget),
+    warnings: [...trace.warnings],
+    errors: [...trace.errors],
+    metadata: metadataToJson(trace.metadata),
+  }
+  if (typeof trace.final_prompt === 'string') {
+    json.final_prompt = trace.final_prompt
+  }
+  return json
+}
+
+function parseTraceItem(value: JsonValue): ContextTraceItem | null {
+  if (!isRecord(value)) return null
+  if (
+    typeof value.id !== 'string' ||
+    typeof value.source !== 'string' ||
+    typeof value.title !== 'string' ||
+    typeof value.priority !== 'string' ||
+    typeof value.relevance_score !== 'number' ||
+    typeof value.importance !== 'number' ||
+    typeof value.estimated_tokens !== 'number' ||
+    !isRecord(value.reason) ||
+    typeof value.reason.code !== 'string' ||
+    typeof value.reason.message !== 'string'
+  ) {
+    return null
+  }
+  return {
+    id: value.id,
+    source: value.source as ContextTraceItem['source'],
+    title: value.title,
+    priority: value.priority as ContextTraceItem['priority'],
+    relevance_score: value.relevance_score,
+    importance: value.importance,
+    estimated_tokens: value.estimated_tokens,
+    reason: {
+      code: value.reason.code as ContextTraceItem['reason']['code'],
+      message: value.reason.message,
+    },
+  }
+}
+
+function parseCompileTrace(value: JsonValue | undefined): ContextCompileTrace | null {
+  if (!isRecord(value)) return null
+  if (typeof value.task_kind !== 'string' || !isRecord(value.budget) || !isRecord(value.metadata)) {
+    return null
+  }
+  if (!Array.isArray(value.selected) || !Array.isArray(value.discarded)) return null
+  if (!Array.isArray(value.warnings) || !Array.isArray(value.errors)) return null
+  const selected = value.selected.map(parseTraceItem)
+  const discarded = value.discarded.map(parseTraceItem)
+  if (selected.some((item) => item === null) || discarded.some((item) => item === null)) return null
+  const budget = value.budget
+  const metadata = value.metadata
+  if (
+    typeof budget.total_budget !== 'number' ||
+    typeof budget.system_reserved !== 'number' ||
+    typeof budget.max_output_reserved !== 'number' ||
+    typeof budget.available_for_prompt !== 'number' ||
+    typeof budget.selected_tokens !== 'number' ||
+    typeof budget.discarded_tokens !== 'number' ||
+    typeof budget.remaining_tokens !== 'number' ||
+    typeof budget.estimation_method !== 'string' ||
+    typeof budget.estimation_note !== 'string' ||
+    typeof metadata.prompt_version !== 'string' ||
+    typeof metadata.task_kind !== 'string' ||
+    typeof metadata.strategy_id !== 'string'
+  ) {
+    return null
+  }
+  const trace: ContextCompileTrace = {
+    task_kind: value.task_kind as ContextCompileTrace['task_kind'],
+    selected: selected as ContextTraceItem[],
+    discarded: discarded as ContextTraceItem[],
+    budget: {
+      total_budget: budget.total_budget,
+      system_reserved: budget.system_reserved,
+      max_output_reserved: budget.max_output_reserved,
+      available_for_prompt: budget.available_for_prompt,
+      selected_tokens: budget.selected_tokens,
+      discarded_tokens: budget.discarded_tokens,
+      remaining_tokens: budget.remaining_tokens,
+      estimation_method: budget.estimation_method as ContextCompileTrace['budget']['estimation_method'],
+      estimation_note: budget.estimation_note,
+    },
+    warnings: value.warnings.filter((item): item is string => typeof item === 'string'),
+    errors: value.errors.filter((item): item is string => typeof item === 'string'),
+    metadata: {
+      prompt_version: metadata.prompt_version,
+      task_kind: metadata.task_kind as ContextCompileTrace['metadata']['task_kind'],
+      strategy_id: metadata.strategy_id,
+      model: typeof metadata.model === 'string' ? metadata.model : null,
+      temperature: readNumber(metadata.temperature),
+      max_output_tokens: readNumber(metadata.max_output_tokens),
+      context_budget: readNumber(metadata.context_budget),
+    },
+  }
+  if (typeof value.final_prompt === 'string') {
+    trace.final_prompt = value.final_prompt
+  }
+  return trace
+}
+
+function modelParamsToJson(params: ChapterGenerationModelParams): JsonObject {
+  return {
+    model: params.model,
+    temperature: params.temperature,
+    max_output_tokens: params.max_output_tokens,
+    context_budget: params.context_budget,
+  }
+}
+
+function parseModelParams(value: JsonValue | undefined): ChapterGenerationModelParams | null {
+  if (!isRecord(value)) return null
+  const maxOut = readNumber(value.max_output_tokens)
+  const budget = readNumber(value.context_budget)
+  if (maxOut == null || budget == null || maxOut <= 0 || budget <= 0) return null
+  return {
+    model: typeof value.model === 'string' ? value.model : null,
+    temperature: readNumber(value.temperature),
+    max_output_tokens: maxOut,
+    context_budget: budget,
+  }
+}
+
+function stageCompileToJson(compile: ChapterGenerationStageCompile): JsonObject {
+  return {
+    prompt_version: compile.prompt_version,
+    model_params: modelParamsToJson(compile.model_params),
+    trace: compileTraceToJson(compile.trace),
+  }
+}
+
+function parseStageCompile(value: JsonValue | undefined): ChapterGenerationStageCompile | null {
+  if (!isRecord(value) || typeof value.prompt_version !== 'string') return null
+  const model_params = parseModelParams(value.model_params)
+  const trace = parseCompileTrace(value.trace)
+  if (!model_params || !trace) return null
+  return { prompt_version: value.prompt_version, model_params, trace }
+}
+
+function stageCompilesToJson(
+  compiles: ChapterGenerationCheckpoint['stage_compiles'],
+): JsonObject {
+  const out: JsonObject = {}
+  if (!compiles) return out
+  for (const stage of ['body', 'summary', 'fact_check'] as const) {
+    const item = compiles[stage]
+    if (item) out[stage] = stageCompileToJson(item)
+  }
+  return out
+}
+
+function parseStageCompiles(
+  value: JsonValue | undefined,
+): ChapterGenerationCheckpoint['stage_compiles'] {
+  if (!isRecord(value)) return {}
+  const out: NonNullable<ChapterGenerationCheckpoint['stage_compiles']> = {}
+  for (const stage of ['body', 'summary', 'fact_check'] as const) {
+    const parsed = parseStageCompile(value[stage])
+    if (parsed) out[stage] = parsed
+  }
+  return out
+}
+
 export function checkpointToJson(checkpoint: ChapterGenerationCheckpoint): JsonObject {
   return {
     stage: checkpoint.stage,
@@ -122,6 +364,8 @@ export function checkpointToJson(checkpoint: ChapterGenerationCheckpoint): JsonO
     fact_check_text: checkpoint.fact_check_text,
     fact_check: checkpoint.fact_check ? factCheckToJson(checkpoint.fact_check) : null,
     version_id: checkpoint.version_id,
+    stage_compiles: stageCompilesToJson(checkpoint.stage_compiles),
+    ...(checkpoint.updated_at ? { updated_at: checkpoint.updated_at } : {}),
   }
 }
 
@@ -135,6 +379,7 @@ export function checkpointFromJson(value: JsonObject | null): ChapterGenerationC
     fact_check: parseFactCheck(value.fact_check),
     version_id: readNullableString(value.version_id),
     updated_at: readString(value.updated_at) || undefined,
+    stage_compiles: parseStageCompiles(value.stage_compiles),
   }
 }
 
@@ -195,64 +440,38 @@ function assertStableOutline(status: string, entity: string, id: string): void {
   }
 }
 
-function bodyPrompt(preparation: ChapterGenerationPreparation, existing: string): string {
-  const { project, config, volume, volume_outline: volumeOutline, chapter_outline: outline } = preparation
-  const materials = preparation.outline_context.selected_source_materials
-    .map((material) => `素材《${material.title}》：${material.content}`)
-    .join('\n')
-  return [
-    '请生成当前章节的正文。只依据给出的项目、卷纲、章节大纲和素材，不补造未提供的事实。',
-    `项目：${project.name}`,
-    `类型：${config.genre}`,
-    `语气：${config.tone}`,
-    `卷：${volume.title}`,
-    `卷纲摘要：${volumeOutline.summary}`,
-    `章节标题：${outline.title}`,
-    `章节摘要：${outline.summary}`,
-    `章节目的：${outline.purpose}`,
-    `开场：${outline.opening}`,
-    `冲突：${outline.conflict}`,
-    `关键事件：${outline.key_events.join('；')}`,
-    `结尾：${outline.ending}`,
-    `结尾钩子：${outline.ending_hook}`,
-    materials ? `可用素材：\n${materials}` : '可用素材：无',
-    existing ? `已经生成的正文片段，请从其后继续，不要重复已有内容：\n${existing}` : '',
-    '输出正文，不要输出标题、解释或事实核查报告。',
-  ].filter((line) => line.length > 0).join('\n')
-}
-
-function summaryPrompt(
-  preparation: ChapterGenerationPreparation,
-  body: string,
-  existing: string,
-): string {
-  return [
-    '请为以下章节正文生成简洁摘要。摘要只描述正文中实际发生的内容，不添加新事实。',
-    `章节：${preparation.chapter_outline.title}`,
-    `正文：\n${body}`,
-    existing ? `已有摘要片段，请从其后继续，不要重复：\n${existing}` : '',
-    '只输出摘要文本。',
-  ].filter((line) => line.length > 0).join('\n')
-}
-
-function factCheckPrompt(
-  preparation: ChapterGenerationPreparation,
-  body: string,
-  existing: string,
-): string {
-  return [
-    '请核查以下章节正文是否符合项目、卷纲、章节大纲和素材。只检查可由输入验证的事实，不评价文风。',
-    `卷纲：${preparation.volume_outline.summary}\n${preparation.volume_outline.main_conflict}`,
-    `章节大纲：${preparation.chapter_outline.summary}\n${preparation.chapter_outline.conflict}`,
-    `关键事件：${preparation.chapter_outline.key_events.join('；')}`,
-    `正文：\n${body}`,
-    existing ? `已有事实核查输出片段，请从其后继续，不要重复：\n${existing}` : '',
-    '严格输出 JSON：{"passed":true或false,"summary":"摘要","findings":[{"claim":"事实","status":"supported|unclear|contradicted","severity":"info|warning|error","evidence":"依据","suggestion":"可执行的修改建议，可省略"}]}。',
-  ].filter((line) => line.length > 0).join('\n')
-}
-
 function isAbortError(error: unknown, signal: AbortSignal): boolean {
   return signal.aborted || (error instanceof Error && error.name === 'AbortError')
+}
+
+function persistableTrace(compiled: CompiledContext): ContextCompileTrace {
+  // compileContext only sets final_prompt when debug=true; copy as-is for resume.
+  const trace: ContextCompileTrace = {
+    task_kind: compiled.trace.task_kind,
+    selected: compiled.trace.selected,
+    discarded: compiled.trace.discarded,
+    budget: compiled.trace.budget,
+    warnings: [...compiled.trace.warnings],
+    errors: [...compiled.trace.errors],
+    metadata: { ...compiled.trace.metadata },
+  }
+  if (typeof compiled.trace.final_prompt === 'string') {
+    trace.final_prompt = compiled.trace.final_prompt
+  }
+  return trace
+}
+
+/** Budget failure traces never include final_prompt unless the error already attached one (it does not by default). */
+function persistableFailureTrace(trace: ContextCompileTrace): ContextCompileTrace {
+  return {
+    task_kind: trace.task_kind,
+    selected: trace.selected,
+    discarded: trace.discarded,
+    budget: trace.budget,
+    warnings: [...trace.warnings],
+    errors: [...trace.errors],
+    metadata: { ...trace.metadata },
+  }
 }
 
 export class ChapterGenerationService {
@@ -326,9 +545,11 @@ export class ChapterGenerationService {
     options: ChapterGenerationRunOptions,
   ): Promise<ChapterGenerationResult> {
     let checkpoint = options.checkpoint ?? emptyChapterGenerationCheckpoint()
+    if (!checkpoint.stage_compiles) checkpoint = { ...checkpoint, stage_compiles: {} }
     const canReuseSavedVersion = checkpoint.stage === 'review' && checkpoint.version_id !== null
     const preparation = this.prepareInternal(input, !canReuseSavedVersion)
     let chapter = preparation.chapter
+    const modelParams = resolveGenerationModelParams(input)
 
     if (canReuseSavedVersion) {
       const saved = this.options.versions.getById(checkpoint.version_id!)
@@ -379,9 +600,14 @@ export class ChapterGenerationService {
       checkpoint = { ...checkpoint, stage: 'body' }
       options.callbacks?.on_stage?.('body', 0.1)
       try {
+        const compiled = this.compileStage(input, preparation, modelParams, 'body', {
+          existingText: checkpoint.body,
+        })
+        checkpoint = this.withStageCompile(checkpoint, 'body', compiled, modelParams)
+        this.publishCheckpoint(options, checkpoint)
         const body = await this.runTextStage(
           'body',
-          bodyPrompt(preparation, checkpoint.body),
+          compiled.prompt,
           checkpoint.body,
           generator,
           options,
@@ -396,6 +622,10 @@ export class ChapterGenerationService {
         this.publishCheckpoint(options, checkpoint)
       } catch (error) {
         if (isAbortError(error, options.signal)) return cancel()
+        if (error instanceof ContextBudgetExceededError) {
+          checkpoint = this.withFailureStageCompile(checkpoint, 'body', error, modelParams)
+          this.publishCheckpoint(options, checkpoint)
+        }
         throw error
       }
     }
@@ -403,9 +633,15 @@ export class ChapterGenerationService {
     if (!stageAtLeast(checkpoint.stage, 'fact_check')) {
       options.callbacks?.on_stage?.('summary', 0.45)
       try {
+        const compiled = this.compileStage(input, preparation, modelParams, 'summary', {
+          body: checkpoint.body,
+          existingText: checkpoint.summary,
+        })
+        checkpoint = this.withStageCompile(checkpoint, 'summary', compiled, modelParams)
+        this.publishCheckpoint(options, checkpoint)
         const summary = await this.runTextStage(
           'summary',
-          summaryPrompt(preparation, checkpoint.body, checkpoint.summary),
+          compiled.prompt,
           checkpoint.summary,
           generator,
           options,
@@ -419,6 +655,10 @@ export class ChapterGenerationService {
         this.publishCheckpoint(options, checkpoint)
       } catch (error) {
         if (isAbortError(error, options.signal)) return cancel()
+        if (error instanceof ContextBudgetExceededError) {
+          checkpoint = this.withFailureStageCompile(checkpoint, 'summary', error, modelParams)
+          this.publishCheckpoint(options, checkpoint)
+        }
         throw error
       }
     }
@@ -426,9 +666,15 @@ export class ChapterGenerationService {
     if (!stageAtLeast(checkpoint.stage, 'saving')) {
       options.callbacks?.on_stage?.('fact_check', 0.7)
       try {
+        const compiled = this.compileStage(input, preparation, modelParams, 'fact_check', {
+          body: checkpoint.body,
+          existingText: checkpoint.fact_check_text,
+        })
+        checkpoint = this.withStageCompile(checkpoint, 'fact_check', compiled, modelParams)
+        this.publishCheckpoint(options, checkpoint)
         const factCheckText = await this.runTextStage(
           'fact_check',
-          factCheckPrompt(preparation, checkpoint.body, checkpoint.fact_check_text),
+          compiled.prompt,
           checkpoint.fact_check_text,
           generator,
           options,
@@ -447,6 +693,10 @@ export class ChapterGenerationService {
         this.publishCheckpoint(options, checkpoint)
       } catch (error) {
         if (isAbortError(error, options.signal)) return cancel()
+        if (error instanceof ContextBudgetExceededError) {
+          checkpoint = this.withFailureStageCompile(checkpoint, 'fact_check', error, modelParams)
+          this.publishCheckpoint(options, checkpoint)
+        }
         throw error
       }
     }
@@ -516,6 +766,78 @@ export class ChapterGenerationService {
       version,
       checkpoint,
       auto_confirmed: false,
+    }
+  }
+
+  private compileStage(
+    input: ChapterGenerationRequest,
+    preparation: ChapterGenerationPreparation,
+    modelParams: ChapterGenerationModelParams,
+    stage: ChapterGenerationTextStage,
+    parts: { body?: string; existingText?: string },
+  ): CompiledContext {
+    const priorChapters = mapPriorChapters(
+      this.options.chapters.listByProject(input.project_id),
+      preparation.chapter_outline.chapter_number,
+    )
+    const narrativeMemories = filterApprovedMemories(
+      this.options.memories?.listByProject(input.project_id) ?? [],
+    )
+    const foreshadows = filterOpenForeshadows(
+      this.options.foreshadows?.listByProject(input.project_id) ?? [],
+    )
+    const compilerInput = assembleContextCompilerInput({
+      preparation,
+      stage,
+      request: input,
+      modelParams,
+      priorChapters,
+      narrativeMemories,
+      foreshadows,
+      body: parts.body,
+      existingText: parts.existingText,
+    })
+    // ContextBudgetExceededError propagates — never silent.
+    return compileContext(compilerInput)
+  }
+
+  private withStageCompile(
+    checkpoint: ChapterGenerationCheckpoint,
+    stage: ChapterGenerationTextStage,
+    compiled: CompiledContext,
+    modelParams: ChapterGenerationModelParams,
+  ): ChapterGenerationCheckpoint {
+    const stageCompile: ChapterGenerationStageCompile = {
+      prompt_version: compiled.metadata.prompt_version || CONTEXT_PROMPT_VERSION,
+      model_params: { ...modelParams },
+      trace: persistableTrace(compiled),
+    }
+    return {
+      ...checkpoint,
+      stage_compiles: {
+        ...checkpoint.stage_compiles,
+        [stage]: stageCompile,
+      },
+    }
+  }
+
+  private withFailureStageCompile(
+    checkpoint: ChapterGenerationCheckpoint,
+    stage: ChapterGenerationTextStage,
+    error: ContextBudgetExceededError,
+    modelParams: ChapterGenerationModelParams,
+  ): ChapterGenerationCheckpoint {
+    const stageCompile: ChapterGenerationStageCompile = {
+      prompt_version: error.failureTrace.metadata.prompt_version || CONTEXT_PROMPT_VERSION,
+      model_params: { ...modelParams },
+      trace: persistableFailureTrace(error.failureTrace),
+    }
+    return {
+      ...checkpoint,
+      stage_compiles: {
+        ...checkpoint.stage_compiles,
+        [stage]: stageCompile,
+      },
     }
   }
 
@@ -593,7 +915,7 @@ export class ChapterGenerationService {
   }
 
   private async runTextStage(
-    stage: Exclude<ChapterGenerationStage, 'saving' | 'review'>,
+    stage: ChapterGenerationTextStage,
     prompt: string,
     existing: string,
     generator: TextGenerator,
@@ -630,6 +952,9 @@ export class ChapterGenerationService {
       fact_check: checkpoint.fact_check
         ? { ...checkpoint.fact_check, findings: [...checkpoint.fact_check.findings] }
         : null,
+      stage_compiles: checkpoint.stage_compiles
+        ? { ...checkpoint.stage_compiles }
+        : {},
       updated_at: this.now(),
     })
   }
