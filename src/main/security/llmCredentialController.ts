@@ -193,6 +193,23 @@ export class LlmCredentialController {
     }
   }
 
+  /**
+   * Recovery-only availability probe. It verifies the current reference,
+   * binding, and actual decryptability without returning or logging plaintext.
+   */
+  public hasUsableRuntimeCredential(projectId: string): boolean {
+    try {
+      const context = this.resolveContext({ scope: 'project', projectId })
+      if (!context.referenced) return false
+      const binding = this.options.credentialService.getCredentialBinding(context.credentialId)
+      if (!binding.success || !bindingMatches(binding.data, context.binding)) return false
+      const credential = this.options.credentialService.getCredential(context.credentialId)
+      return credential.success && credential.data.trim() !== ''
+    } catch {
+      return false
+    }
+  }
+
   public status(target: CredentialScope): ControllerResult<{
     configured: boolean
     storageAvailable: boolean

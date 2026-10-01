@@ -230,6 +230,67 @@ describe('chapter generation repositories and domain service', () => {
     })).toThrow('Chapter outline must be confirmed or locked')
   })
 
+  test.each([true, false])('saving checkpoint preserves later user edits (auto_confirm=%s)', async (autoConfirm) => {
+    const { workbench, projectId, chapterOutlineId } = createWorkbench(database)
+    const chapter = workbench.chapters.create({
+      project_id: projectId, chapter_number: 1, title: 'Chapter',
+      content: 'later user edit', synopsis: 'user synopsis', status: 'completed',
+    })
+    const generator = new ScriptedGenerator({ body: [], summary: [], fact_check: [] })
+    await expect(workbench.chapterGeneration.generate(
+      { project_id: projectId, chapter_outline_id: chapterOutlineId, chapter_id: chapter.id, auto_confirm: autoConfirm },
+      generator,
+      {
+        signal: new AbortController().signal,
+        checkpoint: {
+          schema_version: 1, stage: 'saving', body: 'old generated body', summary: 'old summary',
+          fact_check_text: '', fact_check: factCheck(true), version_id: null, source_content: 'original body',
+        },
+      },
+    )).rejects.toThrow(ChapterGenerationBoundaryError)
+    expect(workbench.chapters.getById(chapter.id)).toEqual(chapter)
+    expect(workbench.chapterVersions.listByChapter(chapter.id)).toHaveLength(0)
+    expect(generator.calls).toHaveLength(0)
+  })
+
+  test.each(['unchanged', 'sources', 'model', 'chapter-version'] as const)('checkpoint context recovery: %s', async (change) => {
+    const { workbench, projectId, chapterOutlineId } = createWorkbench(database)
+    const request = { project_id: projectId, chapter_outline_id: chapterOutlineId }
+    let saved: import('@/shared/chapterGeneration').ChapterGenerationCheckpoint | undefined
+    const controller = new AbortController()
+    const generator = new ScriptedGenerator({ body: ['body'], summary: ['summary'], fact_check: [JSON.stringify(factCheck(true))] })
+    await workbench.chapterGeneration.generate(request, generator, {
+      signal: controller.signal,
+      callbacks: { on_checkpoint: (checkpoint) => {
+        saved = checkpoint
+        if (checkpoint.stage === 'summary') controller.abort()
+      } },
+    })
+    expect(saved?.stage).toBe('summary')
+    if (change === 'sources') {
+      workbench.narrativeMemories.create({ project_id: projectId, memory_type: 'fact', title: 'new fact', content: 'updated evidence', importance: 80, status: 'approved' })
+    }
+    const chapter = workbench.chapters.listByProject(projectId)[0]
+    if (change === 'chapter-version') workbench.chapters.update(chapter.id, { synopsis: 'user synopsis' }, chapter.version)
+    const before = workbench.chapters.getById(chapter.id)
+    const retry = new ScriptedGenerator({ body: [], summary: ['summary'], fact_check: [JSON.stringify(factCheck(true))] })
+    const recovery = workbench.chapterGeneration.generate(
+      { ...request, ...(change === 'model' ? { model_params: { model: 'changed-model' } } : {}) },
+      retry, { signal: new AbortController().signal, checkpoint: saved },
+    )
+    if (change === 'unchanged') {
+      const resumed = await recovery
+      expect(resumed.status).toBe('completed')
+      expect(resumed.checkpoint.stage_compiles?.body).toEqual(saved?.stage_compiles?.body)
+      expect(retry.calls.map((call) => call.stage)).toEqual(['summary', 'fact_check'])
+    } else {
+      await expect(recovery).rejects.toThrow(ChapterGenerationBoundaryError)
+      expect(retry.calls).toHaveLength(0)
+      expect(workbench.chapters.getById(chapter.id)).toEqual(before)
+      expect(workbench.chapterVersions.listByChapter(chapter.id)).toHaveLength(0)
+    }
+  })
+
   test('streams body stages, saves a review version, and requires manual confirmation', async () => {
     const { workbench, projectId, chapterOutlineId } = createWorkbench(database)
     const stages: string[] = []

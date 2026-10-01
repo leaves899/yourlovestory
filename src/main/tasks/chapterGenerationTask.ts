@@ -15,8 +15,22 @@ import {
   checkpointToJson,
   compileTraceToJson,
 } from '../../shared/chapterGeneration'
+import {
+  ChapterGenerationBoundaryError,
+  ChapterVersionStatusTransitionError,
+  EntityNotFoundError,
+} from '../../shared/novelProject'
+import {
+  CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
+  parseStrictGenerationCheckpoint,
+} from '../../shared/taskRecovery'
 import type { JsonObject, JsonValue } from '../database'
-import type { TaskRunner, TaskRunnerContext, TaskRunnerResult } from './taskManager'
+import {
+  NonRecoverableTaskError,
+  type TaskRunner,
+  type TaskRunnerContext,
+  type TaskRunnerResult,
+} from './taskManager'
 
 export interface ChapterGenerationTaskRunnerOptions {
   service: ChapterGenerationService
@@ -67,9 +81,13 @@ function readRequest(context: TaskRunnerContext): ChapterGenerationRequest {
 }
 
 class AgentTextGenerator implements TextGenerator {
-  public constructor(private readonly agent: ProjectSessionAgent) {}
+  public constructor(
+    private readonly agent: ProjectSessionAgent,
+    private readonly onModelStart?: () => void,
+  ) {}
 
   public async generate(request: TextGenerationRequest): Promise<TextGenerationResult> {
+    this.onModelStart?.()
     let streamed = ''
     const result = await this.agent.prompt(request.prompt, {
       signal: request.signal,
@@ -140,32 +158,151 @@ function resultToJson(
   }
 }
 
+/**
+ * Idempotent finish when a chapter version already exists for this task_id.
+ * Never creates an agent or calls the model.
+ */
+function finishFromExistingVersion(
+  context: TaskRunnerContext,
+  request: ChapterGenerationRequest,
+  service: ChapterGenerationService,
+): TaskRunnerResult | null {
+  const existing = service.getVersionByTaskId(context.task.id)
+  if (!existing) return null
+
+  const strictCheckpoint = context.task.checkpoint
+    ? parseStrictGenerationCheckpoint(context.task.checkpoint)
+    : null
+  if (context.task.checkpoint && !strictCheckpoint) {
+    throw new NonRecoverableTaskError('章节生成检查点语义损坏或字段不合法，已拒绝恢复并禁止自动确认。')
+  }
+
+  let finalized: ReturnType<ChapterGenerationService['finalizePersistedVersion']>
+  try {
+    finalized = context.runOwnedSideEffect(() =>
+      service.finalizePersistedVersion(request, existing.id, strictCheckpoint?.source_content ?? null, strictCheckpoint?.source_chapter_version),
+    )
+  } catch (error) {
+    if (
+      error instanceof ChapterGenerationBoundaryError
+      || error instanceof ChapterVersionStatusTransitionError
+      || error instanceof EntityNotFoundError
+    ) {
+      throw new NonRecoverableTaskError('已落库章节版本与任务目标不一致，任务不可恢复。')
+    }
+    throw error
+  }
+  const finalVersion = finalized.version
+  const savedCheckpoint = checkpointFromJson(context.task.checkpoint)
+
+  context.setExecutionPhase('persisting_result')
+  context.saveCheckpoint(checkpointToJson({
+    ...savedCheckpoint,
+    schema_version: CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
+    stage: 'review',
+    body: finalVersion.content,
+    summary: finalVersion.summary,
+    fact_check_text: '',
+    fact_check: finalVersion.fact_check,
+    version_id: finalVersion.id,
+    ...(strictCheckpoint?.source_content !== undefined
+      ? { source_content: strictCheckpoint.source_content }
+      : {}),
+  }))
+  context.setStage('review', 1)
+  context.setExecutionPhase('finalizing')
+  context.publishReview(
+    finalVersion.id,
+    finalVersion.status === 'review',
+    finalVersion.status === 'approved' ? 'approved' : 'review',
+  )
+  return {
+    status: 'completed',
+    result: resultToJson(
+      finalized.chapter.id,
+      'completed',
+      finalVersion.id,
+      finalized.autoConfirmed,
+      finalVersion.status === 'review',
+      finalVersion.fact_check.passed,
+      savedCheckpoint,
+    ),
+  }
+}
+
 export function createChapterGenerationTaskRunner(
   options: ChapterGenerationTaskRunnerOptions,
 ): TaskRunner {
   return {
     execute: async (context) => {
       const request = readRequest(context)
+
+      // Final entity first: never create agent when version is already durable.
+      const finished = finishFromExistingVersion(context, request, options.service)
+      if (finished) return finished
+
+      // Shared strict validator with classifier: corrupt checkpoint is terminal.
+      if (context.task.checkpoint) {
+        const strict = parseStrictGenerationCheckpoint(context.task.checkpoint)
+        if (!strict) {
+          throw new Error('章节生成检查点语义损坏或字段不合法，已拒绝恢复并禁止调用模型。')
+        }
+      }
+
       let agent: ProjectSessionAgent | undefined
       try {
-        agent = await options.agentFactory.create({
-          projectId: request.project_id,
-          sessionId: context.input.sessionId,
-          llm: context.input.llm,
-          systemPrompt: request.system_prompt ?? CHAPTER_GENERATION_SYSTEM_PROMPT,
-        })
+        context.setExecutionPhase('preparing')
+        context.assertStillOwnsExecution()
+        const generator: TextGenerator = {
+          generate: async (textRequest) => {
+            context.assertStillOwnsExecution()
+            if (!agent) {
+              agent = await options.agentFactory.create({
+                projectId: request.project_id,
+                sessionId: context.input.sessionId,
+                llm: context.input.llm,
+                systemPrompt: request.system_prompt ?? CHAPTER_GENERATION_SYSTEM_PROMPT,
+              })
+            }
+            context.setExecutionPhase('awaiting_model')
+            return new AgentTextGenerator(agent, () => context.setExecutionPhase('model_in_flight')).generate(textRequest)
+          },
+        }
         const result = await options.service.generate(
           request,
-          new AgentTextGenerator(agent),
+          generator,
           {
             signal: context.signal,
-            checkpoint: checkpointFromJson(context.task.checkpoint),
+            commit: (operation) => context.runOwnedSideEffect(operation),
+            checkpoint: (() => {
+              const strict = context.task.checkpoint
+                ? parseStrictGenerationCheckpoint(context.task.checkpoint)
+                : null
+              if (context.task.checkpoint && !strict) {
+                throw new Error('章节生成检查点语义损坏或字段不合法，已拒绝恢复并禁止调用模型。')
+              }
+              const checkpoint = checkpointFromJson(strict ? context.task.checkpoint : null)
+              return {
+                ...checkpoint,
+                schema_version: CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
+              }
+            })(),
             callbacks: {
-              on_stage: (stage, progress) => context.setStage(stage, progress),
+              on_stage: (stage, progress) => {
+                context.setStage(stage, progress)
+                if (stage === 'saving') context.setExecutionPhase('persisting_result')
+                if (stage === 'review') context.setExecutionPhase('finalizing')
+              },
               on_chunk: (stage, chunk) => {
                 if (context.input.llm.streamingEnabled !== false) context.emitChunk(chunk, stage)
               },
-              on_checkpoint: (checkpoint) => context.saveCheckpoint(checkpointToJson(checkpoint)),
+              on_checkpoint: (checkpoint) => {
+                context.assertStillOwnsExecution()
+                context.saveCheckpoint(checkpointToJson({
+                  ...checkpoint,
+                  schema_version: CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
+                }))
+              },
               on_review: (version, required) =>
                 context.publishReview(version.id, required, version.status === 'approved' ? 'approved' : 'review'),
             },
@@ -173,6 +310,7 @@ export function createChapterGenerationTaskRunner(
         )
         const versionId = result.version?.id ?? result.checkpoint.version_id
         const factCheckPassed = result.version?.fact_check.passed ?? result.checkpoint.fact_check?.passed ?? false
+        context.setExecutionPhase('finalizing')
         return {
           status: result.status,
           result: resultToJson(
@@ -185,6 +323,11 @@ export function createChapterGenerationTaskRunner(
             result.checkpoint,
           ),
         }
+      } catch (error) {
+        if (error instanceof ChapterGenerationBoundaryError || error instanceof EntityNotFoundError) {
+          throw new NonRecoverableTaskError(error.message)
+        }
+        throw error
       } finally {
         agent?.dispose()
       }

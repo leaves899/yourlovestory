@@ -120,12 +120,18 @@ export interface ChapterGenerationStageCompile {
 }
 
 export interface ChapterGenerationCheckpoint {
+  schema_version: number
   stage: ChapterGenerationStage
   body: string
   summary: string
   fact_check_text: string
   fact_check: FactCheckReport | null
   version_id: string | null
+  /** Original chapter text captured before generation for recovery compare-and-apply. */
+  source_content?: string
+  source_chapter_version?: number
+  /** Serialized compiler sources and parameters, excluding stage text and final prompt. */
+  context_source_snapshot?: string
   updated_at?: string
   /** Compiler traces + model params + prompt version for each completed/running text stage. */
   stage_compiles?: Partial<Record<ChapterGenerationTextStage, ChapterGenerationStageCompile>>
@@ -195,6 +201,7 @@ export function emptyFactCheckReport(): FactCheckReport {
 
 export function emptyChapterGenerationCheckpoint(): ChapterGenerationCheckpoint {
   return {
+    schema_version: 1,
     stage: 'body',
     body: '',
     summary: '',

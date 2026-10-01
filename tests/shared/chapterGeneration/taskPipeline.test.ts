@@ -10,6 +10,7 @@ import {
 } from '@/main/database'
 import type { AgentFactory, AgentRunResult, ProjectSessionAgent } from '@/agent/agent'
 import { emptyTokenUsage } from '@/agent/llm'
+import { parseStrictGenerationCheckpoint } from '@/shared/taskRecovery'
 import { WorkbenchService } from '@/main/workbench'
 import {
   createChapterGenerationTaskRunner,
@@ -202,7 +203,8 @@ describe('chapter generation task pipeline', () => {
         ?.stage_compiles?.body?.trace?.final_prompt,
     ).toBeUndefined()
 
-    const resumed = manager.resume(handle.taskId)
+    // Cancelled tasks are not auto-resumable; explicit manual retry is required.
+    const resumed = manager.manualRetry(handle.taskId, true)
     expect(resumed).not.toBeNull()
     const completed = await resumed!.completion
 
@@ -226,6 +228,64 @@ describe('chapter generation task pipeline', () => {
     expect(events.some((event) => event.type === 'task:review')).toBe(true)
     expect(events.some((event) => event.type === 'task:chunk')).toBe(true)
     expect(agentRuns).toBe(2)
+  })
+
+  test.each([false, true])('durable version recovery preserves compiler metadata without replay (debug=%s)', async (debug) => {
+    const workbench = new WorkbenchService(database)
+    const outline = setupOutlines(workbench, 'durable-context-recovery')
+    const store = new TaskRepository(database)
+    const promptMock = jest.fn(async (prompt: string) => result(
+      prompt.includes('严格输出 JSON') ? '{"passed":true,"summary":"ok","findings":[]}' : 'generated text',
+    ))
+    const factory: AgentFactory = { create: async () => ({
+      projectId: outline.projectId, sessionId: 'context-session', prompt: promptMock,
+      abort: jest.fn(), dispose: jest.fn(),
+    }) }
+    const managerOptions = {
+      store, agentFactory: factory, events: { publish: () => undefined },
+      runners: { 'chapter-generation': createChapterGenerationTaskRunner({ service: workbench.chapterGeneration, agentFactory: factory }) },
+    }
+    const manager = new TaskManager(managerOptions)
+    const handle = manager.startChapterGeneration({
+      projectId: outline.projectId, chapterOutlineId: outline.chapterOutlineId,
+      sessionId: 'context-session', debug,
+      llm: { baseUrl: 'https://example.invalid/v1', model: 'test-model' },
+    })
+    const completed = await handle.completion
+    expect(completed.status).toBe('completed')
+    expect(parseStrictGenerationCheckpoint(completed.checkpoint)).not.toBeNull()
+    expect(parseStrictGenerationCheckpoint({ ...completed.checkpoint!, context_source_snapshot: '{broken' })).toBeNull()
+    expect(store.getById(handle.taskId)?.input.request).toEqual(expect.objectContaining({ debug }))
+    store.update(handle.taskId, {
+      status: 'running', execution_phase: 'persisting_result', result: null,
+      checkpoint: { ...completed.checkpoint!, stage: 'saving', version_id: null },
+    })
+    const reopened = new TaskManager(managerOptions)
+    const recovered = reopened.resume(handle.taskId)
+    expect(recovered).not.toBeNull()
+    const finished = await recovered!.completion
+    expect(finished.status).toBe('completed')
+    expect(finished.result?.stage_compiles).toEqual(completed.result?.stage_compiles)
+    expect(finished.checkpoint?.stage_compiles).toEqual(completed.checkpoint?.stage_compiles)
+    expect(promptMock).toHaveBeenCalledTimes(3)
+    expect(workbench.chapterVersions.listByChapter(finished.chapter_id!)).toHaveLength(1)
+    const chapter = workbench.chapters.getById(finished.chapter_id!)!
+    const edited = workbench.chapters.update(chapter.id, { synopsis: 'later user synopsis' }, chapter.version)
+    store.update(handle.taskId, {
+      status: 'running', execution_phase: 'persisting_result',
+      checkpoint: { ...finished.checkpoint!, stage: 'saving', version_id: null },
+    })
+    const stale = reopened.resume(handle.taskId)
+    expect(stale).not.toBeNull()
+    expect((await stale!.completion).recovery_classification).toBe('non-recoverable')
+    expect(workbench.chapters.getById(chapter.id)).toEqual(edited)
+    const corrupt = { ...finished.checkpoint!, stage_compiles: { body: { prompt_version: 'broken' } } }
+    store.update(handle.taskId, { status: 'running', execution_phase: 'persisting_result', checkpoint: corrupt })
+    expect(reopened.resume(handle.taskId)).toBeNull()
+    expect(store.getById(handle.taskId)?.recovery_classification).toBe('non-recoverable')
+    expect(promptMock).toHaveBeenCalledTimes(3)
+    manager.dispose()
+    reopened.dispose()
   })
 
   test('budget exceeded fails task but persists stage_compiles body failure trace without agent prompt', async () => {
