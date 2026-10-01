@@ -1,9 +1,9 @@
 import type { ChapterStore } from '../chapterGeneration'
 import {
   assembleOutlineCompilerInput, compileTraceToJson, filterApprovedMemories, filterOpenForeshadows,
-  OUTLINE_GENERATION_SYSTEM_PROMPT, type ChapterGenerationModelParams,
+  OUTLINE_GENERATION_SYSTEM_PROMPT, type ChapterGenerationModelParams, type ContextCompute,
 } from '../chapterGeneration'
-import { compileContext, CONTEXT_PROMPT_VERSION, ContextBudgetExceededError, type ContextCompilerInput } from '../contextCompiler'
+import { compileContext, CONTEXT_PROMPT_VERSION, ContextBudgetExceededError, type CompiledContext, type ContextCompilerInput } from '../contextCompiler'
 import type { ForeshadowStore, NarrativeMemoryStore } from '../narrativeWorkbench'
 import type { NovelProjectService, VolumeOutline } from '../novelProject'
 import { parseOutlineCheckpoint, parseOutlineSourceBoundary, type OutlineCheckpoint } from './checkpoint'
@@ -19,12 +19,36 @@ export interface OutlineGenerationRequest {
 
 export class OutlineGenerationBoundaryError extends Error {}
 
+export interface OutlineApplyValidation {
+  readonly source_snapshot: string
+}
+
+type OutlineProjectPort = Pick<NovelProjectService,
+  'getVolumeOutline' | 'getOutlineContext' | 'getVolume' | 'listVolumes' | 'listChapterOutlines' | 'updateVolumeOutline'>
+
+interface OutlinePreparationSource {
+  checkpoint: OutlineCheckpoint | null
+  input: ContextCompilerInput
+  snapshot: string
+}
+
+function checkpointFingerprint(checkpoint: OutlineCheckpoint | null): string {
+  // Keep the full source snapshot as a separately compared immutable string.
+  // Re-escaping several MiB of snapshot inside JSON is unnecessary main-thread work.
+  return checkpoint === null ? 'null' : JSON.stringify({ ...checkpoint, source_snapshot: '' })
+}
+
 export class OutlineGenerationService {
+  private readonly applyValidations = new WeakMap<OutlineApplyValidation, {
+    checkpoint: string; request: string; taskId: string
+  }>()
+
   public constructor(private readonly stores: {
-    project: NovelProjectService
+    project: OutlineProjectPort
     chapters: ChapterStore
-    memories: NarrativeMemoryStore
-    foreshadows: ForeshadowStore
+    memories: Pick<NarrativeMemoryStore, 'listByProject'>
+    foreshadows: Pick<ForeshadowStore, 'listByProject'>
+    computeContext?: ContextCompute
   }) {}
 
   private load(request: OutlineGenerationRequest): { input: ContextCompilerInput; snapshot: string; outline: VolumeOutline } {
@@ -57,7 +81,49 @@ export class OutlineGenerationService {
   public prepare(request: OutlineGenerationRequest, saved: OutlineCheckpoint | null, taskId?: string): {
     checkpoint: OutlineCheckpoint; prompt: string | null
   } {
-    const checkpoint = saved === null ? null : parseOutlineCheckpoint(saved)
+    const source = this.preparationSource(request, saved, taskId)
+    return this.finishPreparation(request, source, compileContext(source.input))
+  }
+
+  public async prepareAsync(
+    request: OutlineGenerationRequest,
+    saved: OutlineCheckpoint | null,
+    taskId?: string,
+    signal?: AbortSignal,
+  ): Promise<{ checkpoint: OutlineCheckpoint; prompt: string | null }> {
+    if (signal?.aborted) throw new Error('Outline context compilation was cancelled')
+    const source = this.preparationSource(request, saved, taskId)
+    const savedFingerprint = checkpointFingerprint(saved)
+    const savedSnapshot = saved?.source_snapshot
+    const assertCurrent = (): void => {
+      if (signal?.aborted) throw new Error('Outline context compilation was cancelled')
+      if (saved?.source_snapshot !== savedSnapshot || checkpointFingerprint(saved) !== savedFingerprint
+        || this.preparationSource(request, saved, taskId, source.checkpoint).snapshot !== source.snapshot) {
+        throw new OutlineGenerationBoundaryError('大纲来源在编译期间发生变化，已拒绝使用旧上下文。')
+      }
+    }
+    let compiled: CompiledContext
+    try {
+      compiled = this.stores.computeContext
+        ? await this.stores.computeContext(source.input, { signal })
+        : compileContext(source.input)
+    } catch (error) {
+      assertCurrent()
+      throw error
+    }
+    assertCurrent()
+    return this.finishPreparation(request, source, compiled)
+  }
+
+  private preparationSource(
+    request: OutlineGenerationRequest,
+    saved: OutlineCheckpoint | null,
+    taskId?: string,
+    validatedCheckpoint?: OutlineCheckpoint | null,
+  ): OutlinePreparationSource {
+    const checkpoint = validatedCheckpoint === undefined
+      ? saved === null ? null : parseOutlineCheckpoint(saved)
+      : validatedCheckpoint
     if (saved !== null && !checkpoint) {
       throw new OutlineGenerationBoundaryError('大纲结果或 compiler metadata 损坏，已拒绝恢复。')
     }
@@ -84,7 +150,14 @@ export class OutlineGenerationService {
     if (checkpoint && (checkpoint.source_snapshot !== snapshot || checkpoint.project_id !== request.projectId || checkpoint.outline_id !== request.outlineId)) {
       throw new OutlineGenerationBoundaryError('大纲来源、版本或模型参数已变化，请新建任务。')
     }
-    const compiled = compileContext(input)
+    return { checkpoint, input, snapshot }
+  }
+
+  private finishPreparation(
+    request: OutlineGenerationRequest,
+    { checkpoint, snapshot }: OutlinePreparationSource,
+    compiled: CompiledContext,
+  ): { checkpoint: OutlineCheckpoint; prompt: string | null } {
     const stage_compiles = { outline: {
       prompt_version: compiled.metadata.prompt_version, model_params: { ...request.modelParams },
       trace: compileTraceToJson(compiled.trace),
@@ -99,6 +172,32 @@ export class OutlineGenerationService {
     }
   }
 
+  /** Validates metadata off-thread before entering the synchronous SQLite boundary. */
+  public async validateApplyAsync(
+    request: OutlineGenerationRequest,
+    checkpoint: OutlineCheckpoint,
+    taskId: string,
+    signal?: AbortSignal,
+  ): Promise<OutlineApplyValidation> {
+    if (checkpoint.stage !== 'ready' || !taskId.trim()) {
+      throw new OutlineGenerationBoundaryError('大纲结果或任务不合法，已拒绝采用。')
+    }
+    const fingerprint = checkpointFingerprint(checkpoint)
+    const sourceSnapshot = checkpoint.source_snapshot
+    const requestFingerprint = JSON.stringify(request)
+    await this.prepareAsync(request, checkpoint, taskId, signal)
+    if (signal?.aborted) throw new Error('Outline context compilation was cancelled')
+    if (checkpoint.source_snapshot !== sourceSnapshot || checkpointFingerprint(checkpoint) !== fingerprint
+      || JSON.stringify(request) !== requestFingerprint) {
+      throw new OutlineGenerationBoundaryError('大纲校验输入已变化，已拒绝采用。')
+    }
+    const validation = Object.freeze({ source_snapshot: checkpoint.source_snapshot })
+    this.applyValidations.set(validation, {
+      checkpoint: fingerprint, request: requestFingerprint, taskId,
+    })
+    return validation
+  }
+
   public failedBudgetCheckpoint(request: OutlineGenerationRequest, error: ContextBudgetExceededError): OutlineCheckpoint {
     const { snapshot } = this.load(request)
     return { schema_version: 1, stage: 'prepared', project_id: request.projectId, outline_id: request.outlineId,
@@ -109,12 +208,30 @@ export class OutlineGenerationService {
   }
 
   /** Runs synchronously inside the caller's SQLite transaction. Never confirms or locks. */
-  public apply(request: OutlineGenerationRequest, checkpoint: OutlineCheckpoint, taskId: string): VolumeOutline {
-    if (!parseOutlineCheckpoint(checkpoint) || checkpoint.stage !== 'ready' || !checkpoint.proposal) {
+  public apply(
+    request: OutlineGenerationRequest,
+    checkpoint: OutlineCheckpoint,
+    taskId: string,
+    validation?: OutlineApplyValidation,
+  ): VolumeOutline {
+    if (checkpoint.stage !== 'ready' || !checkpoint.proposal) {
       throw new OutlineGenerationBoundaryError('大纲结果或 compiler metadata 损坏，已拒绝采用。')
     }
     if (!taskId.trim()) throw new OutlineGenerationBoundaryError('采用大纲必须关联有效任务。')
-    this.prepare(request, checkpoint)
+    if (validation) {
+      const proof = this.applyValidations.get(validation)
+      if (!proof || proof.taskId !== taskId || proof.checkpoint !== checkpointFingerprint(checkpoint)
+        || proof.request !== JSON.stringify(request) || validation.source_snapshot !== checkpoint.source_snapshot) {
+        throw new OutlineGenerationBoundaryError('大纲异步校验结果失效，已拒绝采用。')
+      }
+      this.applyValidations.delete(validation)
+    } else {
+      // Preserve the full synchronous contract for existing callers and tests.
+      if (!parseOutlineCheckpoint(checkpoint)) {
+        throw new OutlineGenerationBoundaryError('大纲结果或 compiler metadata 损坏，已拒绝采用。')
+      }
+      this.prepare(request, checkpoint)
+    }
     const { outline, snapshot } = this.load(request)
     if (snapshot !== checkpoint.source_snapshot) {
       throw new OutlineGenerationBoundaryError('大纲来源在采用前发生变化，已拒绝写入。')

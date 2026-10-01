@@ -62,4 +62,26 @@ describe('Agent factory security registration compatibility', () => {
       ['legacy_additional', 'sequential'],
     ])
   })
+
+  test('offloads only large high-budget context trimming to the injected Worker port', async () => {
+    const computeContext = jest.fn(async (messages: Parameters<NonNullable<AgentOptions['transformContext']>>[0]) => messages.slice(-1))
+    const factory = createProjectSessionAgentFactory({
+      loadRuntime: async () => runtime(),
+      loadTools: async () => [],
+      computeContext,
+    })
+    await factory.create({
+      projectId: 'project', sessionId: 'session',
+      llm: { baseUrl: 'https://example.invalid/v1', model: 'test-model', contextBudget: 300_000 },
+    })
+    const transform = CapturingAgent.options?.transformContext
+    expect(transform).toBeDefined()
+    await transform?.([{ role: 'user', content: 'small', timestamp: 1 }])
+    expect(computeContext).not.toHaveBeenCalled()
+    await transform?.([{ role: 'user', content: 'x'.repeat(5 * 1024 * 1024), timestamp: 2 }])
+    expect(computeContext).toHaveBeenCalledTimes(1)
+    computeContext.mockClear()
+    await transform?.([{ role: 'user', content: 'x'.repeat(40 * 1024 * 1024), timestamp: 3 }])
+    expect(computeContext).not.toHaveBeenCalled()
+  })
 })

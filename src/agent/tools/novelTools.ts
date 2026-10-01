@@ -380,7 +380,7 @@ function createNarrativeTool(
     label: 'Narrative Manager',
     description: '读取和管理叙事记忆、伏笔、写作技能、章节修订及差异。写入操作需要确认。',
     parameters: schemas.narrative,
-    execute: async (_toolCallId: string, params: NarrativeParameters) => {
+    execute: async (_toolCallId: string, params: NarrativeParameters, signal?: AbortSignal) => {
       switch (params.action) {
         case 'list_memories': return result(service.narrative.listMemories(projectId))
         case 'list_memory_proposals': return result(service.narrative.listMemoryProposals(projectId))
@@ -410,15 +410,17 @@ function createNarrativeTool(
             params.enabled,
           ))
         }
-        case 'diff_revisions': return result(service.narrative.diffRevisions(
+        case 'diff_revisions': return result(await service.narrative.diffRevisionsAsync(
           projectId,
           requiredString(params.from_revision_id, 'from_revision_id'),
           requiredString(params.to_revision_id, 'to_revision_id'),
+          signal,
         ))
-        case 'diff_versions': return result(service.narrative.diffVersions(
+        case 'diff_versions': return result(await service.narrative.diffVersionsAsync(
           projectId,
           requiredString(params.from_version_id, 'from_version_id'),
           requiredString(params.to_version_id, 'to_version_id'),
+          signal,
         ))
       }
     },

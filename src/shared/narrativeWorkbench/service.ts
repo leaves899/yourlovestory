@@ -48,6 +48,11 @@ import type { NarrativeWorkbenchStores } from './ports'
 export interface NarrativeWorkbenchServiceOptions {
   stores: NarrativeWorkbenchStores
   now?: () => string
+  computeDiff?: (
+    payload: { mode: 'blocks'; before: readonly import('./models').ChapterBlock[]; after: readonly import('./models').ChapterBlock[] }
+      | { mode: 'content'; chapter_id: string; before_content: string; after_content: string },
+    options: { signal?: AbortSignal; onProgress?: (progress: number) => void },
+  ) => Promise<ChapterDiff>
 }
 
 export interface ChapterRevisionDiffResult {
@@ -589,7 +594,8 @@ export class NarrativeWorkbenchService {
   }
 
   public listRevisions(projectId: string, chapterId: string): ChapterRevision[] {
-    const chapter = this.requireChapter(projectId, chapterId)
+    const chapter = this.resolveChapterForRead(projectId, chapterId)
+    if (!chapter) return []
     return this.options.stores.revisions.listByChapter(chapter.id)
   }
 
@@ -632,7 +638,9 @@ export class NarrativeWorkbenchService {
   }
 
   public getChapterBlocks(projectId: string, chapterId: string) {
-    const source = this.getRevisionSource(projectId, chapterId)
+    const chapter = this.resolveChapterForRead(projectId, chapterId)
+    if (!chapter) return []
+    const source = this.getRevisionSource(projectId, chapter.id)
     return source.blocks
   }
 
@@ -670,6 +678,31 @@ export class NarrativeWorkbenchService {
       to_version_id: to.id,
       diff: diffChapterBlocks(before, after),
     }
+  }
+
+  /** Read and validate an immutable version snapshot before asynchronous CPU work. */
+  public getVersionForDiff(projectId: string, versionId: string): ChapterVersion {
+    return this.requireVersion(projectId, versionId)
+  }
+
+  public async diffRevisionsAsync(projectId: string, fromId: string, toId: string, signal?: AbortSignal): Promise<ChapterRevisionDiffResult> {
+    const from = this.getRevision(projectId, fromId)
+    const to = this.getRevision(projectId, toId)
+    if (from.chapter_id !== to.chapter_id) throw new NarrativeBoundaryError('Chapter revisions must belong to the same chapter')
+    const diff = this.options.computeDiff
+      ? await this.options.computeDiff({ mode: 'blocks', before: from.blocks, after: to.blocks }, { signal })
+      : diffChapterBlocks(from.blocks, to.blocks)
+    return { from_revision_id: from.id, to_revision_id: to.id, diff }
+  }
+
+  public async diffVersionsAsync(projectId: string, fromId: string, toId: string, signal?: AbortSignal): Promise<ChapterVersionDiffResult> {
+    const from = this.requireVersion(projectId, fromId)
+    const to = this.requireVersion(projectId, toId)
+    if (from.chapter_id !== to.chapter_id) throw new NarrativeBoundaryError('Chapter versions must belong to the same chapter')
+    if (!this.options.computeDiff) return this.diffVersions(projectId, fromId, toId)
+    const diff = await this.options.computeDiff({ mode: 'content', chapter_id: from.chapter_id,
+      before_content: from.content, after_content: to.content }, { signal })
+    return { from_version_id: from.id, to_version_id: to.id, diff }
   }
 
   public applyRevision(projectId: string, revisionId: string): Chapter {
@@ -1111,6 +1144,18 @@ export class NarrativeWorkbenchService {
     if (!chapter || chapter.project_id !== projectId) {
       throw new EntityNotFoundError('Chapter', chapterId)
     }
+    return chapter
+  }
+
+  private resolveChapterForRead(projectId: string, chapterId: string): Chapter | null {
+    const direct = this.options.stores.chapters.getById(chapterId)
+    if (direct) return this.requireChapter(projectId, chapterId)
+    const outline = this.options.stores.project.getChapterOutline?.(projectId, chapterId)
+    const chapter = outline
+      ? this.options.stores.chapters.getByProjectAndNumber(projectId, outline.chapter_number)
+      : null
+    if (!outline) throw new EntityNotFoundError('Chapter', chapterId)
+    if (chapter && chapter.project_id !== projectId) throw new EntityNotFoundError('Chapter', chapterId)
     return chapter
   }
 

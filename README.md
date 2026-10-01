@@ -11,8 +11,10 @@ yourcrush 将日常恋爱记录、碎片日记和长篇小说工作台放在同�
 ## 发布状态
 
 项目当前为 **Alpha**，尚未达到 Stable。应用版本只取自 `package.json.version`；
-`package-lock.json`、Git tag 和 Release metadata 由自动检查保持一致。Stable 发布仍受
-Issue #25 的三平台 packaged Electron smoke tests、签名和 macOS notarization 状态约束。
+`package-lock.json`、Git tag 和 Release metadata 由自动检查保持一致。真实 packaged
+smoke 已在 Windows、Linux 和 macOS CI 中通过并接入发布门禁。仓库提供受保护签名、
+notarization 和产物完整性流程；真实证书、Apple 凭据及签名 environment 尚未配置，
+是签名分发的 external blocker，当前不能声明 Stable，详见[签名说明](docs/release/signing.md)。
 
 当前 Alpha 只支持 `package.json` 指定的最新预发布版本，不承诺旧预发布版本的长期
 维护。下载构建产物时，应同时下载 `SHA256SUMS.txt`，按
@@ -66,9 +68,11 @@ flowchart LR
   M --> A["Pi Agent"]
   A --> S
   A --> L["用户配置的模型接口"]
+  M --> W["Worker Threads<br/>章节 diff / 长输入上下文编译"]
 ~~~
 
 渲染进程只通过 preload 暴露的类型化 IPC 访问功能，不能直接访问 SQLite。主进程负责数据库、IPC、任务和 Agent，Agent 工具与 IPC handler 共用 shared 领域服务。
+CPU Worker 只接收计算快照，数据库写入与来源、版本校验留在主进程。
 
 ## 工作台路由
 
@@ -144,6 +148,9 @@ Windows 下，`.runtime/` 是本项目独立的 Node.js 环境目录，不会提
 | npm run test:watch | 监听模式运行 Jest |
 | npm run test:coverage | 生成测试覆盖率 |
 | npm run test:e2e | 运行 Playwright 测试 |
+| npm run test:packaged | 验证 electron-builder 真实产物、native SQLite 与重启持久化 |
+| npm run benchmark:baseline | 生成同步计算性能基准 |
+| npm run benchmark:worker | 生成相同 fixture 的 Worker 对照数据 |
 | npm run lint | 运行 ESLint |
 | npm run lint:fix | 自动修复可修复的 ESLint 问题 |
 | npm run check:version | 校验 package、lockfile、安全策略、changelog 和 Git tag 版本 |
@@ -203,7 +210,10 @@ npm run test:e2e
 git diff --check
 ~~~
 
-Playwright 当前主要覆盖 renderer 和 mock IPC 场景，不能替代打包后 Electron 应用的完整人工验收。
+`npm run test:e2e` 覆盖 renderer 与真实开发 Electron 路径。
+`npm run test:packaged` 使用专用配置启动 electron-builder 的真实产物，独立验证
+native SQLite、退出和重启持久化；它不依赖 Vite。CI 与发布流程运行三平台门禁，
+详见 [packaged smoke](docs/release/packaged-smoke.md)。安装体验和签名的验证仍由发布流程负责。
 
 ### better-sqlite3 编译失败
 

@@ -12,4 +12,4 @@
 | compileContext | 1000-items | 33.22 / 36.52 | 32.00 / 109.00 | 0.04 / 3.73 | 33.25 / 36.68 |
 
 说明：这是同一 Node 主线程同步实现的可复现实验，不代表 Electron renderer 的 UI 响应性；worker 迁移前后必须用相同 fixture 与指标重复测量。
-Worker Threads 对照结果见 [optimized.md](./optimized.md)。当前数据支持迁移大章节 diff：主线程 5000 段落及以上的 event-loop delay 随计算时间增长，而 Worker 对照约保持在 15-17 ms。compileContext 的 Worker wall time 高于同步基线，因此保留主线程实现，避免复制和启动成本抵消收益。
+Worker Threads 对照结果见 [optimized.md](./optimized.md)。当前数据支持迁移大章节 diff：主线程 5000 段落及以上的 event-loop delay 随计算时间增长，而 Worker 对照约保持在 15-17 ms。早期 standalone compileContext 对照仅用于迁移决策；当前章节和独立大纲生产路径已在真实入口注入统一 compiler Worker，长上下文对照、预算拒绝和内存采样见 [compiler-worker-comparison.md](./compiler-worker-comparison.md)，SQLite 快照/校验/事务仍在主进程。

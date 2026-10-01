@@ -7,6 +7,7 @@ import type {
 } from '@earendil-works/pi-ai'
 import {
   createContextBudgetTransformer,
+  estimateMessageTokens,
   createDynamicPiModel,
   createRetryingStreamFn,
   INSECURE_LLM_BASE_URL,
@@ -261,6 +262,13 @@ describe('LLM stream cancellation and finite retries', () => {
 })
 
 describe('context budget', () => {
+  test.each(['ordinary text', '雾港航线 😀', 'quote " backslash \\', '\u0000\u0001\b\t\n\f\r\u001f',
+    '\ud800 lone high', '\udc00 lone low', '\ud800\udc00\ud800\udc00', 'x'.repeat(1024 * 1024)])(
+    'long user text estimates exactly match serialized messages', (content) => {
+      const message = { role: 'user' as const, content, timestamp: 123 }
+      expect(estimateMessageTokens(message)).toBe(Math.max(1, Math.ceil(JSON.stringify(message).length / 4)))
+    })
+
   test('keeps the newest messages within the injected budget', async () => {
     const transformer = createContextBudgetTransformer(3, () => 1)
     const messages = [

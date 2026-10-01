@@ -55,6 +55,7 @@ const EXPECTED_CHANNELS = [
   'backup:update-policy',
   'backup:verify',
   'chapter:blocks',
+  'chapter:diff:cancel',
   'chapter:diff:revisions',
   'chapter:diff:versions',
   'chapter:revision:apply',

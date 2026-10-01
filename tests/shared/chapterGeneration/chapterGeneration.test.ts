@@ -6,6 +6,7 @@ import {
   type SqliteDatabase,
 } from '@/main/database'
 import { WorkbenchService } from '@/main/workbench'
+import { inlineComputeClient } from '../../helpers/inlineComputeClient'
 import {
   ChapterGenerationBoundaryError,
   ChapterVersionStatusTransitionError,
@@ -68,7 +69,7 @@ function createWorkbench(
   projectId: string
   chapterOutlineId: string
 } {
-  const workbench = new WorkbenchService(database)
+  const workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
   const project = workbench.createProject({ slug, name: 'Generation Project' })
   const volume = workbench.createVolume({
     project_id: project.id,
@@ -336,7 +337,7 @@ describe('chapter generation repositories and domain service', () => {
   })
 
   test('compiles prompts via ContextCompiler and persists stage traces without final_prompt by default', async () => {
-    const workbench = new WorkbenchService(database)
+    const workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
     const project = workbench.createProject({ slug: 'compiler-project', name: 'Compiler Project' })
     const projectId = project.id
     workbench.createCharacter({

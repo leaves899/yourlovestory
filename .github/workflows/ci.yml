@@ -140,25 +140,22 @@ jobs:
 
   packaged-smoke:
     name: Packaged smoke (${{ matrix.artifact }})
+    outputs:
+      version: ${{ steps.package.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
-            command: npm run package:win
             smoke: npm run test:packaged
             artifact: windows
           - os: macos-latest
-            command: npm run package:mac
             smoke: npm run test:packaged
             artifact: macos
           - os: ubuntu-latest
-            command: npm run package:linux
             smoke: xvfb-run --auto-servernum npm run test:packaged
             artifact: linux
     runs-on: ${{ matrix.os }}
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v4
 
@@ -171,18 +168,65 @@ jobs:
         run: npm ci
 
       - name: Build packaged application
-        run: ${{ matrix.command }}
+        run: npm run build
+
+      - name: Package and record unsigned signing status
+        id: package
+        run: node scripts/release/package.mjs unsigned-prerelease
 
       - name: Run packaged Electron smoke
         run: ${{ matrix.smoke }}
+
+      - name: Bind smoke evidence to the final installer
+        run: node scripts/release/finalize-platform.mjs
 
       - name: Upload packaged smoke diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: packaged-smoke-${{ matrix.artifact }}
-          path: test-results/packaged-smoke/**
+          path: |
+            test-results/packaged-smoke/**
+            release/signing/**
           if-no-files-found: warn
+
+      - name: Upload validated platform files
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files-${{ steps.package.outputs.version }}-${{ matrix.artifact }}
+          path: release/upload/**
+          if-no-files-found: error
+
+  release-integrity:
+    name: Three-platform release integrity
+    needs: packaged-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - run: npm ci --ignore-scripts
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-files-${{ needs.packaged-smoke.outputs.version }}-*
+          path: release-download
+          merge-multiple: false
+
+      - name: Verify reports, installer hashes and all release checksums
+        run: node scripts/release/collect-artifacts.mjs release-download release-artifacts unsigned-prerelease
+
+      - name: Upload integrity evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-integrity-${{ needs.packaged-smoke.outputs.version }}
+          path: |
+            release-artifacts/SHA256SUMS.txt
+            release-artifacts/*STATUS*.json
+          if-no-files-found: error
 
   markdown-lint:
     name: Markdown checks

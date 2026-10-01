@@ -34,8 +34,8 @@ release workflow 的 Windows、macOS 和 Linux package job 会先构建各自平
 artifact 合并时发生同名覆盖。安装包名称使用
 `yourcrush-<version>-<os>-<arch>.<ext>`，平台和架构在文件名中可直接识别。
 
-当前 workflow 设置 `CSC_IDENTITY_AUTO_DISCOVERY=false`，并在 unsigned 配置中关闭
+`scripts/release/package.mjs` 的 unsigned child-builder 环境设置 `CSC_IDENTITY_AUTO_DISCOVERY=false`，并在 unsigned 配置中关闭
 Windows `signAndEditExecutable`，避免没有受保护证书时依赖 `winCodeSign/rcedit`。
-workflow 同时为每个平台记录未签名状态。
+CI 和 release workflow 调用这条路径，并为每个平台记录未签名状态。
 缺少真实 Windows 证书、Apple Developer 凭据或 notarization 权限时，smoke 仍验证
 未签名产物的运行行为，但不能把结果称为已签名或 Stable 发布。

@@ -30,7 +30,7 @@ electron_out.txt
 
 # Build outputs
 dist/
-release/
+/release/
 !docs/release/
 !docs/release/**
 !tests/release/

@@ -10,6 +10,7 @@ import type {
   ProjectSkill,
   ProjectSkillState,
 } from '../../shared/narrativeWorkbench'
+import type { ChapterVersion } from '../../shared/chapterGeneration'
 
 interface NarrativeResponse<T> {
   success: boolean
@@ -81,8 +82,17 @@ const narrativeService = {
     projectId: string,
     fromRevisionId: string,
     toRevisionId: string,
+    requestId?: string,
   ): Promise<{ from_revision_id: string | null; to_revision_id: string | null; diff: ChapterDiff }> =>
-    unwrap(() => window.electronAPI.diffChapterRevisions(projectId, fromRevisionId, toRevisionId)),
+    unwrap(() => window.electronAPI.diffChapterRevisions(projectId, fromRevisionId, toRevisionId, requestId)),
+  listVersions: (projectId: string, chapterId: string): Promise<ChapterVersion[]> =>
+    unwrap(() => window.electronAPI.listChapterVersions(projectId, chapterId)),
+  diffVersions: (projectId: string, fromVersionId: string, toVersionId: string, requestId?: string): Promise<{ diff: ChapterDiff }> =>
+    unwrap(() => window.electronAPI.diffChapterVersions(projectId, fromVersionId, toVersionId, requestId)),
+  cancelDiff: (requestId: string): Promise<{ cancelled: boolean }> =>
+    unwrap(() => window.electronAPI.cancelChapterDiff(requestId)),
+  onDiffProgress: (listener: (event: { request_id: string; progress: number }) => void) =>
+    window.electronAPI.onChapterDiffProgress(listener),
 }
 
 export default narrativeService

@@ -1,5 +1,9 @@
 # PR #35 / #36 收口与完整回归记录
 
+本文是 PR #35 / #36 时点的历史快照。后续 #19 / #22 的关闭、独立大纲运行时、
+Worker 性能补充和三平台 packaged smoke 的当前状态以
+[roadmap 收口审计](goal-completion-audit.md)为准；下文的当时缺口不再代表最新 master。
+
 记录日期：2026-10-01。这里记录 PR #36 合并前的代码与验证；最终合并状态以 GitHub PR 为准，
 不能把源码回归当作已发布或 packaged smoke 的证明。
 

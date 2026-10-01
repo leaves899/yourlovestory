@@ -10,6 +10,7 @@ import {
 } from '@/main/tasks'
 import { assertNoSensitiveTaskInput } from '@/main/tasks/sensitiveInput'
 import { WorkbenchService } from '@/main/workbench'
+import { inlineComputeClient } from '../../helpers/inlineComputeClient'
 import { parseOutlineCheckpoint, type OutlineCheckpoint } from '@/shared/outlineGeneration'
 import type { JsonObject } from '@/shared/novelProject'
 
@@ -67,7 +68,7 @@ describe('outline generation task pipeline with real SQLite', () => {
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'yourcrush-outline-task-'))
     database = initializeDatabase(root)
-    workbench = new WorkbenchService(database)
+    workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
     store = new TaskRepository(database)
     const project = workbench.createProject({ slug: 'outline-pipeline', name: '卷纲任务项目' })
     const volume = workbench.createVolume({ project_id: project.id, volume_number: 1, title: '第一卷' })
