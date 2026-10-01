@@ -229,7 +229,11 @@ interface ElectronAPI {
   quitApp: () => Promise<any>
 
   // 长篇工作台任务
-  startTask: (params: StartTaskInput) => Promise<any>
+  startTask: (params: StartTaskInput) => Promise<{
+    success: boolean
+    data?: { taskId: string }
+    errors?: string[]
+  }>
   cancelTask: (taskId: string) => Promise<any>
   getTask: (taskId: string) => Promise<any>
   listTasks: (projectId: string) => Promise<any>

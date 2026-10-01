@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   AlertIcon,
@@ -21,6 +21,8 @@ import {
 import { FaLock, FaPlus, FaSave, FaUnlock } from 'react-icons/fa'
 import { WorkbenchEmpty, WorkbenchError, WorkbenchPage, outlineStatusLabel, statusColor } from '../components/WorkbenchPrimitives'
 import { useWorkbenchStore } from '../stores/workbenchStore'
+import { taskVolumeOutlineId, useTaskStore } from '../stores/taskStore'
+import { OutlineGenerationPanel } from '../components/OutlineGenerationPanel'
 
 interface VolumeDraft {
   title: string
@@ -41,6 +43,12 @@ function WorkbenchOutlinePage() {
   const [chapterSummary, setChapterSummary] = useState('')
   const [chapterNumber, setChapterNumber] = useState('')
   const [outlineDraft, setOutlineDraft] = useState<VolumeDraft>(emptyVolumeDraft)
+  const [draftDirty, setDraftDirty] = useState(false)
+  const [outlineSaving, setOutlineSaving] = useState(false)
+  const draftDirtyRef = useRef(false)
+  const draftTargetRef = useRef('')
+  const refreshedTasksRef = useRef(new Set<string>())
+  const tasks = useTaskStore((state) => state.tasks)
 
   useEffect(() => {
     const firstVolume = store.volumes[0]
@@ -54,6 +62,11 @@ function WorkbenchOutlinePage() {
 
   useEffect(() => {
     if (!selectedVolume) return
+    const target = `${store.currentProject?.id}:${selectedVolume.id}`
+    if (draftTargetRef.current === target && draftDirtyRef.current) return
+    draftTargetRef.current = target
+    draftDirtyRef.current = false
+    setDraftDirty(false)
     setVolumeTitle(selectedVolume.title)
     setVolumeSynopsis(selectedVolume.synopsis)
     setOutlineDraft(selectedOutline ? {
@@ -67,7 +80,31 @@ function WorkbenchOutlinePage() {
       title: selectedVolume.title,
       synopsis: selectedVolume.synopsis,
     })
-  }, [selectedOutline, selectedVolume])
+  }, [selectedOutline, selectedVolume, store.currentProject?.id])
+
+  useEffect(() => {
+    const completed = tasks.filter((task) => task.task_type === 'outline-generation'
+      && task.project_id === store.currentProject?.id && taskVolumeOutlineId(task) === selectedOutline?.id
+      && task.status === 'completed' && !refreshedTasksRef.current.has(task.id))
+    if (completed.length === 0 || draftDirty || outlineSaving || store.saving) return
+    completed.forEach((task) => refreshedTasksRef.current.add(task.id))
+    void store.refreshProjectData()
+  }, [draftDirty, outlineSaving, selectedOutline?.id, store.currentProject?.id, store.refreshProjectData, store.saving, tasks])
+
+  const editDraft = (next: VolumeDraft): void => {
+    draftDirtyRef.current = true
+    setDraftDirty(true)
+    setOutlineDraft(next)
+    store.markDirty()
+  }
+
+  const selectVolume = (volumeId: string): void => {
+    if (draftDirty && !window.confirm('切换卷会放弃尚未保存的卷大纲修改，是否继续？')) return
+    draftDirtyRef.current = false
+    setDraftDirty(false)
+    store.clearDirty()
+    setSelectedVolumeId(volumeId)
+  }
 
   const createVolume = async (): Promise<void> => {
     if (!volumeTitle.trim()) return
@@ -82,25 +119,31 @@ function WorkbenchOutlinePage() {
   }
 
   const saveVolume = async (): Promise<void> => {
-    if (!selectedVolume || selectedOutline?.status === 'locked') return
-    if (selectedVolume.title !== outlineDraft.title || selectedVolume.synopsis !== outlineDraft.synopsis) {
-      await store.updateVolume(selectedVolume.id, { title: outlineDraft.title, synopsis: outlineDraft.synopsis })
-    }
-    if (selectedOutline) {
-      await store.updateVolumeOutline(selectedOutline.id, {
+    if (!selectedVolume || selectedOutline?.status === 'locked' || outlineSaving) return
+    setOutlineSaving(true)
+    // Keep the complete local draft throughout the two sequential writes and refreshes.
+    draftDirtyRef.current = true
+    try {
+      if (selectedVolume.title !== outlineDraft.title || selectedVolume.synopsis !== outlineDraft.synopsis) {
+        await store.updateVolume(selectedVolume.id, { title: outlineDraft.title, synopsis: outlineDraft.synopsis })
+      }
+      const fields = {
         summary: outlineDraft.synopsis,
         theme: outlineDraft.theme,
         main_conflict: outlineDraft.conflict,
         ending: outlineDraft.ending,
-      })
-    } else {
-      await store.createVolumeOutline({
-        volume_id: selectedVolume.id,
-        summary: outlineDraft.synopsis,
-        theme: outlineDraft.theme,
-        main_conflict: outlineDraft.conflict,
-        ending: outlineDraft.ending,
-      })
+      }
+      if (selectedOutline) await store.updateVolumeOutline(selectedOutline.id, fields)
+      else await store.createVolumeOutline({ volume_id: selectedVolume.id, ...fields })
+      draftDirtyRef.current = false
+      setDraftDirty(false)
+      store.clearDirty()
+    } catch {
+      draftDirtyRef.current = true
+      setDraftDirty(true)
+      store.markDirty()
+    } finally {
+      setOutlineSaving(false)
     }
   }
 
@@ -131,7 +174,7 @@ function WorkbenchOutlinePage() {
           <CardHeader><HStack justify="space-between"><Text fontWeight="bold">卷</Text><Badge>{store.volumes.length}</Badge></HStack></CardHeader>
           <CardBody>
             <VStack align="stretch" spacing={2}>
-              {store.volumes.map((volume) => <Button key={volume.id} variant={volume.id === selectedVolumeId ? 'solid' : 'ghost'} colorScheme={volume.id === selectedVolumeId ? 'cinnabar' : 'ink'} justifyContent="flex-start" onClick={() => setSelectedVolumeId(volume.id)}><Stack align="flex-start" spacing={0}><Text>卷 {volume.volume_number} · {volume.title}</Text><Text fontSize="xs" opacity={0.72}>{volume.status}</Text></Stack></Button>)}
+              {store.volumes.map((volume) => <Button key={volume.id} variant={volume.id === selectedVolumeId ? 'solid' : 'ghost'} colorScheme={volume.id === selectedVolumeId ? 'cinnabar' : 'ink'} justifyContent="flex-start" onClick={() => selectVolume(volume.id)}><Stack align="flex-start" spacing={0}><Text>卷 {volume.volume_number} · {volume.title}</Text><Text fontSize="xs" opacity={0.72}>{volume.status}</Text></Stack></Button>)}
               {store.volumes.length === 0 && <Text color="ink.500" fontSize="sm">还没有卷。</Text>}
               <Divider my={2} />
               <FormControl><FormLabel fontSize="sm">新卷标题</FormLabel><Input size="sm" value={volumeTitle} onChange={(event) => setVolumeTitle(event.target.value)} data-testid="new-volume-title" /></FormControl>
@@ -156,16 +199,17 @@ function WorkbenchOutlinePage() {
             <CardBody>
               <Stack spacing={4}>
                 <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-                  <FormControl><FormLabel>卷标题</FormLabel><Input value={outlineDraft.title} isDisabled={selectedOutline?.status === 'locked'} onChange={(event) => { setOutlineDraft({ ...outlineDraft, title: event.target.value }); store.markDirty() }} /></FormControl>
-                  <FormControl><FormLabel>主题</FormLabel><Input value={outlineDraft.theme} isDisabled={selectedOutline?.status === 'locked'} onChange={(event) => { setOutlineDraft({ ...outlineDraft, theme: event.target.value }); store.markDirty() }} /></FormControl>
+                  <FormControl><FormLabel>卷标题</FormLabel><Input value={outlineDraft.title} isDisabled={selectedOutline?.status === 'locked' || outlineSaving} onChange={(event) => editDraft({ ...outlineDraft, title: event.target.value })} /></FormControl>
+                  <FormControl><FormLabel>主题</FormLabel><Input data-testid="volume-outline-theme" value={outlineDraft.theme} isDisabled={selectedOutline?.status === 'locked' || outlineSaving} onChange={(event) => editDraft({ ...outlineDraft, theme: event.target.value })} /></FormControl>
                 </SimpleGrid>
-                <FormControl><FormLabel>卷简介</FormLabel><Textarea value={outlineDraft.synopsis} isDisabled={selectedOutline?.status === 'locked'} onChange={(event) => { setOutlineDraft({ ...outlineDraft, synopsis: event.target.value }); store.markDirty() }} /></FormControl>
-                <FormControl><FormLabel>主要冲突</FormLabel><Textarea value={outlineDraft.conflict} isDisabled={selectedOutline?.status === 'locked'} onChange={(event) => { setOutlineDraft({ ...outlineDraft, conflict: event.target.value }); store.markDirty() }} /></FormControl>
-                <FormControl><FormLabel>结尾</FormLabel><Textarea value={outlineDraft.ending} isDisabled={selectedOutline?.status === 'locked'} onChange={(event) => { setOutlineDraft({ ...outlineDraft, ending: event.target.value }); store.markDirty() }} /></FormControl>
-                <HStack flexWrap="wrap"><Button leftIcon={<FaSave />} colorScheme="cinnabar" isDisabled={selectedOutline?.status === 'locked' || store.saving} isLoading={store.saving} onClick={() => void saveVolume()}>保存卷大纲</Button>{selectedOutline?.status === 'draft' && <Button isLoading={store.saving} isDisabled={store.saving} onClick={() => void store.confirmVolumeOutline(selectedOutline.id)}>确认</Button>}{selectedOutline?.status === 'confirmed' && <Button leftIcon={<FaLock />} isLoading={store.saving} isDisabled={store.saving} onClick={() => void store.lockVolumeOutline(selectedOutline.id)}>锁定</Button>}{selectedOutline?.status === 'locked' && <Button leftIcon={<FaUnlock />} variant="outline" isLoading={store.saving} isDisabled={store.saving} onClick={() => void store.unlockVolumeOutline(selectedOutline.id)}>解锁</Button>}</HStack>
+                <FormControl><FormLabel>卷简介</FormLabel><Textarea data-testid="volume-outline-summary" value={outlineDraft.synopsis} isDisabled={selectedOutline?.status === 'locked' || outlineSaving} onChange={(event) => editDraft({ ...outlineDraft, synopsis: event.target.value })} /></FormControl>
+                <FormControl><FormLabel>主要冲突</FormLabel><Textarea value={outlineDraft.conflict} isDisabled={selectedOutline?.status === 'locked' || outlineSaving} onChange={(event) => editDraft({ ...outlineDraft, conflict: event.target.value })} /></FormControl>
+                <FormControl><FormLabel>结尾</FormLabel><Textarea value={outlineDraft.ending} isDisabled={selectedOutline?.status === 'locked' || outlineSaving} onChange={(event) => editDraft({ ...outlineDraft, ending: event.target.value })} /></FormControl>
+                <HStack flexWrap="wrap"><Button leftIcon={<FaSave />} colorScheme="cinnabar" isDisabled={selectedOutline?.status === 'locked' || store.saving || outlineSaving} isLoading={outlineSaving} onClick={() => void saveVolume()}>保存卷大纲</Button>{selectedOutline?.status === 'draft' && <Button isLoading={store.saving} isDisabled={store.saving || outlineSaving || draftDirty} onClick={() => void store.confirmVolumeOutline(selectedOutline.id)}>确认</Button>}{selectedOutline?.status === 'confirmed' && <Button leftIcon={<FaLock />} isLoading={store.saving} isDisabled={store.saving || outlineSaving || draftDirty} onClick={() => void store.lockVolumeOutline(selectedOutline.id)}>锁定</Button>}{selectedOutline?.status === 'locked' && <Button leftIcon={<FaUnlock />} variant="outline" isLoading={store.saving} isDisabled={store.saving} onClick={() => void store.unlockVolumeOutline(selectedOutline.id)}>解锁</Button>}</HStack>
               </Stack>
             </CardBody>
           </Card>
+          <OutlineGenerationPanel outlineId={selectedOutline?.id} outlineStatus={selectedOutline?.status} dirty={draftDirty || outlineSaving} />
           <Card>
             <CardHeader><HStack justify="space-between"><Text fontWeight="bold">章节大纲</Text><Badge>{selectedChapters.length}</Badge></HStack></CardHeader>
             <CardBody>

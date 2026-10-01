@@ -1,6 +1,7 @@
 import type {
   StartChapterGenerationInput,
   StartChapterPolishInput,
+  StartTaskInput,
 } from '../../main/tasks'
 import type {
   TaskCheckpointEvent,
@@ -70,6 +71,7 @@ export interface TaskService {
   listRecoverable(projectId: string): Promise<RecoverableTaskView[]>
   startChapterGeneration(input: StartChapterGenerationInput): Promise<string>
   startChapterPolish(input: StartChapterPolishInput): Promise<string>
+  startOutlineGeneration(input: StartTaskInput): Promise<string>
   cancel(taskId: string): Promise<void>
   resume(taskId: string): Promise<string | null>
   manualRetry(taskId: string): Promise<string | null>
@@ -129,6 +131,10 @@ const taskService: TaskService = {
   },
   startChapterPolish: async (input) => {
     const result = await requireSuccess(() => window.electronAPI.startChapterPolish(input))
+    return result.taskId
+  },
+  startOutlineGeneration: async (input) => {
+    const result = await requireSuccess<{ taskId: string }>(() => window.electronAPI.startTask(input))
     return result.taskId
   },
   cancel: (taskId) => requireComplete(() => window.electronAPI.cancelTask(taskId)),

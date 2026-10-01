@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { StartChapterGenerationInput, StartChapterPolishInput } from '../../main/tasks'
+import type { StartChapterGenerationInput, StartChapterPolishInput, StartTaskInput } from '../../main/tasks'
 import type { ChapterVersion } from '../../shared/chapterGeneration'
 import type { RecoverableTaskView } from '../../shared/taskRecovery'
 import taskService from '../services/taskService'
@@ -42,6 +42,7 @@ interface TaskStoreState {
   subscribeToEvents: () => () => void
   startGeneration: (input: StartChapterGenerationInput) => Promise<string>
   startPolish: (input: StartChapterPolishInput) => Promise<string>
+  startOutlineGeneration: (input: StartTaskInput) => Promise<string>
   cancel: (taskId?: string) => Promise<void>
   resume: (taskId: string) => Promise<string | null>
   manualRetry: (taskId: string) => Promise<string | null>
@@ -63,6 +64,16 @@ export function taskChapterId(task: TaskView): string | null {
   const resultChapterId = task.result?.chapter_id
   return typeof resultChapterId === 'string' && resultChapterId.trim()
     ? resultChapterId
+    : null
+}
+
+export function taskVolumeOutlineId(task: TaskView): string | null {
+  const request = task.input.request
+  const input = typeof request === 'object' && request !== null && !Array.isArray(request)
+    ? request as Record<string, unknown>
+    : task.input
+  return typeof input.outline_id === 'string' && input.outline_id.trim()
+    ? input.outline_id
     : null
 }
 
@@ -137,12 +148,15 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
         chapterIds.map((chapterId) => taskService.listVersions(projectId, chapterId)),
       )
       if (get().projectId !== projectId || requestSequence !== loadSequence) return
-      const active = tasks.find((task) => task.status === 'running' || task.status === 'pending')
+      const recoverableIds = new Set(recoverableTasks.map((task) => task.id))
+      const active = tasks.find((task) => !recoverableIds.has(task.id)
+        && (task.status === 'running' || task.status === 'pending'))
       set({
         tasks,
         recoverableTasks,
         versions: versionLists.flat(),
         activeTaskId: active?.id ?? get().activeTaskId,
+        busy: Boolean(active),
         loading: false,
       })
     } catch (error) {
@@ -159,6 +173,7 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
         if (get().projectId && event.task.project_id !== get().projectId) return
         set((state) => ({
           activeTaskId: event.task.id,
+          busy: true,
           tasks: [event.task as TaskView, ...state.tasks.filter((task) => task.id !== event.task.id)],
           logs: [`任务 ${event.task.task_type} 已启动`, ...state.logs].slice(0, 80),
           stream: '',
@@ -243,6 +258,20 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
       return taskId
     } catch (error) {
       set({ busy: false, error: readError(error) })
+      throw error
+    }
+  },
+
+  startOutlineGeneration: async (input) => {
+    set({ busy: true, error: null, stream: '', logs: ['正在提交卷大纲生成任务'] })
+    try {
+      const taskId = await taskService.startOutlineGeneration(input)
+      if (get().projectId !== input.projectId) return taskId
+      set({ activeTaskId: taskId })
+      void get().load(input.projectId)
+      return taskId
+    } catch (error) {
+      if (get().projectId === input.projectId) set({ busy: false, error: readError(error) })
       throw error
     }
   },

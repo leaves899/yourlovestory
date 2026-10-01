@@ -33,6 +33,7 @@ import type {
   LegacyCrushSnapshot,
 } from '../../shared/novelProject'
 import { ChapterGenerationService } from '../../shared/chapterGeneration'
+import { OutlineGenerationService } from '../../shared/outlineGeneration'
 import { NarrativeWorkbenchService } from '../../shared/narrativeWorkbench'
 import { NovelProjectService as NovelProjectServiceClass } from '../../shared/novelProject'
 
@@ -41,6 +42,7 @@ export interface WorkbenchServiceOptions {
 }
 
 export class WorkbenchService extends NovelProjectServiceClass {
+  public readonly outlineGeneration: OutlineGenerationService
   public readonly projects: ProjectRepository
   public readonly configs: ProjectConfigRepository
   public readonly characters: CharacterRepository
@@ -126,6 +128,9 @@ export class WorkbenchService extends NovelProjectServiceClass {
       versions: chapterVersions,
       memories: narrativeMemories,
       foreshadows,
+    })
+    this.outlineGeneration = new OutlineGenerationService({
+      project: this, chapters, memories: narrativeMemories, foreshadows,
     })
     this.narrative = new NarrativeWorkbenchService({
       stores: {

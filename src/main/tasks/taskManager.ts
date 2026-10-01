@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto'
 import type { AgentEvent } from '@earendil-works/pi-agent-core'
 import type { AgentFactory, AgentRunResult } from '../../agent/agent'
 import type { LlmConfigInput } from '../../agent/llm'
-import { normalizeLlmBaseUrl } from '../../agent/llm/config'
+import { normalizeLlmBaseUrl, normalizeLlmConfig } from '../../agent/llm/config'
 import type { ChapterGenerationStage } from '../../shared/chapterGeneration'
+import { parseOutlineCheckpoint } from '../../shared/outlineGeneration/checkpoint'
 import {
   buildIdempotencyKey,
   classifyTaskRecovery,
@@ -84,6 +85,14 @@ export interface StartChapterPolishInput {
   llm: LlmConfigInput
 }
 
+export interface StartOutlineGenerationInput {
+  projectId: string
+  sessionId: string
+  outlineId: string
+  debug?: boolean
+  llm: LlmConfigInput
+}
+
 export interface TaskHandle {
   taskId: string
   completion: Promise<Task>
@@ -140,6 +149,7 @@ export interface TaskManagerOptions {
   createAbortController?: () => AbortController
   resolveLlmConfig?: (projectId: string, input: LlmConfigInput) => LlmConfigInput
   validateChapterGeneration?: (input: StartChapterGenerationInput) => void
+  validateOutlineGeneration?: (input: StartOutlineGenerationInput) => void
   recoveryLookups?: TaskRecoveryLookups
   runtimeSessions?: RuntimeSessionRepository
   recoveryAttempts?: RecoveryAttemptRepository
@@ -193,6 +203,13 @@ function minimizePersistedRequest(
   request: JsonObject | undefined,
 ): JsonObject {
   if (!request) return {}
+  if (taskType === 'outline-generation') {
+    const out: JsonObject = {}
+    if (typeof request.project_id === 'string') out.project_id = request.project_id
+    if (typeof request.outline_id === 'string') out.outline_id = request.outline_id
+    if (typeof request.debug === 'boolean') out.debug = request.debug
+    return out
+  }
   if (taskType === 'chapter-generation') {
     const out: JsonObject = {}
     if (typeof request.project_id === 'string') out.project_id = request.project_id
@@ -431,6 +448,20 @@ export class TaskManager {
       input: input.input,
       llm: input.llm,
     })
+    if (input.taskType === 'outline-generation') {
+      if (!this.options.runners?.['outline-generation']) throw new Error('大纲生成执行器未注册，已拒绝启动。')
+      normalizeLlmConfig(input.llm)
+      const request = input.input
+      if (!request || request.project_id !== input.projectId || typeof request.outline_id !== 'string'
+        || !request.outline_id.trim() || (request.debug !== undefined && typeof request.debug !== 'boolean')) {
+        throw new Error('大纲任务目标或输入不合法。')
+      }
+      assertSafePersistedString(request.outline_id, 'outlineId', 256)
+      this.options.validateOutlineGeneration?.({
+        projectId: input.projectId, sessionId: input.sessionId, outlineId: request.outline_id,
+        debug: request.debug === true, llm: input.llm,
+      })
+    }
     const resolvedLlm = this.resolveCurrentCredential(input.projectId, input.llm)
     const validatedInput: StartTaskInput = {
       ...input,
@@ -476,6 +507,14 @@ export class TaskManager {
       runtime_session_id: this.runtimeSession?.id ?? task.runtime_session_id,
     })
     return this.startExisting(leased ?? task, validatedInput, leaseToken)
+  }
+
+  public startOutlineGeneration(input: StartOutlineGenerationInput): TaskHandle {
+    return this.start({
+      projectId: input.projectId, sessionId: input.sessionId, taskType: 'outline-generation',
+      prompt: '', llm: input.llm,
+      input: { project_id: input.projectId, outline_id: input.outlineId, debug: input.debug ?? false },
+    })
   }
 
   public startChapterGeneration(input: StartChapterGenerationInput): TaskHandle {
@@ -553,6 +592,7 @@ export class TaskManager {
       .filter((view) =>
         view.task_type === 'chapter-generation'
         || view.task_type === 'chapter-polish'
+        || view.task_type === 'outline-generation'
         || view.manual_retry_allowed
         || view.auto_allowed
         || view.recovery_classification === 'manual-retry-required'
@@ -861,6 +901,9 @@ export class TaskManager {
       : null
     const zeroModelFinish = finalEntity || (
       checkpoint?.stage === 'saving' && checkpoint.body.trim() !== '' && checkpoint.summary.trim() !== ''
+    ) || (
+      existing.task_type === 'outline-generation'
+      && ['ready', 'applied'].includes(parseOutlineCheckpoint(existing.checkpoint)?.stage ?? '')
     )
 
     const nowIso = this.now()
@@ -1034,6 +1077,9 @@ export class TaskManager {
   ): Promise<Task> {
     const runner = this.options.runners?.[input.taskType]
     try {
+      if (input.taskType === 'outline-generation' && !runner) {
+        throw new NonRecoverableTaskError('大纲生成执行器未注册，已拒绝恢复和调用模型。')
+      }
       if (runner) return await this.executeRunner(taskId, input, controller, runner, leaseToken)
 
       this.updateStage(taskId, 'starting', 0, leaseToken)
@@ -1440,10 +1486,14 @@ export class TaskManager {
   private defaultCheckpointSchema(taskType: string): number | null {
     if (taskType === 'chapter-generation') return 1
     if (taskType === 'chapter-polish') return 1
+    if (taskType === 'outline-generation') return 1
     return null
   }
 
   private logicalTargetFor(input: StartTaskInput): string {
+    if (input.taskType === 'outline-generation') {
+      return typeof input.input?.outline_id === 'string' ? input.input.outline_id : 'unknown-outline'
+    }
     if (input.taskType === 'chapter-generation') {
       const outlineId = input.input && typeof input.input.chapter_outline_id === 'string'
         ? input.input.chapter_outline_id

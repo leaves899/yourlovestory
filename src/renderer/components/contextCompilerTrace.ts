@@ -1,6 +1,6 @@
-import type { TaskView } from '../stores/taskStore'
+import { taskVolumeOutlineId, type TaskView } from '../stores/taskStore'
 
-export type ContextTextStage = 'body' | 'summary' | 'fact_check'
+export type ContextTextStage = 'body' | 'summary' | 'fact_check' | 'outline'
 
 export interface ContextTraceRow {
   id: string
@@ -170,7 +170,7 @@ export function buildStageCompileViews(
 ): ContextStageCompileView[] {
   const map = extractStageCompilesSource(task)
   if (!isRecord(map)) return []
-  const stages: ContextTextStage[] = ['body', 'summary', 'fact_check']
+  const stages: ContextTextStage[] = ['body', 'summary', 'fact_check', 'outline']
   return stages
     .map((stage) => parseStageCompileView(stage, map[stage], uiDebug))
     .filter((view): view is ContextStageCompileView => view !== null)
@@ -192,16 +192,19 @@ export function selectContextCompilerTask(
   tasks: readonly TaskView[],
   activeTaskId: string | null,
   chapterOutlineId: string | undefined,
+  taskType: 'chapter-generation' | 'outline-generation' = 'chapter-generation',
 ): TaskView | null {
-  const generation = tasks.filter((task) => task.task_type === 'chapter-generation')
+  const generation = tasks.filter((task) => task.task_type === taskType)
+  const scoped = chapterOutlineId
+    ? generation.filter((task) => (taskType === 'outline-generation'
+      ? taskVolumeOutlineId(task)
+      : taskChapterOutlineIdFromInput(task)) === chapterOutlineId)
+    : generation
   if (activeTaskId) {
-    const active = generation.find((task) => task.id === activeTaskId)
+    const active = scoped.find((task) => task.id === activeTaskId)
     if (active) return active
   }
-  const scoped = chapterOutlineId
-    ? generation.filter((task) => taskChapterOutlineIdFromInput(task) === chapterOutlineId)
-    : generation
-  const pool = scoped.length > 0 ? scoped : generation
+  const pool = scoped.length > 0 || taskType === 'outline-generation' ? scoped : generation
   if (pool.length === 0) return null
   return [...pool].sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0] ?? null
 }

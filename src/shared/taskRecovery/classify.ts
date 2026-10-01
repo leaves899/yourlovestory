@@ -1,4 +1,5 @@
 import type { JsonObject, JsonValue } from '../novelProject'
+import { parseOutlineCheckpoint } from '../outlineGeneration/checkpoint'
 import {
   parseStrictGenerationCheckpoint,
   parseStrictPolishCheckpoint,
@@ -99,6 +100,7 @@ function corruptCheckpoint(kind: string): RecoveryDecision {
 }
 
 function expectedCheckpointSchema(taskType: string): number | null {
+  if (taskType === 'outline-generation') return 1
   if (taskType === 'chapter-generation') {
     return CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION
   }
@@ -195,6 +197,26 @@ function classifyChapterGeneration(input: ClassifyTaskInput): RecoveryDecision {
   }
 
   return manualRequired('章节生成任务缺少可证明安全的检查点，需要人工确认。')
+}
+
+function classifyOutlineGeneration(input: ClassifyTaskInput): RecoveryDecision {
+  const requestProject = readRequestField(input.input, 'project_id')
+  const requestOutline = readRequestField(input.input, 'outline_id')
+  if (requestProject !== input.project_id || !requestOutline) return nonRecoverable('大纲任务目标或输入不合法。')
+  const parsed = input.checkpoint ? parseOutlineCheckpoint(input.checkpoint) : null
+  if (input.checkpoint && (!parsed || parsed.project_id !== input.project_id || parsed.outline_id !== requestOutline)) {
+    return corruptCheckpoint('大纲生成')
+  }
+  if (parsed?.stage === 'ready' || parsed?.stage === 'applied') {
+    return resumable('大纲结果已持久化，可核对来源及版本后无模型幂等收尾。')
+  }
+  if (parsed?.stage === 'model' || input.execution_phase === 'model_in_flight' || input.execution_phase === 'awaiting_model') {
+    return manualRequired('大纲模型请求处于不确定窗口，必须人工确认重试以免重复计费。')
+  }
+  if (input.execution_phase === 'queued' || input.execution_phase === 'preparing') {
+    return restartable('大纲模型调用尚未开始，可核对来源后安全重启。')
+  }
+  return manualRequired('大纲任务缺少可证明安全的结果检查点，需要人工确认。')
 }
 
 function classifyChapterPolish(input: ClassifyTaskInput): RecoveryDecision {
@@ -321,7 +343,7 @@ export function classifyTaskRecovery(input: ClassifyTaskInput): RecoveryDecision
       typed = classifyChapterPolish(input)
       break
     case 'outline-generation':
-      typed = nonRecoverable('大纲生成当前没有持久化 runner，不可自动恢复。')
+      typed = classifyOutlineGeneration(input)
       break
     case 'memory-extraction':
       typed = nonRecoverable('叙事记忆提取是直接 service/IPC 流程，不是可恢复任务。')

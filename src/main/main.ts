@@ -27,8 +27,10 @@ import {
 } from './backup'
 import { DiagnosticExportCoordinator } from './diagnostics'
 import { createProjectSessionAgentFactory } from '../agent/agent'
+import { readRequestField } from '../shared/taskRecovery'
 import {
   createChapterGenerationTaskRunner,
+  createOutlineGenerationTaskRunner,
   createChapterPolishTaskRunner,
   createWebContentsTaskEventSink,
   TaskManager,
@@ -340,6 +342,10 @@ if (gotSingleInstanceLock) app.whenReady().then(async () => {
     agentFactory,
     events: createWebContentsTaskEventSink(() => mainWindow?.webContents ?? null),
     runners: {
+      'outline-generation': createOutlineGenerationTaskRunner({
+        service: workbenchService.outlineGeneration,
+        agentFactory,
+      }),
       'chapter-generation': createChapterGenerationTaskRunner({
         service: workbenchService.chapterGeneration,
         agentFactory,
@@ -353,11 +359,22 @@ if (gotSingleInstanceLock) app.whenReady().then(async () => {
       llmCredentialController.runtimeConfig(projectId, input),
     validateChapterGeneration: (input) =>
       assertChapterGenerationPreflight(workbenchService!, input),
+    validateOutlineGeneration: (input) => {
+      const outline = workbenchService!.getVolumeOutline(input.projectId, input.outlineId)
+      if (outline.status !== 'draft' || workbenchService!.getProject(input.projectId).status !== 'active') {
+        throw new Error('仅可为活动项目中的草稿卷大纲生成结果。')
+      }
+    },
     runtimeSessions,
     recoveryAttempts,
     recoveryLookups: {
       projectExists: (projectId) => projectRepository.getById(projectId) !== null,
       targetExists: (task) => {
+        if (task.task_type === 'outline-generation') {
+          const outlineId = readRequestField(task.input, 'outline_id')
+          const outline = outlineId ? workbenchService!.volumeOutlines.getById(outlineId) : null
+          return outline?.project_id === task.project_id
+        }
         if (task.task_type === 'chapter-generation') {
           const outlineId = task.input.request
             && typeof task.input.request === 'object'

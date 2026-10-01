@@ -1,8 +1,8 @@
 # Context Compiler 与任务恢复
 
-Issue #22 的实现位于 `src/shared/contextCompiler/`。当前运行入口为章节正文、摘要和
-事实核查，统一经过 `compileContext`。大纲策略已提供，但仓库没有独立大纲生成
-runner，因此不宣称已完成大纲运行时接入。
+Issue #22 的实现位于 `src/shared/contextCompiler/`。卷大纲、章节正文、摘要和
+事实核查统一经过 `compileContext`。卷大纲领域映射复用 `contextAssembly`，
+独立 runner 位于 `src/main/tasks/outlineGenerationTask.ts`，不会另建 Prompt 拼接器。
 
 ## 输入、选择和预算
 
@@ -32,4 +32,23 @@ runner，因此不宣称已完成大纲运行时接入。
 
 没有新增 embedding、RAG、router 或长期记忆服务。Generic assistant、章节润色、
 直接记忆提取和伏笔建议的上下文运行时不在这次接入范围内，不能宣称所有模型调用
-都已统一。大纲运行时缺口应在 Issue #22 关闭验收中明确记录。
+都已统一。
+
+## 独立卷大纲生成
+
+工作台卷章大纲页对当前活动项目的草稿卷大纲提交 `outline-generation` 任务。
+模型参数取自当前项目配置和显式表单；任务输入只持久化目标 ID、非秘密模型参数和
+Debug 授权。选中素材、前文、已批准记忆和未关闭伏笔遵循现有 outline compiler 策略。
+预算不足时保留失败 trace，显示错误并禁止模型调用。
+
+检查点 schema 为 1，阶段为 `prepared`、`model`、`ready`、`applied`。
+模型请求开始前持久化 `model`；该不确定窗口只允许人工确认重试。
+`ready` 中的严格 JSON 提案与 compiler trace 已持久化，恢复可不调用模型。
+大纲草稿写入和带 `applied_version` 的 `applied` 检查点共用 lease 保护的 SQLite
+事务，避免写入成功而检查点丢失。`applied` 恢复验证任务标识、结果字段和精确版本，
+只收尾，不再次更新大纲。
+
+恢复和采用前都验证来源快照、项目/配置/卷/大纲版本、Prompt 版本、模型参数、Debug
+授权及确定性重编译 trace。用户更新、确认或锁定大纲，或上下文前提改变时终止旧任务，
+保留当前用户内容。损坏或不支持的 metadata fail closed。生成不会自动确认或锁定。
+页面在有未保存编辑时禁用生成和恢复，任务完成刷新也会保留当前本地草稿。

@@ -47,6 +47,7 @@ const stageLabel: Record<ContextTextStage, string> = {
   body: '正文',
   summary: '摘要',
   fact_check: '事实核查',
+  outline: '卷大纲',
 }
 
 function TraceTable({
@@ -108,6 +109,8 @@ export interface ContextCompilerPanelProps {
   tasks: readonly TaskView[]
   activeTaskId: string | null
   chapterOutlineId?: string
+  outlineId?: string
+  taskType?: 'chapter-generation' | 'outline-generation'
   /** Controlled debug switch (also used when starting generation). Default false. */
   debug: boolean
   onDebugChange: (debug: boolean) => void
@@ -117,12 +120,14 @@ export function ContextCompilerPanel({
   tasks,
   activeTaskId,
   chapterOutlineId,
+  outlineId,
+  taskType = 'chapter-generation',
   debug,
   onDebugChange,
 }: ContextCompilerPanelProps) {
   const task = useMemo(
-    () => selectContextCompilerTask(tasks, activeTaskId, chapterOutlineId),
-    [tasks, activeTaskId, chapterOutlineId],
+    () => selectContextCompilerTask(tasks, activeTaskId, outlineId ?? chapterOutlineId, taskType),
+    [tasks, activeTaskId, chapterOutlineId, outlineId, taskType],
   )
   const stages = useMemo(() => buildStageCompileViews(task, debug === true), [task, debug])
   const [stage, setStage] = useState<ContextTextStage>('body')
@@ -135,7 +140,7 @@ export function ContextCompilerPanel({
           <Stack spacing={1}>
             <Text fontWeight="bold">上下文来源</Text>
             <Text fontSize="sm" color="ink.600">
-              展示当前或最近一次章节生成任务写入的 Context Compiler trace（来自任务 checkpoint / result）。
+              展示当前或最近一次{taskType === 'outline-generation' ? '卷大纲' : '章节'}生成任务的上下文来源与预算。
             </Text>
           </Stack>
           <FormControl display="flex" alignItems="center" width="auto" data-testid="context-debug-switch">
@@ -157,7 +162,7 @@ export function ContextCompilerPanel({
       <CardBody>
         {!task ? (
           <Text color="ink.500" data-testid="context-compiler-empty">
-            尚无章节生成任务的上下文 trace。完成一次生成后会出现在这里。
+            尚无{taskType === 'outline-generation' ? '卷大纲' : '章节'}生成任务的上下文来源。完成一次生成后会出现在这里。
           </Text>
         ) : stages.length === 0 ? (
           <Text color="ink.500" data-testid="context-compiler-empty">
