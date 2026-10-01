@@ -8,15 +8,18 @@
    检查、Jest、build 和 E2E。
 4. 退出应用并备份测试用 `userData`；检查 migration 的前向兼容性和不可逆风险。
 5. 为 Windows、macOS 和 Linux 构建产物，记录签名与 notarization 的真实状态。
-6. 运行 Issue #25 定义的 packaged Electron smoke tests。该 gate 未接入前禁止 Stable。
+6. 运行 Issue #25 定义的 packaged Electron smoke tests。该 gate 在三平台 package job
+   中执行并阻塞后续 artifact upload 和 draft release；该 gate 未通过前禁止 Stable。
 7. 对最终上传目录运行 `npm run release:checksums -- <artifact-directory>`。
 8. 核对 `SHA256SUMS.txt` 覆盖每个上传产物，且未包含自身。
 9. 以 `v<package-version>` 创建 tag，并先创建同名 draft GitHub Release。
 10. 核对 release notes、备份警告、已知问题、prerelease 标记和下载文件后人工发布。
 
 仓库的 `Release draft` workflow 仅支持人工触发。它从 `package.json` 读取版本，运行完整
-源码质量检查，跨平台打包，生成 SHA-256，并创建 draft Release。当前 workflow 对
-Stable 版本硬失败，直到 Issue #25 的 packaged smoke gate 被实现并替换该保护。
+源码质量检查，跨平台打包，运行真实 packaged smoke，生成 SHA-256，并创建 draft
+Release。`release/builder-debug.yml` 只用于构建诊断，不上传到最终目录；平台更新清单
+使用 `latest*.yml`，避免三平台 artifact 合并时同名覆盖。当前 workflow 对 Stable
+版本仍硬失败，直到版本、签名和其他 Stable 条件均有真实证据。
 
 ## 产物验证
 
