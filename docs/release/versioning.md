@@ -17,7 +17,7 @@ Electron 运行时通过 `app.getVersion()` 读取打包元数据，CI、Git tag
 | `package.json.version` | 应用版本、打包版本和运行时 `app.getVersion()` | 是，唯一来源 |
 | `package-lock.json` 顶层与根 package | npm 锁文件元数据，由 npm 同步 | 是，必须等于唯一来源 |
 | `v*` Git tag / GitHub Release | 可分发版本标识 | 是，必须为 `v<package version>` |
-| `src/main/database/migrations/` 的 1–8 | SQLite schema migration 序号 | 否 |
+| `src/main/database/migrations/` 的 1–9 | SQLite schema migration 序号 | 否 |
 | 领域对象的 `version` 数字 | 乐观并发控制或章节修订序号 | 否 |
 | Skill、标签库和 Fragment 输出中的版本 | 对应数据格式或内容定义版本 | 否 |
 | Electron、React、Pi Agent 等依赖版本 | 第三方依赖约束 | 否 |

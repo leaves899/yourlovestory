@@ -83,12 +83,15 @@ jobs:
         include:
           - os: windows-latest
             command: npm run package:win
+            smoke: npm run test:packaged
             artifact: windows
           - os: macos-latest
             command: npm run package:mac
+            smoke: npm run test:packaged
             artifact: macos
           - os: ubuntu-latest
             command: npm run package:linux
+            smoke: xvfb-run --auto-servernum npm run test:packaged
             artifact: linux
     runs-on: ${{ matrix.os }}
     env:
@@ -104,6 +107,17 @@ jobs:
       - run: npm ci
       - run: ${{ matrix.command }}
 
+      - name: Run packaged Electron smoke gate
+        run: ${{ matrix.smoke }}
+
+      - name: Upload packaged smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-smoke-${{ matrix.artifact }}
+          path: test-results/packaged-smoke/**
+          if-no-files-found: warn
+
       - name: Record unsigned build status
         shell: bash
         run: |
@@ -117,7 +131,8 @@ jobs:
             release/*.blockmap
             release/*.dmg
             release/*.AppImage
-            release/*.yml
+            release/latest*.yml
+            !release/builder-debug.yml
             release/SIGNING-STATUS-*.txt
           if-no-files-found: error
 

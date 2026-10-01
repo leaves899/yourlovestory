@@ -66,6 +66,14 @@ let isShuttingDown = false
 let allowFinalQuit = false
 let shutdownPromise: Promise<void> | null = null
 
+// The packaged smoke suite supplies an isolated userData directory.  Set it
+// before acquiring Electron's single-instance lock so the lock and SQLite
+// database are both scoped to that temporary profile.
+const e2eUserDataPath = process.env.YOURCRUSH_E2E_USER_DATA
+if (process.env.NODE_ENV === 'test' && e2eUserDataPath) {
+  app.setPath('userData', path.resolve(e2eUserDataPath))
+}
+
 // Single-instance lock: a second process must not open the same DB session.
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
@@ -108,11 +116,6 @@ const databaseRuntime = new DatabaseRuntimeStatus({
     mainWindow.webContents.send(DATABASE_STATUS_CHANGED_CHANNEL, status)
   }
 })
-
-const e2eUserDataPath = process.env.YOURCRUSH_E2E_USER_DATA
-if (process.env.NODE_ENV === 'test' && e2eUserDataPath) {
-  app.setPath('userData', path.resolve(e2eUserDataPath))
-}
 
 /**
  * 数据迁移逻辑：将旧数据从项目根目录迁移到 userData 目录。

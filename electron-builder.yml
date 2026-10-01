@@ -1,5 +1,6 @@
 appId: com.yourcrush.app
 productName: yourcrush
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 directories:
   output: release
 files:
@@ -21,6 +22,10 @@ npmRebuild: true
 asarUnpack:
   - node_modules/better-sqlite3/**/*
 win:
+  # Unsigned CI and local smoke builds must not depend on winCodeSign/rcedit.
+  # A signed release must explicitly enable this after protected certificates
+  # are configured; the workflow records the unsigned state instead of lying.
+  signAndEditExecutable: false
   target:
     - nsis
 mac:
