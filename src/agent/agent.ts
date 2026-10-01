@@ -68,6 +68,7 @@ export interface AgentFactoryDependencies {
   loadTools?: () => Promise<readonly AgentTool[]>
   sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>
   resolveCredential?: (credentialId: string, config: LlmConfig) => Promise<string>
+  computeContext?: (messages: AgentMessage[], budget: number, signal?: AbortSignal) => Promise<AgentMessage[]>
 }
 
 function isAssistantMessage(message: AgentMessage): message is AssistantMessage {
@@ -98,6 +99,16 @@ function createFallbackStats(signal?: AbortSignal): LlmRunStats {
   }
 }
 
+function messageTextLength(message: AgentMessage): number {
+  if (!('content' in message)) return 0
+  if (typeof message.content === 'string') return message.content.length
+  if (!Array.isArray(message.content)) return 0
+  return message.content.reduce((total, item: unknown) => {
+    if (!item || typeof item !== 'object' || !('text' in item) || typeof item.text !== 'string') return total
+    return total + item.text.length
+  }, 0)
+}
+
 class PiProjectSessionAgent implements ProjectSessionAgent {
   public constructor(
     public readonly projectId: string,
@@ -106,6 +117,7 @@ class PiProjectSessionAgent implements ProjectSessionAgent {
   ) {}
 
   public async prompt(prompt: string, options: AgentPromptOptions = {}): Promise<AgentRunResult> {
+    if (options.signal?.aborted) return { text: '', ...createFallbackStats(options.signal) }
     let lastAssistant: AssistantMessage | undefined
     const unsubscribe = this.agent.subscribe(async (event) => {
       if (event.type === 'message_end' && isAssistantMessage(event.message)) {
@@ -197,7 +209,17 @@ export function createProjectSessionAgentFactory(
           dependencies.sleep,
         ),
         getApiKey: () => configuredLlm.apiKey,
-        transformContext: createContextBudgetTransformer(configuredLlm.contextBudget),
+        transformContext: async (messages, signal) => {
+          const totalTextLength = messages.reduce((total, message) => total + messageTextLength(message), 0)
+          const shouldOffload = Boolean(dependencies.computeContext)
+            && configuredLlm.contextBudget > 256_000
+            && totalTextLength > 4 * 1024 * 1024
+            // A structured clone of larger histories can exceed the Worker heap cap.
+            // Keep those explicitly bounded by the main-thread path until a streaming protocol exists.
+            && totalTextLength <= 32 * 1024 * 1024
+          if (shouldOffload) return dependencies.computeContext!(messages, configuredLlm.contextBudget, signal)
+          return createContextBudgetTransformer(configuredLlm.contextBudget)(messages, signal)
+        },
         beforeToolCall: permissionHook,
         sessionId: options.sessionId,
         toolExecution: 'parallel',

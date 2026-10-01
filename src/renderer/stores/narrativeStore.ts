@@ -10,6 +10,7 @@ import type {
   ProjectSkillState,
 } from '../../shared/narrativeWorkbench'
 import narrativeService from '../services/narrativeService'
+import type { ChapterVersion } from '../../shared/chapterGeneration'
 
 interface NarrativeStoreState {
   projectId: string | null
@@ -20,7 +21,13 @@ interface NarrativeStoreState {
   skills: ProjectSkillState[]
   blocks: ChapterBlock[]
   revisions: ChapterRevision[]
+  versions: ChapterVersion[]
+  chapterId: string | null
   diff: ChapterDiff | null
+  diffRequestId: string | null
+  diffProgress: number
+  diffCancelling: boolean
+  diffMessage: string | null
   loading: boolean
   saving: boolean
   error: string | null
@@ -36,6 +43,9 @@ interface NarrativeStoreState {
   toggleSkill: (skillName: string, enabled: boolean) => Promise<void>
   loadChapter: (projectId: string, chapterId: string) => Promise<void>
   compareRevisions: (fromRevisionId: string, toRevisionId: string) => Promise<void>
+  compareVersions: (fromVersionId: string, toVersionId: string) => Promise<void>
+  compare: (mode: 'revisions' | 'versions', fromId: string, toId: string) => Promise<void>
+  cancelDiff: () => Promise<void>
   applyRevision: (revisionId: string) => Promise<void>
 }
 
@@ -53,7 +63,13 @@ export const useNarrativeStore = create<NarrativeStoreState>((set, get) => ({
   skills: [],
   blocks: [],
   revisions: [],
+  versions: [],
+  chapterId: null,
   diff: null,
+  diffRequestId: null,
+  diffProgress: 0,
+  diffCancelling: false,
+  diffMessage: null,
   loading: false,
   saving: false,
   error: null,
@@ -61,6 +77,11 @@ export const useNarrativeStore = create<NarrativeStoreState>((set, get) => ({
 
   load: async (projectId) => {
     const projectChanged = get().projectId !== projectId
+    if (projectChanged && get().diffRequestId) {
+      const id = get().diffRequestId
+      set({ diffRequestId: null, diff: null, diffMessage: null, diffCancelling: false })
+      if (id) void narrativeService.cancelDiff(id).catch(() => undefined)
+    }
     set({
       projectId,
       loading: true,
@@ -188,26 +209,60 @@ export const useNarrativeStore = create<NarrativeStoreState>((set, get) => ({
   },
 
   loadChapter: async (projectId, chapterId) => {
-    set({ loading: true, error: null })
+    const previousDiffId = get().diffRequestId
+    set({ projectId, chapterId, revisions: [], versions: [], loading: true, error: null,
+      diff: null, diffRequestId: null, diffCancelling: false, diffMessage: null })
+    if (previousDiffId) await narrativeService.cancelDiff(previousDiffId).catch(() => undefined)
     try {
-      const [blocks, revisions] = await Promise.all([
+      const [blocks, revisions, versions] = await Promise.all([
         narrativeService.listBlocks(projectId, chapterId),
         narrativeService.listRevisions(projectId, chapterId),
+        narrativeService.listVersions(projectId, chapterId),
       ])
-      set({ projectId, blocks, revisions, diff: null, loading: false })
+      if (get().projectId !== projectId || get().chapterId !== chapterId) return
+      set({ blocks, revisions, versions, loading: false })
     } catch (error) {
+      if (get().projectId !== projectId || get().chapterId !== chapterId) return
       set({ loading: false, error: readError(error) })
     }
   },
 
-  compareRevisions: async (fromRevisionId, toRevisionId) => {
+  compareRevisions: (fromRevisionId, toRevisionId) => get().compare('revisions', fromRevisionId, toRevisionId),
+  compareVersions: (fromVersionId, toVersionId) => get().compare('versions', fromVersionId, toVersionId),
+
+  compare: async (mode, fromId, toId) => {
     const projectId = get().projectId
-    if (!projectId) return
+    if (!projectId || get().diffRequestId) return
+    const id = crypto.randomUUID()
+    set({ diffRequestId: id, diffProgress: 0, diffCancelling: false, diffMessage: null, diff: null, error: null })
+    const unsubscribe = narrativeService.onDiffProgress((event) => {
+      if (event.request_id === id && get().diffRequestId === id) set({ diffProgress: event.progress })
+    })
     try {
-      const result = await narrativeService.diffRevisions(projectId, fromRevisionId, toRevisionId)
-      set({ diff: result.diff, error: null })
+      const result = mode === 'revisions'
+        ? await narrativeService.diffRevisions(projectId, fromId, toId, id)
+        : await narrativeService.diffVersions(projectId, fromId, toId, id)
+      if (get().diffRequestId !== id || get().projectId !== projectId) return
+      if (!get().diffCancelling) set({ diff: result.diff, diffProgress: 1, error: null })
+      else set({ diffMessage: '章节对比已取消' })
     } catch (error) {
-      set({ error: readError(error) })
+      if (get().diffRequestId !== id || get().projectId !== projectId) return
+      if (get().diffCancelling) set({ diffMessage: '章节对比已取消', error: null })
+      else set({ error: readError(error) })
+    } finally {
+      unsubscribe()
+      if (get().diffRequestId === id) set({ diffRequestId: null, diffCancelling: false })
+    }
+  },
+
+  cancelDiff: async () => {
+    const id = get().diffRequestId
+    if (!id) return
+    set({ diffCancelling: true })
+    try {
+      await narrativeService.cancelDiff(id)
+    } catch (error) {
+      if (get().diffRequestId === id) set({ diffCancelling: false, error: readError(error) })
     }
   },
 

@@ -41,6 +41,7 @@ export function assignStableBlockIds(
   chapterId: string,
   content: string,
   previousBlocks: readonly ChapterBlock[] = [],
+  onProgress?: (progress: number) => void,
 ): ChapterBlock[] {
   const raw = rawBlocks(content)
   const previousByFingerprint = new Map<string, ChapterBlock[]>()
@@ -97,6 +98,9 @@ export function assignStableBlockIds(
   return raw.map((item, ordinal) => {
     const reusable = assignments[ordinal] ?? nearestCandidate(ordinal)
     if (reusable) claimed.add(reusable.id)
+    if (ordinal % Math.max(1, Math.ceil(raw.length / 20)) === 0) {
+      onProgress?.(ordinal / Math.max(1, raw.length))
+    }
     return {
       id: reusable?.id ?? deterministicId(chapterId, item.kind, ordinal, item.text),
       ordinal,
@@ -136,6 +140,7 @@ export function replaceChapterBlock(
 export function diffChapterBlocks(
   before: readonly ChapterBlock[],
   after: readonly ChapterBlock[],
+  onProgress?: (progress: number) => void,
 ): ChapterDiff {
   const beforeById = new Map(before.map((block) => [block.id, block]))
   const seen = new Set<string>()
@@ -144,6 +149,9 @@ export function diffChapterBlocks(
   for (const next of after) {
     const previous = beforeById.get(next.id)
     seen.add(next.id)
+    if (seen.size % Math.max(1, Math.ceil(after.length / 20)) === 0) {
+      onProgress?.(seen.size / Math.max(1, after.length + before.length))
+    }
     if (!previous) {
       changes.push({ block_id: next.id, kind: 'added', before: null, after: next })
     } else if (normalizeText(previous.text) === normalizeText(next.text)) {
@@ -172,10 +180,15 @@ export function diffChapterContent(
   chapterId: string,
   beforeContent: string,
   afterContent: string,
+  onProgress?: (progress: number) => void,
 ): ChapterDiff {
-  const before = assignStableBlockIds(chapterId, beforeContent)
-  const after = assignStableBlockIds(chapterId, afterContent, before)
-  return diffChapterBlocks(before, after)
+  const before = assignStableBlockIds(chapterId, beforeContent, [],
+    (progress) => onProgress?.(progress * 0.2))
+  onProgress?.(0.2)
+  const after = assignStableBlockIds(chapterId, afterContent, before,
+    (progress) => onProgress?.(0.2 + progress * 0.6))
+  onProgress?.(0.8)
+  return diffChapterBlocks(before, after, (progress) => onProgress?.(0.8 + progress * 0.2))
 }
 
 export function findChapterBlock(

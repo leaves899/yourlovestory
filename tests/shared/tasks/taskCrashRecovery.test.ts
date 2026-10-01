@@ -26,6 +26,7 @@ import {
 } from '@/main/tasks'
 import { assertNoSensitiveTaskInput } from '@/main/tasks/sensitiveInput'
 import { WorkbenchService } from '@/main/workbench'
+import { inlineComputeClient } from '../../helpers/inlineComputeClient'
 import {
   RECOVERY_METADATA_VERSION,
   TASK_CORRUPTION_REASON,
@@ -130,7 +131,7 @@ describe('task crash recovery fault matrix', () => {
     runners?: ConstructorParameters<typeof TaskManager>[0]['runners']
   } = {}): TaskManager {
     const managerDatabase = overrides.database ?? database
-    const workbench = new WorkbenchService(managerDatabase)
+    const workbench = new WorkbenchService(managerDatabase, { computeClient: inlineComputeClient })
     const agentFactory = overrides.agentFactory ?? {
       create: async (input) => ({
         projectId: input.projectId,
@@ -181,7 +182,7 @@ describe('task crash recovery fault matrix', () => {
   }
 
   function seedProject(slug = 'crash-p'): { projectId: string; outlineId: string; chapterId: string } {
-    const workbench = new WorkbenchService(database)
+    const workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
     const project = workbench.createProject({ slug, name: 'Crash Project' })
     const volume = workbench.createVolume({
       project_id: project.id,
@@ -354,7 +355,7 @@ describe('task crash recovery fault matrix', () => {
 
   test('P1-2 polish revision exists without completed checkpoint finishes without model', async () => {
     const { projectId, chapterId } = seedProject('polish-entity')
-    const workbench = new WorkbenchService(database)
+    const workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
     const tasks = new TaskRepository(database)
     const blocking = createBlockingAgent()
     const manager = createManager({ agentFactory: blocking.agentFactory })
@@ -430,7 +431,7 @@ describe('task crash recovery fault matrix', () => {
 
   test('P1-2 stale task revision cannot auto-apply over a newer current revision', async () => {
     const { projectId, chapterId } = seedProject('polish-stale-current')
-    const workbench = new WorkbenchService(database)
+    const workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
     const tasks = new TaskRepository(database)
     const revisions = new ChapterRevisionRepository(database)
     const blocking = createBlockingAgent()
@@ -1736,7 +1737,7 @@ describe('task crash recovery fault matrix', () => {
     const tasksB = new TaskRepository(ownerBDatabase)
     const revisions = new ChapterRevisionRepository(ownerBDatabase)
     const reports = new PostprocessReportRepository(ownerBDatabase)
-    const workbench = new WorkbenchService(ownerBDatabase)
+    const workbench = new WorkbenchService(ownerBDatabase, { computeClient: inlineComputeClient })
     const task = tasksA.create({
       project_id: projectId,
       chapter_id: chapterId,
@@ -2013,7 +2014,7 @@ describe('task crash recovery fault matrix', () => {
         },
         runners: {
           'chapter-generation': createChapterGenerationTaskRunner({
-            service: new WorkbenchService(database).chapterGeneration,
+            service: new WorkbenchService(database, { computeClient: inlineComputeClient }).chapterGeneration,
             agentFactory: blocking.agentFactory,
           }),
         },
@@ -2234,7 +2235,7 @@ describe('task crash recovery fault matrix', () => {
 
   test('P1-3 stale approved version cannot overwrite a newer adopted chapter version', async () => {
     const { projectId, outlineId, chapterId } = seedProject('stale-approved-version')
-    const workbench = new WorkbenchService(database)
+    const workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
     const tasks = new TaskRepository(database)
     const versions = new ChapterVersionRepository(database)
     const blocking = createBlockingAgent()
@@ -2313,7 +2314,7 @@ describe('task crash recovery fault matrix', () => {
 
   test('P1-3 current approved version cannot overwrite later manual chapter edits', async () => {
     const { projectId, outlineId, chapterId } = seedProject('approved-manual-edit')
-    const workbench = new WorkbenchService(database)
+    const workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
     const tasks = new TaskRepository(database)
     const chapters = new ChapterRepository(database)
     const versions = new ChapterVersionRepository(database)
@@ -2377,7 +2378,7 @@ describe('task crash recovery fault matrix', () => {
 
   test('P1-3 mismatched final entity becomes stable non-recoverable without loops', async () => {
     const { projectId, outlineId, chapterId } = seedProject('final-mismatch')
-    const workbench = new WorkbenchService(database)
+    const workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
     const wrongChapter = workbench.chapters.create({
       project_id: projectId,
       chapter_number: 2,

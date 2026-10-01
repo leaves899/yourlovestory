@@ -22,6 +22,7 @@ import type {
 
 export interface NarrativeProjectPort {
   getProject(projectId: string): { id: string; status: string }
+  getChapterOutline?(projectId: string, outlineId: string): { chapter_number: number }
 }
 
 export interface NarrativeChapterStore extends ChapterStore {

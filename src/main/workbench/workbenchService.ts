@@ -36,9 +36,11 @@ import { ChapterGenerationService } from '../../shared/chapterGeneration'
 import { OutlineGenerationService } from '../../shared/outlineGeneration'
 import { NarrativeWorkbenchService } from '../../shared/narrativeWorkbench'
 import { NovelProjectService as NovelProjectServiceClass } from '../../shared/novelProject'
+import { sharedComputeWorkerClient, type ComputeWorkerClient } from '../workers/computeWorkerClient'
 
 export interface WorkbenchServiceOptions {
   projectRoot?: string
+  computeClient?: Pick<ComputeWorkerClient, 'run'>
 }
 
 export class WorkbenchService extends NovelProjectServiceClass {
@@ -65,6 +67,7 @@ export class WorkbenchService extends NovelProjectServiceClass {
   public readonly narrative: NarrativeWorkbenchService
 
   public constructor(database: SqliteDatabase, options: WorkbenchServiceOptions = {}) {
+    const computeClient = options.computeClient ?? sharedComputeWorkerClient
     const projects = new ProjectRepository(database)
     const configs = new ProjectConfigRepository(database)
     const characters = new CharacterRepository(database)
@@ -123,6 +126,7 @@ export class WorkbenchService extends NovelProjectServiceClass {
     this.skills = skills
     this.postprocessReports = postprocessReports
     this.chapterGeneration = new ChapterGenerationService({
+      computeContext: (input, runOptions) => computeClient.run('compile-context', input, runOptions),
       project: this,
       chapters,
       versions: chapterVersions,
@@ -130,9 +134,11 @@ export class WorkbenchService extends NovelProjectServiceClass {
       foreshadows,
     })
     this.outlineGeneration = new OutlineGenerationService({
+      computeContext: (input, runOptions) => computeClient.run('compile-context', input, runOptions),
       project: this, chapters, memories: narrativeMemories, foreshadows,
     })
     this.narrative = new NarrativeWorkbenchService({
+      computeDiff: (payload, runOptions) => computeClient.run('chapter-diff', payload, runOptions),
       stores: {
         project: this,
         chapters,

@@ -37,15 +37,17 @@ Electron 运行时通过 `app.getVersion()` 读取打包元数据，CI、Git tag
 - RC（`X.Y.Z-rc.N`）：Stable 候选；发布内容冻结，所有必需质量门禁、签名和
   notarization 状态已明确，只接受发布阻塞修复。
 - Stable（`X.Y.Z`）：面向一般用户；必须通过完整 CI、三平台打包和 Issue #25
-  定义的 packaged Electron smoke tests。Issue #25 完成并接入前禁止 Stable 发布。
+  定义的 packaged Electron smoke tests，以及真实签名和 macOS notarization 验证。
+  仓库 workflow 当前只允许 draft prerelease，公开 Stable 需要另行授权。
 
 预发布序号从 1 递增。`PATCH` 用于向后兼容的修复和安全更新，`MINOR` 用于向后兼容
 的新能力，`MAJOR` 用于破坏性 API、数据或用户工作流变化。`0.y.z` 阶段的破坏性变化
 可提升 minor，但仍必须写明迁移影响。
 
 当前版本选择 `0.2.0-alpha.1`：唯一历史标签为 `v0.1.0-alpha.1`，此后已增加长篇
-工作台等显著功能，但没有 Stable GitHub Release 或完成 packaged smoke tests 的证据。
-因此从错误的 `1.0.0` 回到下一条保守 Alpha 版本线。
+工作台等显著功能，因此此前从错误的 `1.0.0` 回到保守 Alpha 版本线。现在真实 packaged
+smoke 已在 Windows、Linux 和 macOS CI 中通过并接入发布门禁；真实代码签名和 Apple
+notarization 仍缺外部凭据，继续保持 prerelease，不能据此声明 Stable。
 
 ## Tag 与 Release
 
@@ -62,9 +64,10 @@ Electron 运行时通过 `app.getVersion()` 读取打包元数据，CI、Git tag
 单调演进，不得为了与应用版本一致而改号。每次涉及 schema 的发布必须说明 migration
 是否可逆，并尽可能保持前向兼容。
 
-升级前应退出应用并备份整个 Electron `userData` 目录。自动备份和恢复由 Issue #19
-负责；其完成前，每份发布说明都必须要求用户自行备份。旧应用可能无法读取新 schema，
-降级安装存在数据损坏或无法启动风险；当前不承诺自动回滚。
+升级前应退出应用并备份整个 Electron `userData` 目录。Issue #19 已实现数据库自动
+备份、migration 前快照、migration 失败回滚和受控恢复。schema 迁移失败的内部回滚
+用于保护升级前状态，并不代表支持任意应用版本降级；旧应用可能无法读取新 schema。
+发布说明仍须写明兼容边界，保留完整 userData 备份，以覆盖数据库外的角色与配置文件。
 
 ## 安全支持
 

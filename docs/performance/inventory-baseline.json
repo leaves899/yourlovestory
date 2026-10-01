@@ -1,0 +1,1864 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-01T11:01:11.596Z",
+  "node": "v22.23.1",
+  "platform": "win32",
+  "arch": "x64",
+  "cpu": "AMD Ryzen 9 7945HX with Radeon Graphics",
+  "warmups": 2,
+  "runs": 5,
+  "percentile_method": "sorted sample at floor(n*p), capped at n-1; p95 is the maximum for n=5",
+  "implementation_hashes": [
+    {
+      "file": "dist/main/shared/narrativeWorkbench/analysis.js",
+      "sha256": "3eb2fbde868b6685fe660ad96724f2b8ae804ae2b15daa5d5b26891a382255b0"
+    },
+    {
+      "file": "dist/main/shared/narrativeWorkbench/blocks.js",
+      "sha256": "b31630a1b7958986556feb3f8836f0e1dffa7043d7571be149de2070455bd8dc"
+    },
+    {
+      "file": "dist/main/agent/llm/context.js",
+      "sha256": "39926862414dde17b52b475ec61b3578daed5137bdd2e26cd9b6ed41aa8fd7b6"
+    },
+    {
+      "file": "dist/main/shared/contextCompiler/index.js",
+      "sha256": "9c8e81a6a767f65ead0ec40a0382b86bb49dfd8f7756a1861d0e08075d7ef74e"
+    }
+  ],
+  "measurement_scope": "Synchronous implementations in a standalone Node main thread. Fixture construction and module startup are excluded.",
+  "memory_method": "RSS immediately after minus before each synchronous operation, signed MB; not peak RSS, not isolated per case; no forced GC.",
+  "event_loop_method": "Maximum of monitorEventLoopDelay(1 ms).max and elapsed time until a zero-delay timer scheduled before the operation fires; not renderer UI latency.",
+  "unmeasured": [
+    {
+      "task": "GraphPanel",
+      "reason": "Actual renderer relations.map and entityNames useMemo exist. React rendering/DOM responsiveness require a real renderer; Node cannot replace this measurement."
+    },
+    {
+      "task": "batch-summary",
+      "reason": "No independent batch-summary entry; existing single-chapter summary is model I/O. Its CPU preprocessing is covered by compiler and message-budget measurements."
+    },
+    {
+      "task": "project-consistency-scan",
+      "reason": "No independent full-project narrative scanner; existing single-chapter fact_check is model I/O."
+    },
+    {
+      "task": "search-index-build",
+      "reason": "No search-index builder or full-text search entry found in current source."
+    }
+  ],
+  "results": [
+    {
+      "task": "splitNarrativeParagraphs",
+      "size": "1000-paragraphs-crlf-whitespace",
+      "dimensions": {
+        "paragraphs": 1000,
+        "input_chars": 38883,
+        "input_utf8_bytes": 46883,
+        "line_endings": "CRLF",
+        "whitespace": true
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 1000
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 0.34950000000000614,
+          "p95": 0.8577999999999975,
+          "min": 0.2857999999999947,
+          "max": 0.8577999999999975,
+          "samples": [
+            0.34950000000000614,
+            0.31230000000000757,
+            0.2857999999999947,
+            0.47400000000000375,
+            0.8577999999999975
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0.17578125,
+          "p95": 0.359375,
+          "min": 0.16015625,
+          "max": 0.359375,
+          "samples": [
+            0.16015625,
+            0.17578125,
+            0.16796875,
+            0.359375,
+            0.35546875
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 1.1778000000000048,
+          "p95": 14.346400000000003,
+          "min": 0.35720000000000596,
+          "max": 14.346400000000003,
+          "samples": [
+            0.5837000000000074,
+            0.35720000000000596,
+            11.408599999999993,
+            14.346400000000003,
+            1.1778000000000048
+          ]
+        }
+      }
+    },
+    {
+      "task": "splitNarrativeParagraphs",
+      "size": "10000-paragraphs-crlf-whitespace",
+      "dimensions": {
+        "paragraphs": 10000,
+        "input_chars": 398883,
+        "input_utf8_bytes": 478883,
+        "line_endings": "CRLF",
+        "whitespace": true
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 10000
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 3.965500000000006,
+          "p95": 6.1503999999999905,
+          "min": 2.9057999999999993,
+          "max": 6.1503999999999905,
+          "samples": [
+            3.412300000000002,
+            3.965500000000006,
+            2.9057999999999993,
+            5.000699999999995,
+            6.1503999999999905
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0.7109375,
+          "p95": 3.2734375,
+          "min": 0.38671875,
+          "max": 3.2734375,
+          "samples": [
+            0.66796875,
+            0.38671875,
+            3.25,
+            0.7109375,
+            3.2734375
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 4.102899999999991,
+          "p95": 6.310200000000009,
+          "min": 2.9598000000000013,
+          "max": 6.310200000000009,
+          "samples": [
+            4.089500000000001,
+            4.102899999999991,
+            2.9598000000000013,
+            5.438500000000005,
+            6.310200000000009
+          ]
+        }
+      }
+    },
+    {
+      "task": "splitNarrativeParagraphs",
+      "size": "100000-paragraphs-crlf-whitespace",
+      "dimensions": {
+        "paragraphs": 100000,
+        "input_chars": 4088883,
+        "input_utf8_bytes": 4888883,
+        "line_endings": "CRLF",
+        "whitespace": true
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 100000
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 52.39029999999997,
+          "p95": 69.06670000000003,
+          "min": 47.35410000000002,
+          "max": 69.06670000000003,
+          "samples": [
+            55.14350000000002,
+            52.39029999999997,
+            47.35410000000002,
+            69.06670000000003,
+            49.98829999999998
+          ]
+        },
+        "cpu_ms": {
+          "p50": 78,
+          "p95": 125,
+          "min": 47,
+          "max": 125,
+          "samples": [
+            125,
+            47,
+            47,
+            125,
+            78
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 5.0703125,
+          "p95": 26.75390625,
+          "min": -10.02734375,
+          "max": 26.75390625,
+          "samples": [
+            23.68359375,
+            26.75390625,
+            3.36328125,
+            -10.02734375,
+            5.0703125
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 52.490999999999985,
+          "p95": 69.28910000000002,
+          "min": 47.469899999999996,
+          "max": 69.28910000000002,
+          "samples": [
+            55.476999999999975,
+            52.490999999999985,
+            47.469899999999996,
+            69.28910000000002,
+            50.06209999999999
+          ]
+        }
+      }
+    },
+    {
+      "task": "splitNarrativeParagraphs",
+      "size": "1-MiB-single-paragraph",
+      "dimensions": {
+        "paragraphs": 1,
+        "input_chars": 857928,
+        "input_utf8_bytes": 1048576
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 1
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 0.28759999999999764,
+          "p95": 0.76400000000001,
+          "min": 0.2738000000000511,
+          "max": 0.76400000000001,
+          "samples": [
+            0.2738000000000511,
+            0.28759999999999764,
+            0.39190000000007785,
+            0.2862999999999829,
+            0.76400000000001
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 0.9284999999999854,
+          "p95": 13.309600000000046,
+          "min": 0.376700000000028,
+          "max": 13.309600000000046,
+          "samples": [
+            2.5430999999999813,
+            0.376700000000028,
+            0.4551000000000158,
+            13.309600000000046,
+            0.9284999999999854
+          ]
+        }
+      }
+    },
+    {
+      "task": "splitNarrativeParagraphs",
+      "size": "10-MiB-single-paragraph",
+      "dimensions": {
+        "paragraphs": 1,
+        "input_chars": 8579264,
+        "input_utf8_bytes": 10485760
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 1
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 2.6792999999998983,
+          "p95": 4.255400000000009,
+          "min": 2.616999999999962,
+          "max": 4.255400000000009,
+          "samples": [
+            3.926400000000058,
+            2.6792999999998983,
+            2.616999999999962,
+            2.6258000000000266,
+            4.255400000000009
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 16,
+          "min": 0,
+          "max": 16,
+          "samples": [
+            0,
+            0,
+            16,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 2.740599999999972,
+          "p95": 4.3344999999999345,
+          "min": 2.671299999999974,
+          "max": 4.3344999999999345,
+          "samples": [
+            4.2526000000000295,
+            2.740599999999972,
+            2.671299999999974,
+            2.6721999999999753,
+            4.3344999999999345
+          ]
+        }
+      }
+    },
+    {
+      "task": "trimMessagesToBudget",
+      "size": "100-messages-1-KiB-limited",
+      "dimensions": {
+        "messages": 100,
+        "content_utf8_bytes_each": 1024,
+        "content_utf8_bytes_total": 102400,
+        "budget_policy": "limited",
+        "budget": 64000
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 100
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 0.3170000000000073,
+          "p95": 0.43629999999996016,
+          "min": 0.17989999999997508,
+          "max": 0.43629999999996016,
+          "samples": [
+            0.3170000000000073,
+            0.23640000000000327,
+            0.17989999999997508,
+            0.43629999999996016,
+            0.36839999999995143
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 12.221699999999942,
+          "p95": 14.944799999999987,
+          "min": 0.31540000000006785,
+          "max": 14.944799999999987,
+          "samples": [
+            12.221699999999942,
+            0.31540000000006785,
+            13.582700000000045,
+            14.944799999999987,
+            0.44889999999998054
+          ]
+        }
+      }
+    },
+    {
+      "task": "trimMessagesToBudget",
+      "size": "100-messages-1-KiB-retain-all",
+      "dimensions": {
+        "messages": 100,
+        "content_utf8_bytes_each": 1024,
+        "content_utf8_bytes_total": 102400,
+        "budget_policy": "retain-all",
+        "budget": 22100
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 100
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 0.31179999999994834,
+          "p95": 0.42410000000006676,
+          "min": 0.179300000000012,
+          "max": 0.42410000000006676,
+          "samples": [
+            0.31179999999994834,
+            0.179300000000012,
+            0.1938000000000102,
+            0.4057999999999993,
+            0.42410000000006676
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 13.23700000000008,
+          "p95": 15.109899999999925,
+          "min": 0.2341000000000122,
+          "max": 15.109899999999925,
+          "samples": [
+            0.4391999999999143,
+            13.23700000000008,
+            0.2341000000000122,
+            14.774699999999939,
+            15.109899999999925
+          ]
+        }
+      }
+    },
+    {
+      "task": "trimMessagesToBudget",
+      "size": "100-messages-10-KiB-limited",
+      "dimensions": {
+        "messages": 100,
+        "content_utf8_bytes_each": 10240,
+        "content_utf8_bytes_total": 1024000,
+        "budget_policy": "limited",
+        "budget": 64000
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 30
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 0.6298000000000457,
+          "p95": 0.6503999999999905,
+          "min": 0.5615000000000236,
+          "max": 0.6503999999999905,
+          "samples": [
+            0.6503999999999905,
+            0.6298000000000457,
+            0.5615000000000236,
+            0.5892000000000053,
+            0.634900000000016
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0.01953125,
+          "min": 0,
+          "max": 0.01953125,
+          "samples": [
+            0,
+            0,
+            0,
+            0.01953125,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 0.8144999999999527,
+          "p95": 16.001500000000078,
+          "min": 0.5757999999999583,
+          "max": 16.001500000000078,
+          "samples": [
+            0.8144999999999527,
+            0.6506999999999152,
+            0.5757999999999583,
+            8.374000000000024,
+            16.001500000000078
+          ]
+        }
+      }
+    },
+    {
+      "task": "trimMessagesToBudget",
+      "size": "100-messages-10-KiB-retain-all",
+      "dimensions": {
+        "messages": 100,
+        "content_utf8_bytes_each": 10240,
+        "content_utf8_bytes_total": 1024000,
+        "budget_policy": "retain-all",
+        "budget": 210700
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 100
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 2.0955000000000155,
+          "p95": 2.5581999999999425,
+          "min": 2.004600000000096,
+          "max": 2.5581999999999425,
+          "samples": [
+            2.5581999999999425,
+            2.0955000000000155,
+            2.104400000000055,
+            2.078899999999976,
+            2.004600000000096
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 15,
+          "min": 0,
+          "max": 15,
+          "samples": [
+            0,
+            15,
+            0,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0.01953125,
+          "min": 0,
+          "max": 0.01953125,
+          "samples": [
+            0,
+            0,
+            0.01953125,
+            0,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 2.127899999999954,
+          "p95": 2.899699999999939,
+          "min": 2.019800000000032,
+          "max": 2.899699999999939,
+          "samples": [
+            2.899699999999939,
+            2.7342000000001008,
+            2.127899999999954,
+            2.0972000000000435,
+            2.019800000000032
+          ]
+        }
+      }
+    },
+    {
+      "task": "trimMessagesToBudget",
+      "size": "1000-messages-1-KiB-limited",
+      "dimensions": {
+        "messages": 1000,
+        "content_utf8_bytes_each": 1024,
+        "content_utf8_bytes_total": 1024000,
+        "budget_policy": "limited",
+        "budget": 64000
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 289
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 0.6811999999999898,
+          "p95": 0.7269999999999754,
+          "min": 0.4896999999999707,
+          "max": 0.7269999999999754,
+          "samples": [
+            0.4896999999999707,
+            0.7269999999999754,
+            0.6811999999999898,
+            0.6254999999999882,
+            0.705600000000004
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 16,
+          "min": 0,
+          "max": 16,
+          "samples": [
+            0,
+            16,
+            0,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 0.7261999999999489,
+          "p95": 0.9320999999999913,
+          "min": 0.6510999999999285,
+          "max": 0.9320999999999913,
+          "samples": [
+            0.8344000000000733,
+            0.9320999999999913,
+            0.70150000000001,
+            0.6510999999999285,
+            0.7261999999999489
+          ]
+        }
+      }
+    },
+    {
+      "task": "trimMessagesToBudget",
+      "size": "1000-messages-1-KiB-retain-all",
+      "dimensions": {
+        "messages": 1000,
+        "content_utf8_bytes_each": 1024,
+        "content_utf8_bytes_total": 1024000,
+        "budget_policy": "retain-all",
+        "budget": 221001
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 1000
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 2.0598999999999705,
+          "p95": 2.528599999999983,
+          "min": 1.9991999999999734,
+          "max": 2.528599999999983,
+          "samples": [
+            1.9991999999999734,
+            2.004599999999982,
+            2.528599999999983,
+            2.0598999999999705,
+            2.1929000000000087
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0,
+          "min": -0.3203125,
+          "max": 0,
+          "samples": [
+            -0.3203125,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 2.14530000000002,
+          "p95": 2.558200000000056,
+          "min": 2.036799999999971,
+          "max": 2.558200000000056,
+          "samples": [
+            2.14530000000002,
+            2.036799999999971,
+            2.558200000000056,
+            2.0785000000000764,
+            2.4518999999999096
+          ]
+        }
+      }
+    },
+    {
+      "task": "trimMessagesToBudget",
+      "size": "1000-messages-10-KiB-limited",
+      "dimensions": {
+        "messages": 1000,
+        "content_utf8_bytes_each": 10240,
+        "content_utf8_bytes_total": 10240000,
+        "budget_policy": "limited",
+        "budget": 64000
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 30
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 0.6925999999999704,
+          "p95": 0.8852000000000544,
+          "min": 0.6580999999999904,
+          "max": 0.8852000000000544,
+          "samples": [
+            0.7031999999999243,
+            0.6895000000000664,
+            0.6925999999999704,
+            0.8852000000000544,
+            0.6580999999999904
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0.01953125,
+          "min": 0,
+          "max": 0.01953125,
+          "samples": [
+            0,
+            0.01953125,
+            0,
+            0.01953125,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 0.7712000000000216,
+          "p95": 0.9642999999999802,
+          "min": 0.6802000000000135,
+          "max": 0.9642999999999802,
+          "samples": [
+            0.9642999999999802,
+            0.732599999999934,
+            0.7712000000000216,
+            0.9384000000000015,
+            0.6802000000000135
+          ]
+        }
+      }
+    },
+    {
+      "task": "trimMessagesToBudget",
+      "size": "1000-messages-10-KiB-retain-all",
+      "dimensions": {
+        "messages": 1000,
+        "content_utf8_bytes_each": 10240,
+        "content_utf8_bytes_total": 10240000,
+        "budget_policy": "retain-all",
+        "budget": 2107001
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 1000
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 26.168800000000033,
+          "p95": 27.004299999999944,
+          "min": 25.345400000000154,
+          "max": 27.004299999999944,
+          "samples": [
+            25.45169999999996,
+            27.004299999999944,
+            26.168800000000033,
+            26.674300000000017,
+            25.345400000000154
+          ]
+        },
+        "cpu_ms": {
+          "p50": 31,
+          "p95": 32,
+          "min": 15,
+          "max": 32,
+          "samples": [
+            16,
+            31,
+            31,
+            32,
+            15
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0.01953125,
+          "p95": 0.07421875,
+          "min": 0.01953125,
+          "max": 0.07421875,
+          "samples": [
+            0.01953125,
+            0.01953125,
+            0.01953125,
+            0.01953125,
+            0.07421875
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 26.329600000000028,
+          "p95": 27.215599999999995,
+          "min": 25.556600000000117,
+          "max": 27.215599999999995,
+          "samples": [
+            25.86119999999994,
+            27.215599999999995,
+            26.329600000000028,
+            26.924900000000093,
+            25.556600000000117
+          ]
+        }
+      }
+    },
+    {
+      "task": "trimMessagesToBudget",
+      "size": "10000-messages-1-KiB-limited",
+      "dimensions": {
+        "messages": 10000,
+        "content_utf8_bytes_each": 1024,
+        "content_utf8_bytes_total": 10240000,
+        "budget_policy": "limited",
+        "budget": 64000
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 288
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 0.7148999999999432,
+          "p95": 1.6731999999999516,
+          "min": 0.6455000000000837,
+          "max": 1.6731999999999516,
+          "samples": [
+            1.6731999999999516,
+            0.6455000000000837,
+            0.6619000000000597,
+            0.7148999999999432,
+            0.8260999999999967
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 0.8848000000000411,
+          "p95": 6.434099999999944,
+          "min": 0.6702999999999975,
+          "max": 6.434099999999944,
+          "samples": [
+            2.074700000000121,
+            0.6702999999999975,
+            0.6783000000000357,
+            6.434099999999944,
+            0.8848000000000411
+          ]
+        }
+      }
+    },
+    {
+      "task": "trimMessagesToBudget",
+      "size": "10000-messages-1-KiB-retain-all",
+      "dimensions": {
+        "messages": 10000,
+        "content_utf8_bytes_each": 1024,
+        "content_utf8_bytes_total": 10240000,
+        "budget_policy": "retain-all",
+        "budget": 2219001
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 10000
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 37.74969999999985,
+          "p95": 40.32999999999993,
+          "min": 34.39850000000001,
+          "max": 40.32999999999993,
+          "samples": [
+            34.39850000000001,
+            35.86729999999989,
+            37.74969999999985,
+            37.93180000000007,
+            40.32999999999993
+          ]
+        },
+        "cpu_ms": {
+          "p50": 32,
+          "p95": 47,
+          "min": 31,
+          "max": 47,
+          "samples": [
+            31,
+            31,
+            47,
+            32,
+            46
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 38.16430000000014,
+          "p95": 40.449499999999944,
+          "min": 34.90820000000008,
+          "max": 40.449499999999944,
+          "samples": [
+            34.90820000000008,
+            36.287900000000036,
+            38.38429999999994,
+            38.16430000000014,
+            40.449499999999944
+          ]
+        }
+      }
+    },
+    {
+      "task": "trimMessagesToBudget",
+      "size": "10000-messages-10-KiB-limited",
+      "dimensions": {
+        "messages": 10000,
+        "content_utf8_bytes_each": 10240,
+        "content_utf8_bytes_total": 102400000,
+        "budget_policy": "limited",
+        "budget": 64000
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 30
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 0.7260999999998603,
+          "p95": 1.1024999999999636,
+          "min": 0.6866999999999734,
+          "max": 1.1024999999999636,
+          "samples": [
+            0.6866999999999734,
+            0.8342999999999847,
+            0.7260999999998603,
+            1.1024999999999636,
+            0.6945000000000618
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0.01953125,
+          "min": 0,
+          "max": 0.01953125,
+          "samples": [
+            0,
+            0.01953125,
+            0,
+            0,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 1.0550000000000637,
+          "p95": 8.301800000000185,
+          "min": 0.7263000000000375,
+          "max": 8.301800000000185,
+          "samples": [
+            1.0550000000000637,
+            8.301800000000185,
+            0.7862999999999829,
+            1.1520000000000437,
+            0.7263000000000375
+          ]
+        }
+      }
+    },
+    {
+      "task": "trimMessagesToBudget",
+      "size": "10000-messages-10-KiB-retain-all",
+      "dimensions": {
+        "messages": 10000,
+        "content_utf8_bytes_each": 10240,
+        "content_utf8_bytes_total": 102400000,
+        "budget_policy": "retain-all",
+        "budget": 21079001
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 10000
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 312.91079999999965,
+          "p95": 342.4331000000002,
+          "min": 274.79359999999997,
+          "max": 342.4331000000002,
+          "samples": [
+            278.73690000000033,
+            274.79359999999997,
+            312.91079999999965,
+            342.4331000000002,
+            340.1745000000001
+          ]
+        },
+        "cpu_ms": {
+          "p50": 313,
+          "p95": 344,
+          "min": 281,
+          "max": 344,
+          "samples": [
+            281,
+            281,
+            313,
+            344,
+            328
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0.1875,
+          "p95": 0.1875,
+          "min": 0.125,
+          "max": 0.1875,
+          "samples": [
+            0.1875,
+            0.1484375,
+            0.1875,
+            0.1875,
+            0.125
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 313.0106999999998,
+          "p95": 342.6738,
+          "min": 274.8914,
+          "max": 342.6738,
+          "samples": [
+            279.0600999999997,
+            274.8914,
+            313.0106999999998,
+            342.6738,
+            340.3022000000001
+          ]
+        }
+      }
+    },
+    {
+      "task": "compileContext",
+      "size": "summary-64-KiB-body-allowed",
+      "dimensions": {
+        "task_kind": "summary",
+        "body_utf8_bytes": 65536,
+        "body_chars": 53624,
+        "budget_policy": "allowed",
+        "budget": 26065
+      },
+      "outcome": {
+        "status": "success",
+        "selected_items": 4,
+        "discarded_items": 0,
+        "prompt_chars": 53925,
+        "selected_tokens": 18054,
+        "available_tokens": 21769
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 7.45069999999987,
+          "p95": 9.950199999999768,
+          "min": 6.328700000000026,
+          "max": 9.950199999999768,
+          "samples": [
+            9.216100000000097,
+            7.45069999999987,
+            9.950199999999768,
+            6.711999999999989,
+            6.328700000000026
+          ]
+        },
+        "cpu_ms": {
+          "p50": 15,
+          "p95": 31,
+          "min": 0,
+          "max": 31,
+          "samples": [
+            31,
+            15,
+            0,
+            16,
+            0
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0.03515625,
+          "min": -0.5859375,
+          "max": 0.03515625,
+          "samples": [
+            -0.5859375,
+            0,
+            0,
+            0,
+            0.03515625
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 7.622200000000248,
+          "p95": 10.11770000000024,
+          "min": 6.6603000000000065,
+          "max": 10.11770000000024,
+          "samples": [
+            9.448700000000372,
+            7.622200000000248,
+            10.11770000000024,
+            6.9070999999999,
+            6.6603000000000065
+          ]
+        }
+      }
+    },
+    {
+      "task": "compileContext",
+      "size": "summary-1024-KiB-body-allowed",
+      "dimensions": {
+        "task_kind": "summary",
+        "body_utf8_bytes": 1048576,
+        "body_chars": 857928,
+        "budget_policy": "allowed",
+        "budget": 294167
+      },
+      "outcome": {
+        "status": "success",
+        "selected_items": 4,
+        "discarded_items": 0,
+        "prompt_chars": 858229,
+        "selected_tokens": 286156,
+        "available_tokens": 289871
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 120.39689999999973,
+          "p95": 129.0527000000002,
+          "min": 112.67579999999998,
+          "max": 129.0527000000002,
+          "samples": [
+            120.39689999999973,
+            129.0527000000002,
+            118.79860000000008,
+            112.67579999999998,
+            123.33400000000074
+          ]
+        },
+        "cpu_ms": {
+          "p50": 125,
+          "p95": 156,
+          "min": 109,
+          "max": 156,
+          "samples": [
+            109,
+            125,
+            125,
+            109,
+            156
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 3.28125,
+          "p95": 4.9296875,
+          "min": 3.28125,
+          "max": 4.9296875,
+          "samples": [
+            3.28125,
+            4.9296875,
+            3.28125,
+            3.28125,
+            4.92578125
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 120.79799999999977,
+          "p95": 129.15910000000076,
+          "min": 112.81620000000021,
+          "max": 129.15910000000076,
+          "samples": [
+            120.79799999999977,
+            129.15910000000076,
+            118.89599999999973,
+            112.81620000000021,
+            123.43589999999949
+          ]
+        }
+      }
+    },
+    {
+      "task": "compileContext",
+      "size": "summary-1024-KiB-body-required-over-budget",
+      "dimensions": {
+        "task_kind": "summary",
+        "body_utf8_bytes": 1048576,
+        "body_chars": 857928,
+        "budget_policy": "required-over-budget",
+        "budget": 64000
+      },
+      "outcome": {
+        "status": "budget_exceeded",
+        "error_name": "ContextBudgetExceededError",
+        "required_tokens": 286156,
+        "available_tokens": 59704
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 68.85490000000027,
+          "p95": 83.0621000000001,
+          "min": 64.95139999999992,
+          "max": 83.0621000000001,
+          "samples": [
+            64.95139999999992,
+            68.85490000000027,
+            75.42560000000049,
+            83.0621000000001,
+            66.71230000000014
+          ]
+        },
+        "cpu_ms": {
+          "p50": 63,
+          "p95": 156,
+          "min": 47,
+          "max": 156,
+          "samples": [
+            63,
+            62,
+            47,
+            156,
+            63
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 3.28125,
+          "p95": 6.5703125,
+          "min": -53.1484375,
+          "max": 6.5703125,
+          "samples": [
+            3.28125,
+            6.5703125,
+            3.28125,
+            -53.1484375,
+            3.28125
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 68.97860000000037,
+          "p95": 83.5649000000003,
+          "min": 65.14840000000004,
+          "max": 83.5649000000003,
+          "samples": [
+            65.14840000000004,
+            68.97860000000037,
+            75.55119999999988,
+            83.5649000000003,
+            66.85950000000048
+          ]
+        }
+      }
+    },
+    {
+      "task": "compileContext",
+      "size": "outline-100-materials-1-KiB",
+      "dimensions": {
+        "task_kind": "outline",
+        "materials": 100,
+        "material_utf8_bytes_each": 1024,
+        "material_utf8_bytes_total": 102400,
+        "budget": 64000
+      },
+      "outcome": {
+        "status": "success",
+        "selected_items": 18,
+        "discarded_items": 85,
+        "prompt_chars": 14177,
+        "selected_tokens": 4809,
+        "available_tokens": 59704
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 11.020400000000336,
+          "p95": 11.531200000000354,
+          "min": 10.097600000000057,
+          "max": 11.531200000000354,
+          "samples": [
+            11.020400000000336,
+            11.187399999999798,
+            10.097600000000057,
+            10.885600000000522,
+            11.531200000000354
+          ]
+        },
+        "cpu_ms": {
+          "p50": 15,
+          "p95": 16,
+          "min": 0,
+          "max": 16,
+          "samples": [
+            16,
+            0,
+            15,
+            16,
+            15
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0.05859375,
+          "min": 0,
+          "max": 0.05859375,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            0.05859375
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 11.204899999999725,
+          "p95": 11.83390000000054,
+          "min": 10.167100000000573,
+          "max": 11.83390000000054,
+          "samples": [
+            11.204899999999725,
+            11.296800000000076,
+            10.167100000000573,
+            10.96389999999974,
+            11.83390000000054
+          ]
+        }
+      }
+    },
+    {
+      "task": "compileContext",
+      "size": "outline-100-materials-10-KiB",
+      "dimensions": {
+        "task_kind": "outline",
+        "materials": 100,
+        "material_utf8_bytes_each": 10240,
+        "material_utf8_bytes_total": 1024000,
+        "budget": 64000
+      },
+      "outcome": {
+        "status": "success",
+        "selected_items": 18,
+        "discarded_items": 85,
+        "prompt_chars": 134881,
+        "selected_tokens": 45017,
+        "available_tokens": 59704
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 95.76630000000023,
+          "p95": 99.59619999999995,
+          "min": 88.02520000000004,
+          "max": 99.59619999999995,
+          "samples": [
+            92.51530000000002,
+            88.02520000000004,
+            99.59619999999995,
+            95.76630000000023,
+            97.22640000000047
+          ]
+        },
+        "cpu_ms": {
+          "p50": 94,
+          "p95": 125,
+          "min": 78,
+          "max": 125,
+          "samples": [
+            94,
+            78,
+            125,
+            94,
+            93
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0,
+          "p95": 0.94921875,
+          "min": 0,
+          "max": 0.94921875,
+          "samples": [
+            0.94921875,
+            0.1796875,
+            0,
+            0,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 95.88419999999951,
+          "p95": 99.72409999999945,
+          "min": 88.14129999999932,
+          "max": 99.72409999999945,
+          "samples": [
+            92.73070000000007,
+            88.14129999999932,
+            99.72409999999945,
+            95.88419999999951,
+            97.33320000000003
+          ]
+        }
+      }
+    },
+    {
+      "task": "compileContext",
+      "size": "outline-1000-materials-1-KiB",
+      "dimensions": {
+        "task_kind": "outline",
+        "materials": 1000,
+        "material_utf8_bytes_each": 1024,
+        "material_utf8_bytes_total": 1024000,
+        "budget": 64000
+      },
+      "outcome": {
+        "status": "success",
+        "selected_items": 18,
+        "discarded_items": 985,
+        "prompt_chars": 14177,
+        "selected_tokens": 4809,
+        "available_tokens": 59704
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 58.11490000000049,
+          "p95": 63.067400000000816,
+          "min": 42.32140000000072,
+          "max": 63.067400000000816,
+          "samples": [
+            56.30410000000029,
+            58.11490000000049,
+            60.3123999999998,
+            63.067400000000816,
+            42.32140000000072
+          ]
+        },
+        "cpu_ms": {
+          "p50": 47,
+          "p95": 63,
+          "min": 31,
+          "max": 63,
+          "samples": [
+            47,
+            63,
+            31,
+            63,
+            46
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0.15234375,
+          "p95": 0.50390625,
+          "min": 0,
+          "max": 0.50390625,
+          "samples": [
+            0.109375,
+            0.19140625,
+            0.15234375,
+            0.50390625,
+            0
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 58.2559999999994,
+          "p95": 63.17159999999967,
+          "min": 42.43459999999959,
+          "max": 63.17159999999967,
+          "samples": [
+            56.52019999999993,
+            58.2559999999994,
+            60.417199999999866,
+            63.17159999999967,
+            42.43459999999959
+          ]
+        }
+      }
+    },
+    {
+      "task": "compileContext",
+      "size": "outline-1000-materials-10-KiB",
+      "dimensions": {
+        "task_kind": "outline",
+        "materials": 1000,
+        "material_utf8_bytes_each": 10240,
+        "material_utf8_bytes_total": 10240000,
+        "budget": 64000
+      },
+      "outcome": {
+        "status": "success",
+        "selected_items": 18,
+        "discarded_items": 985,
+        "prompt_chars": 134881,
+        "selected_tokens": 45017,
+        "available_tokens": 59704
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 480.5575000000008,
+          "p95": 500.79219999999987,
+          "min": 365.02530000000024,
+          "max": 500.79219999999987,
+          "samples": [
+            365.02530000000024,
+            473.6754000000001,
+            480.5575000000008,
+            500.79219999999987,
+            494.7581000000009
+          ]
+        },
+        "cpu_ms": {
+          "p50": 484,
+          "p95": 500,
+          "min": 344,
+          "max": 500,
+          "samples": [
+            344,
+            484,
+            439,
+            500,
+            500
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0.2109375,
+          "p95": 0.83984375,
+          "min": -0.640625,
+          "max": 0.83984375,
+          "samples": [
+            0.27734375,
+            0.02734375,
+            -0.640625,
+            0.83984375,
+            0.2109375
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 480.6810000000005,
+          "p95": 500.96429999999964,
+          "min": 365.26850000000013,
+          "max": 500.96429999999964,
+          "samples": [
+            365.26850000000013,
+            473.8204999999998,
+            480.6810000000005,
+            500.96429999999964,
+            494.8729999999996
+          ]
+        }
+      }
+    },
+    {
+      "task": "diffChapterBlocks",
+      "size": "1000-existing-blocks",
+      "dimensions": {
+        "blocks_each": 1000,
+        "modified_fraction": 0.1
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 1000,
+        "modified_count": 100
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 1.4547999999995227,
+          "p95": 3.1336000000010245,
+          "min": 0.8937999999998283,
+          "max": 3.1336000000010245,
+          "samples": [
+            0.8937999999998283,
+            2.128000000000611,
+            1.4547999999995227,
+            1.368000000000393,
+            3.1336000000010245
+          ]
+        },
+        "cpu_ms": {
+          "p50": 0,
+          "p95": 31,
+          "min": 0,
+          "max": 31,
+          "samples": [
+            0,
+            0,
+            0,
+            0,
+            31
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0.02734375,
+          "p95": 0.59765625,
+          "min": 0,
+          "max": 0.59765625,
+          "samples": [
+            0,
+            0.2890625,
+            0.02734375,
+            0,
+            0.59765625
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 1.5026999999990949,
+          "p95": 3.181800000000294,
+          "min": 1.0595000000012078,
+          "max": 3.181800000000294,
+          "samples": [
+            1.0595000000012078,
+            2.2106999999996333,
+            1.5026999999990949,
+            1.4125999999996566,
+            3.181800000000294
+          ]
+        }
+      }
+    },
+    {
+      "task": "diffChapterBlocks",
+      "size": "10000-existing-blocks",
+      "dimensions": {
+        "blocks_each": 10000,
+        "modified_fraction": 0.1
+      },
+      "outcome": {
+        "status": "success",
+        "output_items": 10000,
+        "modified_count": 1000
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 17.757900000000518,
+          "p95": 20.96230000000105,
+          "min": 15.586100000000442,
+          "max": 20.96230000000105,
+          "samples": [
+            17.731800000001385,
+            20.96230000000105,
+            19.85189999999966,
+            15.586100000000442,
+            17.757900000000518
+          ]
+        },
+        "cpu_ms": {
+          "p50": 16,
+          "p95": 31,
+          "min": 15,
+          "max": 31,
+          "samples": [
+            31,
+            16,
+            15,
+            31,
+            16
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 1.15625,
+          "p95": 1.15625,
+          "min": -0.390625,
+          "max": 1.15625,
+          "samples": [
+            1.15625,
+            1.15625,
+            -0.390625,
+            1.15625,
+            -0.2265625
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 18.458599999999933,
+          "p95": 21.21360000000095,
+          "min": 15.730999999999767,
+          "max": 21.21360000000095,
+          "samples": [
+            18.458599999999933,
+            21.21360000000095,
+            20.01890000000094,
+            15.730999999999767,
+            17.870700000001307
+          ]
+        }
+      }
+    }
+  ]
+}

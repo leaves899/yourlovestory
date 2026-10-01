@@ -264,6 +264,12 @@ export function createChapterGenerationTaskRunner(
                 systemPrompt: request.system_prompt ?? CHAPTER_GENERATION_SYSTEM_PROMPT,
               })
             }
+            context.assertStillOwnsExecution()
+            if (context.signal.aborted) {
+              const error = new Error('章节任务已取消，未调用模型。')
+              error.name = 'AbortError'
+              throw error
+            }
             context.setExecutionPhase('awaiting_model')
             return new AgentTextGenerator(agent, () => context.setExecutionPhase('model_in_flight')).generate(textRequest)
           },

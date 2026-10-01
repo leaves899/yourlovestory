@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-01T11:56:12.289Z",
+  "node": "v22.23.1",
+  "platform": "win32",
+  "arch": "x64",
+  "cpu": "AMD Ryzen 9 7945HX with Radeon Graphics        ",
+  "messages": 10000,
+  "message_utf8_bytes_each": 10240,
+  "total_message_utf8_bytes": 102400000,
+  "budget": 25738990,
+  "equivalence": false,
+  "synchronous": {
+    "status": "success",
+    "p50": 238.24450000000002,
+    "p95": 238.8327,
+    "loop_p50": 238.23659999999995,
+    "loop_p95": 238.90540000000004,
+    "peak_rss_delta_p50_mb": null,
+    "peak_rss_delta_p95_mb": null
+  },
+  "worker_threads": {
+    "status": "failed",
+    "error": "Compute worker failed: Worker terminated due to reaching memory limit: JS heap out of memory",
+    "wall_ms": 174.26940000000013,
+    "loop_ms": 91.20959999999991,
+    "peak_mb": 345.46875
+  },
+  "note": "Worker uses maxOldGenerationSizeMb=128. Worker RSS is sampled every 5 ms and may miss shorter peaks; synchronous peak is intentionally unreported because its non-yielding operation blocks timer sampling."
+}

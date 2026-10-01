@@ -61,7 +61,7 @@ export function createOutlineGenerationTaskRunner(options: {
         context.setExecutionPhase('preparing')
         let prepared: ReturnType<OutlineGenerationService['prepare']>
         try {
-          prepared = options.service.prepare(request, saved, context.task.id)
+          prepared = await options.service.prepareAsync(request, saved, context.task.id, context.signal)
         } catch (error) {
           if (error instanceof ContextBudgetExceededError) {
             context.saveCheckpoint(options.service.failedBudgetCheckpoint(request, error))
@@ -69,6 +69,8 @@ export function createOutlineGenerationTaskRunner(options: {
           }
           throw error
         }
+        context.assertStillOwnsExecution()
+        if (context.signal.aborted) return { status: 'cancelled' }
         let checkpoint = prepared.checkpoint
         context.saveCheckpoint(checkpoint)
         context.setStage('outline', 0.2)
@@ -101,11 +103,17 @@ export function createOutlineGenerationTaskRunner(options: {
         }
         context.assertStillOwnsExecution()
         if (context.signal.aborted) return { status: 'cancelled' }
-        context.setExecutionPhase('persisting_result')
         if (checkpoint.stage !== 'applied') {
+          const validation = await options.service.validateApplyAsync(request, checkpoint, context.task.id, context.signal)
+          // Give pending user input a turn between async source validation and
+          // the synchronous SQLite fence. apply still rechecks the current source.
+          await new Promise<void>((resolve) => setImmediate(resolve))
+          context.assertStillOwnsExecution()
+          if (context.signal.aborted) return { status: 'cancelled' }
+          context.setExecutionPhase('persisting_result')
           checkpoint = context.runOwnedSideEffect(() => {
             if (context.signal.aborted) throw new Error('大纲任务已中止，未写入大纲。')
-            const updated = options.service.apply(request, checkpoint, context.task.id)
+            const updated = options.service.apply(request, checkpoint, context.task.id, validation)
             const applied: OutlineCheckpoint = { ...checkpoint, stage: 'applied', applied_version: updated.version }
             context.saveCheckpoint(applied)
             return applied
@@ -118,6 +126,7 @@ export function createOutlineGenerationTaskRunner(options: {
           review_required: true,
         } }
       } catch (error) {
+        if (context.signal.aborted) return { status: 'cancelled' }
         if (error instanceof OutlineGenerationBoundaryError) throw new NonRecoverableTaskError(error.message)
         throw error
       } finally {

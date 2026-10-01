@@ -1,0 +1,469 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-01T11:35:20.348Z",
+  "node": "v22.23.1",
+  "platform": "win32",
+  "arch": "x64",
+  "cpu": "AMD Ryzen 9 7945HX with Radeon Graphics        ",
+  "warmups": 2,
+  "runs": 5,
+  "measurement_scope": "Actual compiler and actual Worker Threads; Worker startup, structured clone and termination included. Fixture construction and main module loading excluded. No SQLite/Electron/renderer/model I/O.",
+  "memory_method": "Signed process RSS immediately after minus before each operation. Worker runs also sample process RSS every 5 ms, reported as sampled peak absolute RSS and delta. Synchronous runs cannot be sampled by main timers and report no peak. No forced GC; baseline can contain retained allocations from earlier cases; sampled peak is not a guaranteed true maximum.",
+  "cpu_method": "process.cpuUsage across all process threads; includes Worker CPU.",
+  "event_loop_method": "Maximum of monitorEventLoopDelay and zero-delay timer lag scheduled before each operation. Node scheduling jitter included; not renderer UI latency.",
+  "percentile_method": "sorted samples at floor(n*p), capped to n-1; p95 is maximum with five samples",
+  "implementation_hashes": [
+    {
+      "file": "dist/main/shared/contextCompiler/compile.js",
+      "sha256": "950a4205fe418eaf3c0d955455b2a14fe7d50c00efe5c37c6fc0bb3880bd7baf"
+    },
+    {
+      "file": "dist/main/main/workers/computeWorker.js",
+      "sha256": "d837924504e0eac8790d6848e30b9207362eef65a73d04ffa3d32058ceca1446"
+    },
+    {
+      "file": "dist/main/main/workers/computeWorkerClient.js",
+      "sha256": "8819e89fe774670bdd98d2e26ca86a54b0f8b34fc8a4185fd9ae11b8071f68ad"
+    }
+  ],
+  "results": [
+    {
+      "fixture": "summary-1MiB-allowed",
+      "dimensions": {
+        "body_utf8_bytes": 1048576
+      },
+      "implementation": "synchronous",
+      "equivalent": true,
+      "outcome": {
+        "status": "success",
+        "selected_items": 3,
+        "discarded_items": 0,
+        "selected_tokens": 286080,
+        "available_tokens": 289871
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 75.43550000000005,
+          "p95": 78.59799999999996,
+          "samples": [
+            75.87140000000005,
+            74.48540000000003,
+            78.59799999999996,
+            75.43550000000005,
+            73.61590000000001
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 78,
+          "p95": 79,
+          "samples": [
+            62,
+            78,
+            78,
+            79,
+            78
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 4.9296875,
+          "p95": 4.953125,
+          "samples": [
+            4.92578125,
+            4.9296875,
+            4.92578125,
+            4.9453125,
+            4.953125
+          ]
+        },
+        "sampled_peak_process_rss_mb": null,
+        "sampled_peak_rss_delta_mb": null,
+        "event_loop_delay_ms": {
+          "p50": 75.53989999999999,
+          "p95": 78.71039999999994,
+          "samples": [
+            76.23970000000003,
+            74.61710000000005,
+            78.71039999999994,
+            75.53989999999999,
+            73.73030000000006
+          ]
+        }
+      }
+    },
+    {
+      "fixture": "summary-1MiB-allowed",
+      "dimensions": {
+        "body_utf8_bytes": 1048576
+      },
+      "implementation": "worker_threads",
+      "equivalent": true,
+      "outcome": {
+        "status": "success",
+        "selected_items": 3,
+        "discarded_items": 0,
+        "selected_tokens": 286080,
+        "available_tokens": 289871
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 137.22360000000003,
+          "p95": 139.13740000000007,
+          "samples": [
+            137.22360000000003,
+            139.13740000000007,
+            132.65210000000002,
+            133.9462000000001,
+            138.65460000000007
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 156,
+          "p95": 172,
+          "samples": [
+            156,
+            172,
+            140,
+            156,
+            156
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 1.66015625,
+          "p95": 2.23046875,
+          "samples": [
+            1.61328125,
+            1.66015625,
+            2.23046875,
+            1.4921875,
+            1.75390625
+          ]
+        },
+        "sampled_peak_process_rss_mb": {
+          "p50": 185.32421875,
+          "p95": 189.81640625,
+          "samples": [
+            181.01171875,
+            183.07421875,
+            185.32421875,
+            187.23828125,
+            189.81640625
+          ]
+        },
+        "sampled_peak_rss_delta_mb": {
+          "p50": 36.0546875,
+          "p95": 36.359375,
+          "samples": [
+            35.95703125,
+            36.0546875,
+            36.29296875,
+            35.625,
+            36.359375
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 15.917055,
+          "p95": 16.039935,
+          "samples": [
+            15.917055,
+            16.039935,
+            15.843327,
+            15.507455,
+            16.023551
+          ]
+        }
+      }
+    },
+    {
+      "fixture": "summary-1MiB-budget-rejection",
+      "dimensions": {
+        "body_utf8_bytes": 1048576
+      },
+      "implementation": "synchronous",
+      "equivalent": true,
+      "outcome": {
+        "status": "budget_exceeded",
+        "required_tokens": 286080,
+        "available_tokens": 59704
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 42.06020000000012,
+          "p95": 42.21070000000009,
+          "samples": [
+            42.06020000000012,
+            42.21070000000009,
+            41.758400000000165,
+            42.16449999999986,
+            41.74719999999979
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 46,
+          "p95": 48,
+          "samples": [
+            47,
+            31,
+            48,
+            46,
+            32
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 3.28125,
+          "p95": 6.5703125,
+          "samples": [
+            3.28125,
+            1.63671875,
+            6.5703125,
+            3.28125,
+            3.28125
+          ]
+        },
+        "sampled_peak_process_rss_mb": null,
+        "sampled_peak_rss_delta_mb": null,
+        "event_loop_delay_ms": {
+          "p50": 42.16339999999991,
+          "p95": 42.276600000000144,
+          "samples": [
+            42.16339999999991,
+            42.276600000000144,
+            41.8163999999997,
+            42.22880000000032,
+            41.8141999999998
+          ]
+        }
+      }
+    },
+    {
+      "fixture": "summary-1MiB-budget-rejection",
+      "dimensions": {
+        "body_utf8_bytes": 1048576
+      },
+      "implementation": "worker_threads",
+      "equivalent": true,
+      "outcome": {
+        "status": "budget_exceeded",
+        "required_tokens": 286080,
+        "available_tokens": 59704
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 103.35050000000001,
+          "p95": 108.60049999999956,
+          "samples": [
+            103.35050000000001,
+            102.86250000000018,
+            108.60049999999956,
+            101.07900000000018,
+            105.81630000000041
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 124,
+          "p95": 140,
+          "samples": [
+            94,
+            124,
+            79,
+            125,
+            140
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0.08984375,
+          "p95": 0.44140625,
+          "samples": [
+            0.21875,
+            -0.11328125,
+            0.44140625,
+            0.015625,
+            0.08984375
+          ]
+        },
+        "sampled_peak_process_rss_mb": {
+          "p50": 216.98828125,
+          "p95": 218.3984375,
+          "samples": [
+            216.26171875,
+            216.328125,
+            216.98828125,
+            217.28125,
+            218.3984375
+          ]
+        },
+        "sampled_peak_rss_delta_mb": {
+          "p50": 32.87890625,
+          "p95": 33.12890625,
+          "samples": [
+            32.9609375,
+            32.45703125,
+            32.87890625,
+            32.37890625,
+            33.12890625
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 15.605759,
+          "p95": 16.162815,
+          "samples": [
+            15.245311,
+            16.162815,
+            15.605759,
+            15.376383,
+            15.663103
+          ]
+        }
+      }
+    },
+    {
+      "fixture": "outline-1000-materials-10KiB",
+      "dimensions": {
+        "materials": 1000,
+        "input_content_utf8_bytes": 10240000,
+        "explicitly_selected_materials": 4
+      },
+      "implementation": "synchronous",
+      "equivalent": true,
+      "outcome": {
+        "status": "success",
+        "selected_items": 18,
+        "discarded_items": 984,
+        "selected_tokens": 45006,
+        "available_tokens": 59704
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 474.96219999999994,
+          "p95": 479.16919999999936,
+          "samples": [
+            385.3717999999999,
+            478.9888000000001,
+            441.6331999999993,
+            479.16919999999936,
+            474.96219999999994
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 485,
+          "p95": 500,
+          "samples": [
+            375,
+            485,
+            436,
+            500,
+            485
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0.26171875,
+          "p95": 2.4296875,
+          "samples": [
+            1.109375,
+            -85.390625,
+            0.26171875,
+            -1.48828125,
+            2.4296875
+          ]
+        },
+        "sampled_peak_process_rss_mb": null,
+        "sampled_peak_rss_delta_mb": null,
+        "event_loop_delay_ms": {
+          "p50": 475.04019999999946,
+          "p95": 479.5016999999998,
+          "samples": [
+            385.4875000000002,
+            479.5016999999998,
+            441.71139999999923,
+            479.2513000000008,
+            475.04019999999946
+          ]
+        }
+      }
+    },
+    {
+      "fixture": "outline-1000-materials-10KiB",
+      "dimensions": {
+        "materials": 1000,
+        "input_content_utf8_bytes": 10240000,
+        "explicitly_selected_materials": 4
+      },
+      "implementation": "worker_threads",
+      "equivalent": true,
+      "outcome": {
+        "status": "success",
+        "selected_items": 18,
+        "discarded_items": 984,
+        "selected_tokens": 45006,
+        "available_tokens": 59704
+      },
+      "metrics": {
+        "wall_ms": {
+          "p50": 505.8662999999997,
+          "p95": 570.8257999999996,
+          "samples": [
+            570.8257999999996,
+            497.29069999999956,
+            505.8662999999997,
+            567.6394,
+            458.8138999999992
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 609,
+          "p95": 657,
+          "samples": [
+            657,
+            500,
+            609,
+            609,
+            516
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 0.58203125,
+          "p95": 1.0078125,
+          "samples": [
+            1.0078125,
+            0.30078125,
+            0.58203125,
+            0.02734375,
+            0.73828125
+          ]
+        },
+        "sampled_peak_process_rss_mb": {
+          "p50": 166.85546875,
+          "p95": 169.83203125,
+          "samples": [
+            166.19140625,
+            166.85546875,
+            166.30859375,
+            168.390625,
+            169.83203125
+          ]
+        },
+        "sampled_peak_rss_delta_mb": {
+          "p50": 59.10546875,
+          "p95": 60.1171875,
+          "samples": [
+            59.671875,
+            59.10546875,
+            57.90625,
+            59.0546875,
+            60.1171875
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 16.138239,
+          "p95": 16.236543,
+          "samples": [
+            15.867903,
+            16.236543,
+            16.138239,
+            16.211967,
+            16.064511
+          ]
+        }
+      }
+    }
+  ]
+}

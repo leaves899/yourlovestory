@@ -19,16 +19,17 @@ files:
   - '!crushes/TEMPLATE/SKILL.md'
   - '!settings.json'
 npmRebuild: true
+forceCodeSigning: false
 asarUnpack:
   - node_modules/better-sqlite3/**/*
 win:
-  # Unsigned CI and local smoke builds must not depend on winCodeSign/rcedit.
-  # A signed release must explicitly enable this after protected certificates
-  # are configured; the workflow records the unsigned state instead of lying.
+  # Local/unsigned builds remain usable without credentials. The protected
+  # scripts/release/package.mjs signed mode overrides this and verifies both EXEs.
   signAndEditExecutable: false
   target:
     - nsis
 mac:
+  notarize: false
   target:
     - dmg
 linux:

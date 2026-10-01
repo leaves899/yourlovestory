@@ -72,6 +72,7 @@ export function setupIPC(options: IpcSetupOptions = {}): void {
   const getDatabaseStatus = options.getDatabaseStatus ?? (() => fallbackStatus)
   const enforceDatabaseStatus = options.getDatabaseStatus !== undefined
   const recoveryChannels = new Set([
+    'chapter:diff:cancel',
     'app:checkUpdate',
     'app:info',
     'app:quit',

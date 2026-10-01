@@ -9,6 +9,7 @@ import {
   ContextBudgetExceededError,
   CONTEXT_PROMPT_VERSION,
   type CompiledContext,
+  type ContextCompilerInput,
   type ContextCompileTrace,
   type ContextTraceItem,
 } from '../contextCompiler'
@@ -47,12 +48,18 @@ import {
   type TextGenerator,
 } from './models'
 
+export type ContextCompute = (
+  input: ContextCompilerInput,
+  options?: { signal?: AbortSignal },
+) => Promise<CompiledContext>
+
 export interface ChapterGenerationServiceOptions {
   project: ChapterGenerationProjectPort
   chapters: ChapterStore
   versions: ChapterVersionStore
   memories?: ChapterGenerationMemoryPort
   foreshadows?: ChapterGenerationForeshadowPort
+  computeContext?: ContextCompute
   now?: () => string
 }
 
@@ -524,7 +531,15 @@ export class ChapterGenerationService {
   }
 
   public listVersions(projectId: string, chapterId: string): ChapterVersion[] {
-    const chapter = this.requireChapter(projectId, chapterId)
+    const entity = this.options.chapters.getById(chapterId)
+    if (entity) {
+      const chapter = this.requireChapter(projectId, chapterId)
+      return this.options.versions.listByChapter(chapter.id)
+    }
+    const outline = this.options.project.getChapterOutline(projectId, chapterId)
+    const chapter = this.options.chapters.getByProjectAndNumber(projectId, outline.chapter_number)
+    if (!chapter) return []
+    this.requireChapter(projectId, chapter.id)
     return this.options.versions.listByChapter(chapter.id)
   }
 
@@ -779,9 +794,9 @@ export class ChapterGenerationService {
       checkpoint = { ...checkpoint, stage: 'body' }
       options.callbacks?.on_stage?.('body', 0.1)
       try {
-        const compiled = this.compileStage(input, preparation, modelParams, 'body', {
+        const compiled = await this.compileStage(input, preparation, modelParams, 'body', {
           existingText: checkpoint.body,
-        }, checkpoint.context_source_snapshot)
+        }, checkpoint.context_source_snapshot, options.signal)
         checkpoint = this.withStageCompile(checkpoint, 'body', compiled, modelParams)
         this.publishCheckpoint(options, checkpoint)
         const body = await this.runTextStage(
@@ -812,10 +827,10 @@ export class ChapterGenerationService {
     if (!stageAtLeast(checkpoint.stage, 'fact_check')) {
       options.callbacks?.on_stage?.('summary', 0.45)
       try {
-        const compiled = this.compileStage(input, preparation, modelParams, 'summary', {
+        const compiled = await this.compileStage(input, preparation, modelParams, 'summary', {
           body: checkpoint.body,
           existingText: checkpoint.summary,
-        }, checkpoint.context_source_snapshot)
+        }, checkpoint.context_source_snapshot, options.signal)
         checkpoint = this.withStageCompile(checkpoint, 'summary', compiled, modelParams)
         this.publishCheckpoint(options, checkpoint)
         const summary = await this.runTextStage(
@@ -845,10 +860,10 @@ export class ChapterGenerationService {
     if (!stageAtLeast(checkpoint.stage, 'saving')) {
       options.callbacks?.on_stage?.('fact_check', 0.7)
       try {
-        const compiled = this.compileStage(input, preparation, modelParams, 'fact_check', {
+        const compiled = await this.compileStage(input, preparation, modelParams, 'fact_check', {
           body: checkpoint.body,
           existingText: checkpoint.fact_check_text,
-        }, checkpoint.context_source_snapshot)
+        }, checkpoint.context_source_snapshot, options.signal)
         checkpoint = this.withStageCompile(checkpoint, 'fact_check', compiled, modelParams)
         this.publishCheckpoint(options, checkpoint)
         const factCheckText = await this.runTextStage(
@@ -883,6 +898,7 @@ export class ChapterGenerationService {
     if (options.signal.aborted) return cancel()
     options.callbacks?.on_stage?.('saving', 0.9)
     this.commit(options, () => {
+      this.assertCompilationSource(input, preparation, modelParams, checkpoint.context_source_snapshot)
       const current = this.requireChapter(input.project_id, chapter.id)
       if (current.version !== chapter.version || current.content !== checkpoint.source_content) {
         throw new ChapterGenerationBoundaryError('Chapter changed during generation; cannot save stale results')
@@ -969,19 +985,54 @@ export class ChapterGenerationService {
     return options.commit ? options.commit(operation) : operation()
   }
 
-  private compileStage(
+  private async compileStage(
     input: ChapterGenerationRequest,
     preparation: ChapterGenerationPreparation,
     modelParams: ChapterGenerationModelParams,
     stage: ChapterGenerationTextStage,
     parts: { body?: string; existingText?: string },
     expectedSnapshot?: string,
-  ): CompiledContext {
-    if (expectedSnapshot !== this.compilerSourceSnapshot(input, preparation, modelParams)) {
+    signal?: AbortSignal,
+  ): Promise<CompiledContext> {
+    if (signal?.aborted) throw new Error('Context compilation was cancelled')
+    const current = this.assertCompilationSource(input, preparation, modelParams, expectedSnapshot)
+    const compilerInput = this.compilerInput(input, current, modelParams, stage, parts)
+    const assertCurrent = (): void => {
+      if (signal?.aborted) throw new Error('Context compilation was cancelled')
+      this.assertCompilationSource(input, preparation, modelParams, expectedSnapshot)
+    }
+    let compiled: CompiledContext
+    try {
+      compiled = this.options.computeContext
+        ? await this.options.computeContext(compilerInput, { signal })
+        : compileContext(compilerInput)
+    } catch (error) {
+      // The Worker await permits user edits; also fence rejected budget results
+      // before associating their failureTrace with a durable source snapshot.
+      assertCurrent()
+      throw error
+    }
+    assertCurrent()
+    return compiled
+  }
+
+  private assertCompilationSource(
+    input: ChapterGenerationRequest,
+    preparation: ChapterGenerationPreparation,
+    modelParams: ChapterGenerationModelParams,
+    expectedSnapshot?: string,
+  ): ChapterGenerationPreparation {
+    // Supplying the existing entity id keeps this fence strictly read-only:
+    // deleting a chapter while a Worker runs must never recreate it.
+    const current = this.prepareInternal({ ...input, chapter_id: preparation.chapter.id }, false)
+    if (current.chapter.version !== preparation.chapter.version
+      || current.chapter.content !== preparation.chapter.content) {
+      throw new ChapterGenerationBoundaryError('Chapter changed during compilation; cannot use stale context')
+    }
+    if (expectedSnapshot !== this.compilerSourceSnapshot(input, current, modelParams)) {
       throw new ChapterGenerationBoundaryError('Context sources changed during generation; start a new generation task')
     }
-    const compilerInput = this.compilerInput(input, preparation, modelParams, stage, parts)
-    return compileContext(compilerInput)
+    return current
   }
 
   private compilerSourceSnapshot(

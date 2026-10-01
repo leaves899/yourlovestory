@@ -439,18 +439,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
       project_id: projectId,
       revision_id: revisionId,
     }),
-  diffChapterRevisions: (projectId: string, fromRevisionId: string, toRevisionId: string) =>
+  diffChapterRevisions: (projectId: string, fromRevisionId: string, toRevisionId: string, requestId?: string) =>
     ipcRenderer.invoke('chapter:diff:revisions', {
       project_id: projectId,
       from_revision_id: fromRevisionId,
       to_revision_id: toRevisionId,
+      request_id: requestId,
     }),
-  diffChapterVersions: (projectId: string, fromVersionId: string, toVersionId: string) =>
+  diffChapterVersions: (projectId: string, fromVersionId: string, toVersionId: string, requestId?: string) =>
     ipcRenderer.invoke('chapter:diff:versions', {
       project_id: projectId,
       from_version_id: fromVersionId,
       to_version_id: toVersionId,
+      request_id: requestId,
     }),
+  cancelChapterDiff: (requestId: string) =>
+    ipcRenderer.invoke('chapter:diff:cancel', { request_id: requestId }),
+  onChapterDiffProgress: (listener: (event: { request_id: string; progress: number }) => void) => {
+    const wrapped = (_event: IpcRendererEvent, payload: { request_id: string; progress: number }): void => listener(payload)
+    ipcRenderer.on('chapter:diff:progress', wrapped)
+    return () => ipcRenderer.removeListener('chapter:diff:progress', wrapped)
+  },
 
   // 长篇创作工作台
   listNovelProjects: (): Promise<WorkbenchResponse<Project[]>> =>

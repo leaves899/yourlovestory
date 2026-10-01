@@ -2,6 +2,15 @@ name: Release draft
 
 on:
   workflow_dispatch:
+    inputs:
+      signing_mode:
+        description: Signing mode (all outputs remain draft prereleases)
+        type: choice
+        required: true
+        default: unsigned-prerelease
+        options:
+          - unsigned-prerelease
+          - signed-prerelease
 
 permissions:
   contents: read
@@ -21,6 +30,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      signing_mode: ${{ inputs.signing_mode }}
+      signing_environment_verified: ${{ steps.signing-environment.outcome == 'success' }}
     steps:
       - name: Enforce protected release branch
         if: github.ref != 'refs/heads/master'
@@ -33,10 +44,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Scan release commit and history for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
           cache: npm
+
+      - name: Verify existing signing environment protection
+        id: signing-environment
+        if: inputs.signing_mode == 'signed-prerelease'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/release/check-environment.mjs
 
       - run: npm ci
       - run: npm run check:version
@@ -60,7 +83,7 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           TAG="v${VERSION}"
           if [[ "$VERSION" != *-* ]]; then
-            echo "::error::Stable release is blocked until Issue #25 packaged smoke tests are implemented and wired into this workflow."
+            echo "::error::Public Stable release is not authorized. Select a validated prerelease version."
             exit 1
           fi
           if git show-ref --tags --verify --quiet "refs/tags/$TAG"; then
@@ -74,28 +97,24 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "prerelease=true" >> "$GITHUB_OUTPUT"
 
-  package:
-    name: Package (${{ matrix.os }})
+  package_unsigned:
+    name: Unsigned package (${{ matrix.os }})
     needs: quality
+    if: inputs.signing_mode == 'unsigned-prerelease'
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
-            command: npm run package:win
             smoke: npm run test:packaged
             artifact: windows
           - os: macos-latest
-            command: npm run package:mac
             smoke: npm run test:packaged
             artifact: macos
           - os: ubuntu-latest
-            command: npm run package:linux
             smoke: xvfb-run --auto-servernum npm run test:packaged
             artifact: linux
     runs-on: ${{ matrix.os }}
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v4
 
@@ -105,40 +124,104 @@ jobs:
           cache: npm
 
       - run: npm ci
-      - run: ${{ matrix.command }}
+      - run: npm run build
+      - name: Package with signing explicitly disabled
+        run: node scripts/release/package.mjs unsigned-prerelease
 
       - name: Run packaged Electron smoke gate
         run: ${{ matrix.smoke }}
+
+      - name: Bind smoke evidence to the final installer
+        run: node scripts/release/finalize-platform.mjs
 
       - name: Upload packaged smoke diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: packaged-smoke-${{ matrix.artifact }}
-          path: test-results/packaged-smoke/**
+          name: release-diagnostics-${{ matrix.artifact }}
+          path: |
+            test-results/packaged-smoke/**
+            release/signing/**
           if-no-files-found: warn
-
-      - name: Record unsigned build status
-        shell: bash
-        run: |
-          echo "This workflow does not configure code signing or macOS notarization." > "release/SIGNING-STATUS-${{ matrix.artifact }}.txt"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.artifact }}
+          name: release-files-${{ needs.quality.outputs.version }}-${{ matrix.artifact }}
+          path: release/upload/**
+          if-no-files-found: error
+
+  package_signed:
+    name: Signed package (${{ matrix.os }})
+    needs: quality
+    if: inputs.signing_mode == 'signed-prerelease'
+    environment: release-signing
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            smoke: npm run test:packaged
+            artifact: windows
+          - os: macos-latest
+            smoke: npm run test:packaged
+            artifact: macos
+          - os: ubuntu-latest
+            smoke: xvfb-run --auto-servernum npm run test:packaged
+            artifact: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Package and verify signing and notarization
+        env:
+          RELEASE_SIGNING_ENVIRONMENT_VERIFIED: ${{ needs.quality.outputs.signing_environment_verified }}
+          WINDOWS_CSC_LINK: ${{ matrix.artifact == 'windows' && secrets.WINDOWS_CSC_LINK || '' }}
+          WINDOWS_CSC_KEY_PASSWORD: ${{ matrix.artifact == 'windows' && secrets.WINDOWS_CSC_KEY_PASSWORD || '' }}
+          MAC_CSC_LINK: ${{ matrix.artifact == 'macos' && secrets.MAC_CSC_LINK || '' }}
+          MAC_CSC_KEY_PASSWORD: ${{ matrix.artifact == 'macos' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          APPLE_API_KEY_BASE64: ${{ matrix.artifact == 'macos' && secrets.APPLE_API_KEY_BASE64 || '' }}
+          APPLE_API_KEY_ID: ${{ matrix.artifact == 'macos' && secrets.APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ matrix.artifact == 'macos' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_TEAM_ID: ${{ matrix.artifact == 'macos' && secrets.APPLE_TEAM_ID || '' }}
+        run: node scripts/release/package.mjs signed-prerelease
+
+      - name: Run packaged Electron smoke gate
+        run: ${{ matrix.smoke }}
+
+      - name: Bind smoke evidence to the final installer
+        run: node scripts/release/finalize-platform.mjs
+
+      - name: Upload redacted signing and packaged smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-diagnostics-${{ matrix.artifact }}
           path: |
-            release/*.exe
-            release/*.blockmap
-            release/*.dmg
-            release/*.AppImage
-            release/latest*.yml
-            !release/builder-debug.yml
-            release/SIGNING-STATUS-*.txt
+            test-results/packaged-smoke/**
+            release/signing/**
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-files-${{ needs.quality.outputs.version }}-${{ matrix.artifact }}
+          path: release/upload/**
           if-no-files-found: error
 
   draft-release:
     name: Create draft prerelease
-    needs: [quality, package]
+    needs: [quality, package_unsigned, package_signed]
+    if: >-
+      ${{ always() && needs.quality.result == 'success' &&
+        ((needs.package_unsigned.result == 'success' && needs.package_signed.result == 'skipped') ||
+         (needs.package_signed.result == 'success' && needs.package_unsigned.result == 'skipped')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -149,13 +232,18 @@ jobs:
         with:
           node-version-file: '.nvmrc'
 
+      - run: npm ci --ignore-scripts
+
       - uses: actions/download-artifact@v4
         with:
-          pattern: release-*
-          path: release-artifacts
-          merge-multiple: true
+          pattern: release-files-${{ needs.quality.outputs.version }}-*
+          path: release-download
+          merge-multiple: false
 
-      - run: npm run release:checksums -- release-artifacts
+      - name: Verify three platform reports and collect final artifacts
+        env:
+          RELEASE_MODE: ${{ needs.quality.outputs.signing_mode }}
+        run: node scripts/release/collect-artifacts.mjs release-download release-artifacts "$RELEASE_MODE"
 
       - name: Create draft GitHub prerelease
         env:

@@ -12,6 +12,7 @@ import type { AgentFactory, AgentRunResult, ProjectSessionAgent } from '@/agent/
 import { emptyTokenUsage } from '@/agent/llm'
 import { parseStrictGenerationCheckpoint } from '@/shared/taskRecovery'
 import { WorkbenchService } from '@/main/workbench'
+import { inlineComputeClient } from '../../helpers/inlineComputeClient'
 import {
   createChapterGenerationTaskRunner,
   TaskManager,
@@ -101,8 +102,43 @@ describe('chapter generation task pipeline', () => {
     fs.rmSync(tempRoot, { recursive: true, force: true })
   })
 
+  test.each(['cancel', 'lease'] as const)('factory await %s fence never calls the model or saves a version', async (action) => {
+    const workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
+    const outline = setupOutlines(workbench, `factory-${action}`)
+    const store = new TaskRepository(database)
+    let releaseFactory: (agent: ProjectSessionAgent) => void = () => undefined
+    let factoryStarted: () => void = () => undefined
+    const started = new Promise<void>((resolve) => { factoryStarted = resolve })
+    const prompt = jest.fn(async () => result('must not run'))
+    const dispose = jest.fn()
+    const agentFactory: AgentFactory = { create: async () => {
+      factoryStarted()
+      return new Promise<ProjectSessionAgent>((resolve) => { releaseFactory = resolve })
+    } }
+    const manager = new TaskManager({ store, agentFactory, events: { publish: () => undefined },
+      runners: { 'chapter-generation': createChapterGenerationTaskRunner({ service: workbench.chapterGeneration, agentFactory }) } })
+    try {
+      const handle = manager.startChapterGeneration({ projectId: outline.projectId,
+        chapterOutlineId: outline.chapterOutlineId, sessionId: 'factory-session',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'test-model' } })
+      await started
+      if (action === 'cancel') expect(manager.cancel(handle.taskId)).toBe(true)
+      else store.update(handle.taskId, { lease_owner: 'new-owner', lease_token: 'new-token',
+        lease_expires_at: new Date(Date.now() + 60_000).toISOString() })
+      releaseFactory({ projectId: outline.projectId, sessionId: 'factory-session', prompt, abort: jest.fn(), dispose })
+      const completed = await handle.completion
+      if (action === 'cancel') expect(completed.status).toBe('cancelled')
+      else expect(completed.lease_owner).toBe('new-owner')
+      expect(prompt).not.toHaveBeenCalled()
+      expect(dispose).toHaveBeenCalledTimes(1)
+      const chapter = workbench.chapters.getByProjectAndNumber(outline.projectId, 1)
+      expect(chapter).not.toBeNull()
+      expect(workbench.chapterVersions.listByChapter(chapter!.id)).toHaveLength(0)
+    } finally { manager.dispose() }
+  })
+
   test('persists stream checkpoints on cancellation and resumes from the saved body', async () => {
-    const workbench = new WorkbenchService(database)
+    const workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
     const outline = setupOutlines(workbench, 'task-pipeline-project')
     const events: TaskEvent[] = []
     let resolveBodyStarted: () => void = () => undefined
@@ -231,7 +267,7 @@ describe('chapter generation task pipeline', () => {
   })
 
   test.each([false, true])('durable version recovery preserves compiler metadata without replay (debug=%s)', async (debug) => {
-    const workbench = new WorkbenchService(database)
+    const workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
     const outline = setupOutlines(workbench, 'durable-context-recovery')
     const store = new TaskRepository(database)
     const promptMock = jest.fn(async (prompt: string) => result(
@@ -289,7 +325,7 @@ describe('chapter generation task pipeline', () => {
   })
 
   test('budget exceeded fails task but persists stage_compiles body failure trace without agent prompt', async () => {
-    const workbench = new WorkbenchService(database)
+    const workbench = new WorkbenchService(database, { computeClient: inlineComputeClient })
     const outline = setupOutlines(workbench, 'task-pipeline-budget-fail')
     const events: TaskEvent[] = []
     const promptMock = jest.fn(async () => result('should-not-run'))

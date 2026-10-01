@@ -1,12 +1,31 @@
 import type { NarrativeWorkbenchService } from '../../shared/narrativeWorkbench'
+import type { IpcMainInvokeEvent } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { NarrativeBoundaryError } from '../../shared/narrativeWorkbench/errors'
-import { ComputeWorkerClient } from '../workers/computeWorkerClient'
+import { sharedComputeWorkerClient } from '../workers/computeWorkerClient'
+import type { ChapterDiffPayload } from '../workers/protocol'
 import {
   isRecord,
   parseProjectChapterParams,
   readString,
+  assertTrustedIpcSender,
+  safeError,
   type IpcRegistry,
 } from './shared'
+
+function requestId(value: unknown): string {
+  if (!isRecord(value) || value.request_id === undefined) return randomUUID()
+  if (typeof value.request_id !== 'string' || !/^[\w-]{1,128}$/.test(value.request_id)) {
+    throw new Error('Invalid diff request_id')
+  }
+  return value.request_id
+}
+
+function diffError(error: unknown) {
+  const cancelled = error instanceof Error && error.name === 'AbortError'
+  const message = cancelled ? '章节对比已取消' : safeError(error)
+  return { success: false, errors: [message], error: { code: cancelled ? 'DIFF_CANCELLED' : 'DIFF_FAILED', message } }
+}
 
 function parseRevisionActionParams(
   value: unknown,
@@ -48,8 +67,31 @@ function parseVersionDiffParams(value: unknown): {
 export function registerRevisionIPC(
   ipc: IpcRegistry,
   service?: NarrativeWorkbenchService,
+  computeWorker = sharedComputeWorkerClient,
 ): void {
-  const computeWorker = new ComputeWorkerClient()
+  const active = new Map<number, { requestId: string; controller: AbortController }>()
+
+  const runDiff = async (event: IpcMainInvokeEvent, id: string, payload: ChapterDiffPayload) => {
+    const ownerId = event.sender.id
+    if (active.has(ownerId)) throw new Error('A chapter diff is already running in this window')
+    const controller = new AbortController()
+    active.set(ownerId, { requestId: id, controller })
+    const cancelOnClose = () => controller.abort()
+    event.sender.once('destroyed', cancelOnClose)
+    try {
+      return await computeWorker.run('chapter-diff', payload, {
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('chapter:diff:progress', { request_id: id, progress })
+          }
+        },
+      })
+    } finally {
+      active.delete(ownerId)
+      event.sender.removeListener('destroyed', cancelOnClose)
+    }
+  }
   ipc.register('chapter:blocks', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseProjectChapterParams(params)
@@ -86,7 +128,7 @@ export function registerRevisionIPC(
     }
   })
 
-  ipc.register('chapter:diff:revisions', async (_, params: unknown) => {
+  ipc.register('chapter:diff:revisions', async (event, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseRevisionDiffParams(params)
     const from = service.getRevision(parsed.projectId, parsed.fromRevisionId)
@@ -94,7 +136,7 @@ export function registerRevisionIPC(
     if (from.chapter_id !== to.chapter_id) {
       throw new NarrativeBoundaryError('Chapter revisions must belong to the same chapter')
     }
-    const diff = await computeWorker.run('chapter-diff', {
+    const diff = await runDiff(event, requestId(params), {
       mode: 'blocks',
       before: from.blocks,
       after: to.blocks,
@@ -107,18 +149,31 @@ export function registerRevisionIPC(
         diff,
       },
     }
-  })
+  }, { authorize: assertTrustedIpcSender, formatError: diffError })
 
-  ipc.register('chapter:diff:versions', async (_, params: unknown) => {
+  ipc.register('chapter:diff:versions', async (event, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseVersionDiffParams(params)
+    const from = service.getVersionForDiff(parsed.projectId, parsed.fromVersionId)
+    const to = service.getVersionForDiff(parsed.projectId, parsed.toVersionId)
+    if (from.chapter_id !== to.chapter_id) {
+      throw new NarrativeBoundaryError('Chapter versions must belong to the same chapter')
+    }
+    const diff = await runDiff(event, requestId(params), {
+      mode: 'content', chapter_id: from.chapter_id,
+      before_content: from.content, after_content: to.content,
+    })
     return {
       success: true,
-      data: service.diffVersions(
-        parsed.projectId,
-        parsed.fromVersionId,
-        parsed.toVersionId,
-      ),
+      data: { from_version_id: from.id, to_version_id: to.id, diff },
     }
-  })
+  }, { authorize: assertTrustedIpcSender, formatError: diffError })
+
+  ipc.register('chapter:diff:cancel', async (event, params: unknown) => {
+    if (!isRecord(params) || typeof params.request_id !== 'string') throw new Error('request_id is required')
+    const running = active.get(event.sender.id)
+    const cancelled = running?.requestId === requestId(params)
+    if (cancelled) running?.controller.abort()
+    return { success: true, data: { cancelled } }
+  }, { authorize: assertTrustedIpcSender, formatError: diffError })
 }

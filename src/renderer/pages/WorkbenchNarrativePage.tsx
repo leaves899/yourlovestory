@@ -9,6 +9,7 @@ import {
   CardHeader,
   Checkbox,
   HStack,
+  Progress,
   Select,
   SimpleGrid,
   Stack,
@@ -49,12 +50,18 @@ function WorkbenchNarrativePage({ section }: { section: NarrativeSection }) {
   }, [currentProject, narrative.load])
 
   useEffect(() => {
-    if (!chapterId && chapterOutlines[0]) setChapterId(chapterOutlines[0].id)
-  }, [chapterId, chapterOutlines])
+    const projectChapters = chapterOutlines.filter((item) => item.project_id === currentProject?.id)
+    if (!projectChapters.some((item) => item.id === chapterId)) setChapterId(projectChapters[0]?.id ?? '')
+  }, [chapterId, chapterOutlines, currentProject?.id])
 
   useEffect(() => {
-    if (section === 'revisions' && currentProject && chapterId) void narrative.loadChapter(currentProject.id, chapterId)
-  }, [chapterId, currentProject, narrative.loadChapter, section])
+    if (section === 'revisions' && currentProject && chapterId
+      && chapterOutlines.some((item) => item.id === chapterId && item.project_id === currentProject.id)) {
+      void narrative.loadChapter(currentProject.id, chapterId)
+    }
+  }, [chapterId, chapterOutlines, currentProject, narrative.loadChapter, section])
+
+  useEffect(() => () => { void narrative.cancelDiff() }, [narrative.cancelDiff])
 
   const selectedForeshadow = narrative.foreshadows.find((item) => item.id === selectedForeshadowId) ?? narrative.foreshadows[0] ?? null
   const entityNames = useMemo(() => {
@@ -137,7 +144,68 @@ function SkillsPanel({ narrative }: { narrative: ReturnType<typeof useNarrativeS
 }
 
 function RevisionPanel({ chapterId, setChapterId, fromRevisionId, setFromRevisionId, toRevisionId, setToRevisionId, chapterOutlines, narrative }: { chapterId: string; setChapterId: (value: string) => void; fromRevisionId: string; setFromRevisionId: (value: string) => void; toRevisionId: string; setToRevisionId: (value: string) => void; chapterOutlines: ReturnType<typeof useWorkbenchStore.getState>['chapterOutlines']; narrative: ReturnType<typeof useNarrativeStore.getState> }) {
-  return <Stack spacing={5}><Card><CardBody><HStack><Select value={chapterId} onChange={(event) => setChapterId(event.target.value)} placeholder="选择章节">{chapterOutlines.map((chapter) => <option key={chapter.id} value={chapter.id}>第 {chapter.chapter_number} 章 · {chapter.title}</option>)}</Select><Badge>{narrative.revisions.length} 个修订</Badge></HStack></CardBody></Card>{narrative.revisions.length === 0 ? <WorkbenchEmpty title="暂无章节修订" description="完成章节生成或修订任务后，块级版本会出现在这里。" /> : <><Card><CardBody><SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}><Select value={fromRevisionId} onChange={(event) => setFromRevisionId(event.target.value)} placeholder="对比起点">{narrative.revisions.map((revision) => <option key={revision.id} value={revision.id}>修订 {revision.revision_number} · {revision.operation}</option>)}</Select><Select value={toRevisionId} onChange={(event) => setToRevisionId(event.target.value)} placeholder="对比终点">{narrative.revisions.map((revision) => <option key={revision.id} value={revision.id}>修订 {revision.revision_number} · {revision.operation}</option>)}</Select></SimpleGrid><HStack mt={4}><Button onClick={() => void narrative.compareRevisions(fromRevisionId, toRevisionId)} isDisabled={!fromRevisionId || !toRevisionId}>查看 diff</Button>{toRevisionId && <Button colorScheme="cinnabar" onClick={() => void narrative.applyRevision(toRevisionId)} isLoading={narrative.saving}>应用终点修订</Button>}</HStack></CardBody></Card><Card><CardHeader><Text fontWeight="bold">修订列表</Text></CardHeader><CardBody><VStack align="stretch" spacing={2}>{narrative.revisions.map((revision) => <HStack key={revision.id} justify="space-between"><Text fontSize="sm">修订 {revision.revision_number} · {revision.summary || '无摘要'}</Text><Badge colorScheme={revision.is_current ? 'green' : 'gray'}>{revision.is_current ? '当前' : formatDate(revision.created_at)}</Badge></HStack>)}</VStack></CardBody></Card>{narrative.diff && <Card><CardHeader><Text fontWeight="bold">块级 diff</Text></CardHeader><CardBody><SimpleGrid columns={4} spacing={3} mb={4}><Badge>未变 {narrative.diff.unchanged_count}</Badge><Badge colorScheme="green">新增 {narrative.diff.added_count}</Badge><Badge colorScheme="red">删除 {narrative.diff.removed_count}</Badge><Badge colorScheme="orange">修改 {narrative.diff.modified_count}</Badge></SimpleGrid><VStack align="stretch" spacing={2}>{narrative.diff.changes.map((change) => <Text key={`${change.block_id}-${change.kind}`} fontSize="sm" whiteSpace="pre-wrap" color={change.kind === 'removed' ? 'red.600' : change.kind === 'added' ? 'green.600' : 'ink.700'}>[{change.kind}] {change.after?.text ?? change.before?.text ?? ''}</Text>)}</VStack></CardBody></Card>}</>}</Stack>
+  const [mode, setMode] = useState<'revisions' | 'versions'>('revisions')
+  const [diffPage, setDiffPage] = useState(0)
+  const comparing = narrative.diffRequestId !== null
+  const entries = mode === 'revisions'
+    ? narrative.revisions.map((item) => ({ id: item.id, label: `修订 ${item.revision_number} · ${item.operation}` }))
+    : narrative.versions.map((item) => ({ id: item.id, label: `版本 ${item.version_number} · ${item.status}` }))
+  const pageSize = 100
+  const changes = narrative.diff?.changes ?? []
+  const pageCount = Math.max(1, Math.ceil(changes.length / pageSize))
+  useEffect(() => { setDiffPage(0) }, [narrative.diff])
+  useEffect(() => {
+    setFromRevisionId('')
+    setToRevisionId('')
+  }, [chapterId, mode, setFromRevisionId, setToRevisionId])
+
+  return (
+    <Stack spacing={5}>
+      <Card><CardBody><HStack>
+        <Select aria-label="选择对比章节" value={chapterId} onChange={(event) => setChapterId(event.target.value)} placeholder="选择章节">
+          {chapterOutlines.map((chapter) => <option key={chapter.id} value={chapter.id}>第 {chapter.chapter_number} 章 · {chapter.title}</option>)}
+        </Select>
+        <Select aria-label="对比类型" value={mode} isDisabled={comparing} onChange={(event) => setMode(event.target.value as 'revisions' | 'versions')}>
+          <option value="revisions">章节修订</option><option value="versions">生成版本</option>
+        </Select>
+        <Badge>{entries.length} 个版本</Badge>
+      </HStack></CardBody></Card>
+      {entries.length === 0 ? <WorkbenchEmpty title="暂无可对比版本" description="完成章节生成或修订任务后，可以在这里查看变化。" /> : (
+        <Card><CardBody><Stack spacing={4}>
+          <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3}>
+            <Select aria-label="对比起点" isDisabled={comparing} value={fromRevisionId} onChange={(event) => setFromRevisionId(event.target.value)} placeholder="对比起点">
+              {entries.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </Select>
+            <Select aria-label="对比终点" isDisabled={comparing} value={toRevisionId} onChange={(event) => setToRevisionId(event.target.value)} placeholder="对比终点">
+              {entries.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </Select>
+          </SimpleGrid>
+          <HStack>
+            <Button onClick={() => void narrative.compare(mode, fromRevisionId, toRevisionId)} isLoading={comparing} isDisabled={!fromRevisionId || !toRevisionId}>查看 diff</Button>
+            {comparing && <Button data-testid="cancel-chapter-diff" isLoading={narrative.diffCancelling} onClick={() => void narrative.cancelDiff()}>取消对比</Button>}
+            {mode === 'revisions' && toRevisionId && <Button colorScheme="cinnabar" isDisabled={comparing} onClick={() => void narrative.applyRevision(toRevisionId)} isLoading={narrative.saving}>应用终点修订</Button>}
+          </HStack>
+          {comparing && <Stack data-testid="chapter-diff-progress" spacing={1}>
+            <Progress aria-label="章节对比进度" value={Math.round(narrative.diffProgress * 100)} />
+            <Text fontSize="sm" role="status">{narrative.diffCancelling ? '正在取消对比' : `正在对比 ${Math.round(narrative.diffProgress * 100)}%`}</Text>
+          </Stack>}
+          {narrative.diffMessage && <Text role="status">{narrative.diffMessage}</Text>}
+        </Stack></CardBody></Card>
+      )}
+      {narrative.diff && <Card data-testid="chapter-diff-result"><CardHeader><Text fontWeight="bold">块级 diff</Text></CardHeader><CardBody>
+        <SimpleGrid columns={4} spacing={3} mb={4}>
+          <Badge>未变 {narrative.diff.unchanged_count}</Badge><Badge colorScheme="green">新增 {narrative.diff.added_count}</Badge>
+          <Badge colorScheme="red">删除 {narrative.diff.removed_count}</Badge><Badge colorScheme="orange">修改 {narrative.diff.modified_count}</Badge>
+        </SimpleGrid>
+        <HStack mb={3}><Button size="sm" isDisabled={diffPage === 0} onClick={() => setDiffPage(diffPage - 1)}>上一页</Button>
+          <Text fontSize="sm">第 {diffPage + 1} / {pageCount} 页 · 共 {changes.length} 块</Text>
+          <Button size="sm" isDisabled={diffPage + 1 >= pageCount} onClick={() => setDiffPage(diffPage + 1)}>下一页</Button></HStack>
+        <VStack align="stretch" spacing={2}>{changes.slice(diffPage * pageSize, (diffPage + 1) * pageSize).map((change) => (
+          <Text data-testid="chapter-diff-block" key={`${change.block_id}-${change.kind}`} fontSize="sm" whiteSpace="pre-wrap" color={change.kind === 'removed' ? 'red.600' : change.kind === 'added' ? 'green.600' : 'ink.700'}>[{change.kind}] {change.after?.text ?? change.before?.text ?? ''}</Text>
+        ))}</VStack>
+      </CardBody></Card>}
+    </Stack>
+  )
 }
 
 export default WorkbenchNarrativePage

@@ -43,6 +43,7 @@ import {
 } from './assistant'
 import { createNovelAgentTools } from '../agent/tools/novelTools'
 import { CredentialService } from './security/credentialService'
+import { sharedComputeWorkerClient } from './workers/computeWorkerClient'
 import { migrateLegacyLlmCredentials } from './security/llmCredentials'
 import { LlmCredentialController } from './security/llmCredentialController'
 import { sanitizeErrorMessage } from '../shared/security/sanitizeSensitiveData'
@@ -317,6 +318,7 @@ if (gotSingleInstanceLock) app.whenReady().then(async () => {
     },
   })
   const agentFactory = createProjectSessionAgentFactory({
+    computeContext: (messages, budget, signal) => sharedComputeWorkerClient.run('trim-messages', { messages, budget }, { signal }),
     resolveCredential: async (credentialId, config) => {
       const binding = credentialService!.getCredentialBinding(credentialId)
       if (!binding.success) throw new Error(binding.error.message)

@@ -1,0 +1,554 @@
+{
+  "schema_version": 2,
+  "generated_at": "2026-10-01T11:45:09.182Z",
+  "node": "v22.23.1",
+  "node_module_abi": "127",
+  "platform": "win32",
+  "arch": "x64",
+  "cpu": "AMD Ryzen 9 7945HX with Radeon Graphics",
+  "warmups": 2,
+  "runs": 5,
+  "reproduction": "Compile tsconfig.main.json using Node 22, then node scripts/performance/benchmark-compiler-path.mjs; requires a matching better-sqlite3 native module. The script never rebuilds native modules.",
+  "measurement_scope": "Real compiled OutlineGenerationService, WorkbenchService repositories, temporary SQLite files and production-injected Worker Threads. Source SQL reads, snapshot construction, fingerprint comparisons and structured clone included; no Electron renderer or model I/O.",
+  "fixture": "1000 explicitly selected synthetic materials, exactly 1 KiB/10 KiB UTF-8 each; source_snapshot material count, each content byte size, selection flags and compiler candidate accounting asserted. Data/target construction excluded from timing; combined path includes real transaction apply and an independent repository read.",
+  "database_identities": [
+    {
+      "filename": "<temporary-user-data>/data/yourcrush.sqlite",
+      "path_sha256": "aac028f0029b1890605efe0add5d943018f3e2642e302d8c4ee6a12271b74436",
+      "sqlite_version": "3.49.2"
+    },
+    {
+      "filename": "<temporary-user-data>/data/yourcrush.sqlite",
+      "path_sha256": "87fb4912068ac3dd59a12c03445763beb9731784bc4f7a9d6b97255ce2056926",
+      "sqlite_version": "3.49.2"
+    }
+  ],
+  "temporary_databases_removed": true,
+  "cpu_method": "process.cpuUsage includes worker-thread CPU",
+  "memory_method": "signed process RSS after minus before; not peak RSS",
+  "event_loop_method": "1 ms interval lag and monitorEventLoopDelay.max across complete await paths including post-await fence and real SQL. Node scheduling jitter included; not renderer UI latency.",
+  "implementation_hashes": [
+    {
+      "file": "dist/main/shared/outlineGeneration/service.js",
+      "sha256": "32069a99c889454a1c9dea24a539f4ebcb83453d2c65c3954e4e7384fa482f0d"
+    },
+    {
+      "file": "dist/main/main/workbench/workbenchService.js",
+      "sha256": "b3883ffcc486553eee6fa201458702d74397ce48905b1e1e2489097aa180f843"
+    },
+    {
+      "file": "dist/main/main/workers/computeWorker.js",
+      "sha256": "d837924504e0eac8790d6848e30b9207362eef65a73d04ffa3d32058ceca1446"
+    },
+    {
+      "file": "dist/main/main/workers/computeWorkerClient.js",
+      "sha256": "8819e89fe774670bdd98d2e26ca86a54b0f8b34fc8a4185fd9ae11b8071f68ad"
+    }
+  ],
+  "results": [
+    {
+      "task": "prepare-sync-real-sqlite",
+      "materials": 1000,
+      "selected_materials": 1000,
+      "material_utf8_bytes_each": 1024,
+      "material_utf8_bytes_total": 1024000,
+      "source_snapshot_chars": 939819,
+      "candidate_items": 1003,
+      "metrics": {
+        "wall_ms": {
+          "p50": 66.77229999999997,
+          "p95": 75.66890000000001,
+          "min": 64.59199999999998,
+          "max": 75.66890000000001,
+          "samples": [
+            69.10630000000003,
+            66.55809999999997,
+            66.77229999999997,
+            64.59199999999998,
+            75.66890000000001
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 79,
+          "p95": 140,
+          "min": 31,
+          "max": 140,
+          "samples": [
+            31,
+            94,
+            79,
+            62,
+            140
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 4.32421875,
+          "p95": 5.3203125,
+          "min": -8.09765625,
+          "max": 5.3203125,
+          "samples": [
+            4.41796875,
+            5.3203125,
+            4.32421875,
+            3.90234375,
+            -8.09765625
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 68.37220000000002,
+          "p95": 75.58900000000006,
+          "min": 64.87839999999994,
+          "max": 75.58900000000006,
+          "samples": [
+            68.37220000000002,
+            75.58900000000006,
+            65.92820000000006,
+            64.87839999999994,
+            74.89959999999996
+          ]
+        }
+      }
+    },
+    {
+      "task": "prepareAsync-worker-real-sqlite",
+      "materials": 1000,
+      "selected_materials": 1000,
+      "material_utf8_bytes_each": 1024,
+      "material_utf8_bytes_total": 1024000,
+      "source_snapshot_chars": 939819,
+      "candidate_items": 1003,
+      "metrics": {
+        "wall_ms": {
+          "p50": 151.67320000000018,
+          "p95": 154.02369999999996,
+          "min": 151.0607,
+          "max": 154.02369999999996,
+          "samples": [
+            154.02369999999996,
+            151.0607,
+            151.06909999999993,
+            151.7885000000001,
+            151.67320000000018
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 172,
+          "p95": 188,
+          "min": 156,
+          "max": 188,
+          "samples": [
+            188,
+            156,
+            157,
+            187,
+            172
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 1.19140625,
+          "p95": 3.9375,
+          "min": -0.265625,
+          "max": 3.9375,
+          "samples": [
+            3.9375,
+            -0.265625,
+            2.04296875,
+            0.07421875,
+            1.19140625
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 38.45539999999983,
+          "p95": 38.600099999999884,
+          "min": 36.12339999999995,
+          "max": 38.600099999999884,
+          "samples": [
+            38.51080000000002,
+            38.24299999999994,
+            36.12339999999995,
+            38.600099999999884,
+            38.45539999999983
+          ]
+        }
+      }
+    },
+    {
+      "task": "validateApplyAsync-worker-real-sqlite",
+      "materials": 1000,
+      "selected_materials": 1000,
+      "material_utf8_bytes_each": 1024,
+      "material_utf8_bytes_total": 1024000,
+      "source_snapshot_chars": 939819,
+      "candidate_items": 1003,
+      "metrics": {
+        "wall_ms": {
+          "p50": 148.0628999999999,
+          "p95": 158.0603000000001,
+          "min": 146.75960000000032,
+          "max": 158.0603000000001,
+          "samples": [
+            158.0603000000001,
+            148.0628999999999,
+            146.75960000000032,
+            147.1877999999997,
+            148.8501000000001
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 156,
+          "p95": 173,
+          "min": 140,
+          "max": 173,
+          "samples": [
+            156,
+            156,
+            172,
+            173,
+            140
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 22.42578125,
+          "p95": 22.8984375,
+          "min": 6.6484375,
+          "max": 22.8984375,
+          "samples": [
+            6.6484375,
+            22.62890625,
+            22.1171875,
+            22.42578125,
+            22.8984375
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 34.340863,
+          "p95": 40.17410000000018,
+          "min": 33.062911,
+          "max": 40.17410000000018,
+          "samples": [
+            40.17410000000018,
+            34.340863,
+            35.061759,
+            34.242559,
+            33.062911
+          ]
+        }
+      }
+    },
+    {
+      "task": "prepareAsync+validateApplyAsync+transactional-apply-real-sqlite",
+      "materials": 1000,
+      "selected_materials": 1000,
+      "material_utf8_bytes_each": 1024,
+      "material_utf8_bytes_total": 1024000,
+      "source_snapshot_chars": 939819,
+      "candidate_items": 1003,
+      "metrics": {
+        "wall_ms": {
+          "p50": 341.84230000000025,
+          "p95": 349.2470999999996,
+          "min": 319.5027,
+          "max": 349.2470999999996,
+          "samples": [
+            349.2470999999996,
+            340.40099999999984,
+            319.5027,
+            341.84230000000025,
+            346.59450000000015
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 422,
+          "p95": 484,
+          "min": 375,
+          "max": 484,
+          "samples": [
+            484,
+            422,
+            422,
+            375,
+            375
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": -3.921875,
+          "p95": 6.3828125,
+          "min": -17.99609375,
+          "max": 6.3828125,
+          "samples": [
+            -17.99609375,
+            6.3828125,
+            -3.921875,
+            -7.359375,
+            2.90625
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 65.896447,
+          "p95": 73.334783,
+          "min": 65.339391,
+          "max": 73.334783,
+          "samples": [
+            73.334783,
+            65.830911,
+            65.339391,
+            65.896447,
+            69.402623
+          ]
+        }
+      }
+    },
+    {
+      "task": "prepare-sync-real-sqlite",
+      "materials": 1000,
+      "selected_materials": 1000,
+      "material_utf8_bytes_each": 10240,
+      "material_utf8_bytes_total": 10240000,
+      "source_snapshot_chars": 8483819,
+      "candidate_items": 1003,
+      "metrics": {
+        "wall_ms": {
+          "p50": 421.7006000000001,
+          "p95": 432.47249999999985,
+          "min": 404.2631000000001,
+          "max": 432.47249999999985,
+          "samples": [
+            404.2631000000001,
+            428.57800000000134,
+            432.47249999999985,
+            421.7006000000001,
+            411.39930000000095
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 391,
+          "p95": 421,
+          "min": 390,
+          "max": 421,
+          "samples": [
+            391,
+            407,
+            421,
+            391,
+            390
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 16.3359375,
+          "p95": 50.99609375,
+          "min": -16.35546875,
+          "max": 50.99609375,
+          "samples": [
+            27.60546875,
+            50.99609375,
+            -16.35546875,
+            16.3359375,
+            14.1484375
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 428.5649999999996,
+          "p95": 431.6103000000003,
+          "min": 403.4403000000002,
+          "max": 431.6103000000003,
+          "samples": [
+            403.4403000000002,
+            428.5649999999996,
+            431.6103000000003,
+            429.20850000000064,
+            410.5029000000013
+          ]
+        }
+      }
+    },
+    {
+      "task": "prepareAsync-worker-real-sqlite",
+      "materials": 1000,
+      "selected_materials": 1000,
+      "material_utf8_bytes_each": 10240,
+      "material_utf8_bytes_total": 10240000,
+      "source_snapshot_chars": 8483819,
+      "candidate_items": 1003,
+      "metrics": {
+        "wall_ms": {
+          "p50": 601.4463000000014,
+          "p95": 609.6527000000006,
+          "min": 595.5241999999998,
+          "max": 609.6527000000006,
+          "samples": [
+            606.7119000000002,
+            609.6527000000006,
+            601.4463000000014,
+            597.3097999999991,
+            595.5241999999998
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 657,
+          "p95": 687,
+          "min": 609,
+          "max": 687,
+          "samples": [
+            657,
+            609,
+            657,
+            610,
+            687
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 16.44140625,
+          "p95": 17.12890625,
+          "min": -9.30859375,
+          "max": 17.12890625,
+          "samples": [
+            16.83203125,
+            16.44140625,
+            -9.30859375,
+            17.12890625,
+            16.4296875
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 117.02790000000095,
+          "p95": 118.947839,
+          "min": 114.3078000000005,
+          "max": 118.947839,
+          "samples": [
+            115.53899999999885,
+            118.7518,
+            118.947839,
+            114.3078000000005,
+            117.02790000000095
+          ]
+        }
+      }
+    },
+    {
+      "task": "validateApplyAsync-worker-real-sqlite",
+      "materials": 1000,
+      "selected_materials": 1000,
+      "material_utf8_bytes_each": 10240,
+      "material_utf8_bytes_total": 10240000,
+      "source_snapshot_chars": 8483819,
+      "candidate_items": 1003,
+      "metrics": {
+        "wall_ms": {
+          "p50": 618.6594000000005,
+          "p95": 634.5910999999996,
+          "min": 611.8144999999986,
+          "max": 634.5910999999996,
+          "samples": [
+            611.8144999999986,
+            634.5910999999996,
+            619.0201000000015,
+            616.7767000000022,
+            618.6594000000005
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 656,
+          "p95": 688,
+          "min": 625,
+          "max": 688,
+          "samples": [
+            625,
+            688,
+            656,
+            656,
+            641
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 17.44140625,
+          "p95": 19.484375,
+          "min": -27.03515625,
+          "max": 19.484375,
+          "samples": [
+            18.4609375,
+            -27.03515625,
+            17.44140625,
+            -23.046875,
+            19.484375
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 128.26569999999992,
+          "p95": 134.21370000000024,
+          "min": 126.94280000000072,
+          "max": 134.21370000000024,
+          "samples": [
+            127.66509999999835,
+            134.21370000000024,
+            126.94280000000072,
+            128.26569999999992,
+            132.81910000000062
+          ]
+        }
+      }
+    },
+    {
+      "task": "prepareAsync+validateApplyAsync+transactional-apply-real-sqlite",
+      "materials": 1000,
+      "selected_materials": 1000,
+      "material_utf8_bytes_each": 10240,
+      "material_utf8_bytes_total": 10240000,
+      "source_snapshot_chars": 8483819,
+      "candidate_items": 1003,
+      "metrics": {
+        "wall_ms": {
+          "p50": 1342.8376000000026,
+          "p95": 1354.1582000000017,
+          "min": 1327.2010999999984,
+          "max": 1354.1582000000017,
+          "samples": [
+            1354.1582000000017,
+            1334.8421999999991,
+            1342.8376000000026,
+            1327.2010999999984,
+            1347.6457999999984
+          ]
+        },
+        "cpu_process_ms": {
+          "p50": 1438,
+          "p95": 1516,
+          "min": 1421,
+          "max": 1516,
+          "samples": [
+            1469,
+            1516,
+            1437,
+            1421,
+            1438
+          ]
+        },
+        "rss_delta_mb": {
+          "p50": 26.17578125,
+          "p95": 51.1328125,
+          "min": 13.48828125,
+          "max": 51.1328125,
+          "samples": [
+            36.30859375,
+            17.87109375,
+            51.1328125,
+            26.17578125,
+            13.48828125
+          ]
+        },
+        "event_loop_delay_ms": {
+          "p50": 251.396095,
+          "p95": 254.410751,
+          "min": 245.235711,
+          "max": 254.410751,
+          "samples": [
+            253.100031,
+            254.410751,
+            245.497855,
+            245.235711,
+            251.396095
+          ]
+        }
+      }
+    }
+  ]
+}

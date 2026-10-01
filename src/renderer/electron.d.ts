@@ -373,12 +373,16 @@ interface ElectronAPI {
     projectId: string,
     fromRevisionId: string,
     toRevisionId: string,
+    requestId?: string,
   ) => Promise<{ success: true; data: { from_revision_id: string | null; to_revision_id: string | null; diff: ChapterDiff } }>
   diffChapterVersions: (
     projectId: string,
     fromVersionId: string,
     toVersionId: string,
+    requestId?: string,
   ) => Promise<{ success: true; data: { from_version_id: string; to_version_id: string; diff: ChapterDiff } }>
+  cancelChapterDiff: (requestId: string) => Promise<{ success: boolean; data?: { cancelled: boolean } }>
+  onChapterDiffProgress: (listener: (event: { request_id: string; progress: number }) => void) => () => void
 
   // 长篇创作工作台
   listNovelProjects: () => Promise<WorkbenchResponse<Project[]>>
