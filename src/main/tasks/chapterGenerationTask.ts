@@ -124,7 +124,7 @@ function finishFromExistingVersion(
   let finalized: ReturnType<ChapterGenerationService['finalizePersistedVersion']>
   try {
     finalized = context.runOwnedSideEffect(() =>
-      service.finalizePersistedVersion(request, existing.id, strictCheckpoint?.source_content ?? null),
+      service.finalizePersistedVersion(request, existing.id, strictCheckpoint?.source_content ?? null, strictCheckpoint?.source_chapter_version),
     )
   } catch (error) {
     if (
@@ -137,9 +137,11 @@ function finishFromExistingVersion(
     throw error
   }
   const finalVersion = finalized.version
+  const savedCheckpoint = checkpointFromJson(context.task.checkpoint)
 
   context.setExecutionPhase('persisting_result')
   context.saveCheckpoint(checkpointToJson({
+    ...savedCheckpoint,
     schema_version: CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
     stage: 'review',
     body: finalVersion.content,
@@ -194,16 +196,24 @@ export function createChapterGenerationTaskRunner(
       try {
         context.setExecutionPhase('preparing')
         context.assertStillOwnsExecution()
-        agent = await options.agentFactory.create({
-          projectId: request.project_id,
-          sessionId: context.input.sessionId,
-          llm: context.input.llm,
-          systemPrompt: '你负责依据已确认的长篇大纲生成章节，不执行大纲修改，不生成叙事记忆。',
-        })
-        context.setExecutionPhase('awaiting_model')
+        const generator: TextGenerator = {
+          generate: async (textRequest) => {
+            context.assertStillOwnsExecution()
+            if (!agent) {
+              agent = await options.agentFactory.create({
+                projectId: request.project_id,
+                sessionId: context.input.sessionId,
+                llm: context.input.llm,
+                systemPrompt: '你负责依据已确认的长篇大纲生成章节，不执行大纲修改，不生成叙事记忆。',
+              })
+            }
+            context.setExecutionPhase('awaiting_model')
+            return new AgentTextGenerator(agent, () => context.setExecutionPhase('model_in_flight')).generate(textRequest)
+          },
+        }
         const result = await options.service.generate(
           request,
-          new AgentTextGenerator(agent, () => context.setExecutionPhase('model_in_flight')),
+          generator,
           {
             signal: context.signal,
             commit: (operation) => context.runOwnedSideEffect(operation),
@@ -255,6 +265,11 @@ export function createChapterGenerationTaskRunner(
             factCheckPassed,
           ),
         }
+      } catch (error) {
+        if (error instanceof ChapterGenerationBoundaryError || error instanceof EntityNotFoundError) {
+          throw new NonRecoverableTaskError(error.message)
+        }
+        throw error
       } finally {
         agent?.dispose()
       }

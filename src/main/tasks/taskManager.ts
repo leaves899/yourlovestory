@@ -7,6 +7,7 @@ import type { ChapterGenerationStage } from '../../shared/chapterGeneration'
 import {
   buildIdempotencyKey,
   classifyTaskRecovery,
+  parseStrictGenerationCheckpoint,
   DEFAULT_LEASE_MS,
   DEFAULT_LEASE_RENEW_MS,
   DEFAULT_MAX_RECOVERY_ATTEMPTS,
@@ -851,6 +852,12 @@ export class TaskManager {
     const existing = this.options.store.getById(taskId)
     if (!existing) return null
     const finalEntity = this.hasDurableFinalEntity(existing)
+    const checkpoint = existing.task_type === 'chapter-generation'
+      ? parseStrictGenerationCheckpoint(existing.checkpoint)
+      : null
+    const zeroModelFinish = finalEntity || (
+      checkpoint?.stage === 'saving' && checkpoint.body.trim() !== '' && checkpoint.summary.trim() !== ''
+    )
 
     const nowIso = this.now()
     const leaseToken = randomUUID()
@@ -880,7 +887,7 @@ export class TaskManager {
       const persisted = inputFromTask(claim.task)
       // A durable final entity lets the runner perform a zero-model idempotent
       // finish. Do not make that safe path depend on credential resolution.
-      const resolvedLlm = finalEntity
+      const resolvedLlm = zeroModelFinish
         ? persisted.llm
         : this.resolveCurrentCredential(claim.task.project_id, persisted.llm)
       input = {

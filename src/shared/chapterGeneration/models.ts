@@ -110,6 +110,7 @@ export interface ChapterGenerationCheckpoint {
   version_id: string | null
   /** Original chapter text captured before generation for recovery compare-and-apply. */
   source_content?: string
+  source_chapter_version?: number
   updated_at?: string
 }
 

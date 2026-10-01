@@ -127,6 +127,13 @@ drain 超时时不得提前结束 runtime session，也不得关闭仍可能被�
 - `manual_retry_allowed` 显示“确认重试”，必须 `window.confirm`（或等价明确意图）且 IPC `confirmed: true`
 - 不得盲目 `resume()` 所有失败任务
 
+## 结果落库前的来源保护
+
+`saving` 检查点尚无最终版本时，恢复前也核对原始正文和已记录的章节版本，
+结果落库前再次核对当前版本与正文。用户后来的正文、摘要或采用状态不会被旧结果覆盖。
+已有版本的收尾保留来源证据；只有可识别为本任务自身的 review 更新才允许继续收尾。
+`saving` 检查点的无模型收尾不创建 Agent，也不要求重新解析模型凭据。
+
 ## 已知限制
 
 - Generic assistant 无业务 checkpoint 且 prompt 不持久化，自动与人工重放都 fail closed

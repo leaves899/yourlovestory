@@ -1935,6 +1935,33 @@ describe('task crash recovery fault matrix', () => {
     }
   })
 
+  test('saving checkpoint finishes without credentials or agent creation', async () => {
+    const { projectId, outlineId, chapterId } = seedProject('saving-without-credentials')
+    const tasks = new TaskRepository(database)
+    const source = new ChapterRepository(database).getById(chapterId)!
+    const task = tasks.create({
+      project_id: projectId, chapter_id: chapterId, task_type: 'chapter-generation',
+      recovery_metadata_version: RECOVERY_METADATA_VERSION, checkpoint_schema_version: 1,
+      input: { sessionId: 's', taskType: 'chapter-generation', prompt: '',
+        llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+        request: { project_id: projectId, chapter_outline_id: outlineId, chapter_id: chapterId, auto_confirm: true },
+      },
+    })
+    tasks.update(task.id, { status: 'running', execution_phase: 'persisting_result', checkpoint: {
+      schema_version: 1, stage: 'saving', body: 'durable body', summary: 'durable summary',
+      fact_check_text: '', fact_check: { passed: true, summary: 'ok', findings: [] },
+      version_id: null, source_content: source.content,
+    } })
+    const factory: AgentFactory = { create: jest.fn(async () => { throw new Error('Agent must not be created') }) }
+    const manager = createManager({ agentFactory: factory, resolveLlmConfig: () => { throw new Error('Credentials unavailable') } })
+    manager.beginRuntimeSession()
+    expect((await manager.scanAndRecoverOnStartup()).autoStarted).toBe(1)
+    expect((await manager.wait(task.id))?.status).toBe('completed')
+    expect(new ChapterRepository(database).getById(chapterId)?.content).toBe('durable body')
+    expect(factory.create).not.toHaveBeenCalled()
+    manager.dispose()
+  })
+
   test('P1-3 final entity finishes with zero model under credential/timeout/attempt caps', async () => {
     const { projectId, outlineId, chapterId } = seedProject('final-zero')
     const tasks = new TaskRepository(database)

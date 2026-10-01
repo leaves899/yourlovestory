@@ -129,6 +129,7 @@ export function checkpointToJson(checkpoint: ChapterGenerationCheckpoint): JsonO
     fact_check: checkpoint.fact_check ? factCheckToJson(checkpoint.fact_check) : null,
     version_id: checkpoint.version_id,
     ...(checkpoint.source_content !== undefined ? { source_content: checkpoint.source_content } : {}),
+    ...(checkpoint.source_chapter_version !== undefined ? { source_chapter_version: checkpoint.source_chapter_version } : {}),
     ...(checkpoint.updated_at ? { updated_at: checkpoint.updated_at } : {}),
   }
 }
@@ -145,6 +146,7 @@ export function checkpointFromJson(value: JsonObject | null): ChapterGenerationC
     fact_check: parseFactCheck(value.fact_check),
     version_id: readNullableString(value.version_id),
     ...(typeof value.source_content === 'string' ? { source_content: value.source_content } : {}),
+    ...(typeof value.source_chapter_version === 'number' ? { source_chapter_version: value.source_chapter_version } : {}),
     updated_at: readString(value.updated_at) || undefined,
   }
 }
@@ -302,6 +304,7 @@ export class ChapterGenerationService {
     input: ChapterGenerationRequest,
     versionId: string,
     expectedSourceContent: string | null = null,
+    expectedSourceVersion?: number,
   ): { chapter: Chapter; version: ChapterVersion; autoConfirmed: boolean } {
     let version = this.getVersion(input.project_id, versionId)
     if (version.task_id !== input.task_id) {
@@ -331,6 +334,18 @@ export class ChapterGenerationService {
       throw new ChapterGenerationBoundaryError(
         'Approved chapter version is no longer current',
       )
+    }
+
+    if (version.status === 'review' && expectedSourceContent !== null && chapter.content !== expectedSourceContent) {
+      throw new ChapterGenerationBoundaryError('Chapter changed after the generation checkpoint')
+    }
+    if (version.status === 'review' && expectedSourceVersion !== undefined) {
+      const ownReviewUpdate = chapter.version === expectedSourceVersion + 1
+        && chapter.status === 'review' && chapter.synopsis === version.summary
+        && chapter.actual_words === version.content.length
+      if (chapter.version !== expectedSourceVersion && !ownReviewUpdate) {
+        throw new ChapterGenerationBoundaryError('Chapter version changed after generation; recovery cannot overwrite metadata')
+      }
     }
 
     if (input.auto_confirm && version.status === 'review' && version.fact_check.passed) {
@@ -429,7 +444,26 @@ export class ChapterGenerationService {
     const canReuseSavedVersion = checkpoint.stage === 'review' && checkpoint.version_id !== null
     const preparation = this.commit(
       options,
-      () => this.prepareInternal(input, !canReuseSavedVersion),
+      () => {
+        const existing = input.chapter_id
+          ? this.requireChapter(input.project_id, input.chapter_id)
+          : this.options.chapters.getByProjectAndNumber(
+              input.project_id,
+              this.options.project.getChapterOutline(input.project_id, input.chapter_outline_id).chapter_number,
+            )
+        if (checkpoint.source_content !== undefined && existing?.content !== checkpoint.source_content) {
+          throw new ChapterGenerationBoundaryError('Chapter changed after the generation checkpoint')
+        }
+        if (!canReuseSavedVersion && checkpoint.source_chapter_version !== undefined && existing?.version !== checkpoint.source_chapter_version) {
+          throw new ChapterGenerationBoundaryError('Chapter version changed after the generation checkpoint')
+        }
+        if (input.auto_confirm && checkpoint.body && checkpoint.source_content === undefined) {
+          throw new ChapterGenerationBoundaryError('Generation source evidence is missing; cannot auto-confirm')
+        }
+        const prepared = this.prepareInternal(input, !canReuseSavedVersion)
+        checkpoint = { ...checkpoint, source_chapter_version: prepared.chapter.version }
+        return prepared
+      },
     )
     if (checkpoint.source_content === undefined) {
       checkpoint = { ...checkpoint, source_content: preparation.chapter.content }
@@ -562,6 +596,12 @@ export class ChapterGenerationService {
 
     if (options.signal.aborted) return cancel()
     options.callbacks?.on_stage?.('saving', 0.9)
+    this.commit(options, () => {
+      const current = this.requireChapter(input.project_id, chapter.id)
+      if (current.version !== chapter.version || current.content !== checkpoint.source_content) {
+        throw new ChapterGenerationBoundaryError('Chapter changed during generation; cannot save stale results')
+      }
+    })
     checkpoint = { ...checkpoint, stage: 'saving' }
     this.publishCheckpoint(options, checkpoint)
     const version = this.commit(options, () =>

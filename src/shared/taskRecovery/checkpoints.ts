@@ -15,6 +15,7 @@ export interface StrictGenerationCheckpoint {
   fact_check: JsonObject | null
   version_id: string | null
   source_content?: string
+  source_chapter_version?: number
   updated_at?: string
 }
 
@@ -67,6 +68,7 @@ export function parseStrictGenerationCheckpoint(
   if (value.summary !== undefined && typeof value.summary !== 'string') return null
   if (value.fact_check_text !== undefined && typeof value.fact_check_text !== 'string') return null
   if (value.source_content !== undefined && typeof value.source_content !== 'string') return null
+  if (value.source_chapter_version !== undefined && (typeof value.source_chapter_version !== 'number' || !Number.isInteger(value.source_chapter_version) || value.source_chapter_version < 1)) return null
   if (
     value.version_id !== undefined
     && value.version_id !== null
@@ -90,6 +92,7 @@ export function parseStrictGenerationCheckpoint(
     fact_check: isRecord(value.fact_check) ? value.fact_check : null,
     version_id: typeof value.version_id === 'string' ? value.version_id : null,
     ...(typeof value.source_content === 'string' ? { source_content: value.source_content } : {}),
+    ...(typeof value.source_chapter_version === 'number' ? { source_chapter_version: value.source_chapter_version } : {}),
     ...(typeof value.updated_at === 'string' ? { updated_at: value.updated_at } : {}),
   }
 }
@@ -150,6 +153,8 @@ export function generationCheckpointToJson(checkpoint: StrictGenerationCheckpoin
     fact_check_text: checkpoint.fact_check_text,
     fact_check: checkpoint.fact_check,
     version_id: checkpoint.version_id,
+    ...(checkpoint.source_content !== undefined ? { source_content: checkpoint.source_content } : {}),
+    ...(checkpoint.source_chapter_version !== undefined ? { source_chapter_version: checkpoint.source_chapter_version } : {}),
     ...(checkpoint.updated_at ? { updated_at: checkpoint.updated_at } : {}),
   }
 }
