@@ -57,6 +57,7 @@ function WorkbenchWritePage() {
     startGeneration,
     cancel,
     resume,
+    manualRetry,
   } = useTaskStore()
   const [chapterId, setChapterId] = useState('')
   const [llm, setLlm] = useState<AssistantLlmForm>(defaultLlm)
@@ -160,7 +161,77 @@ function WorkbenchWritePage() {
           </Card>
           <Card>
             <CardHeader><Text fontWeight="bold">任务日志与恢复</Text></CardHeader>
-            <CardBody><VStack align="stretch" spacing={3}>{recoverableTasks.length > 0 && <Alert status="warning"><AlertIcon /><Text fontSize="sm">有 {recoverableTasks.length} 个任务可以恢复。</Text></Alert>}{recoverableTasks.map((task) => <HStack key={task.id} justify="space-between"><Text fontSize="sm" noOfLines={1}>{task.task_type} · {task.stage}</Text><Button size="xs" leftIcon={<FaRedo />} onClick={() => void resume(task.id)} isDisabled={busy}>恢复</Button></HStack>)}<Stack maxH="280px" overflowY="auto" spacing={1}>{logs.map((log, index) => <Text key={`${log}-${index}`} fontSize="xs" color="ink.600">{log}</Text>)}</Stack></VStack></CardBody>
+            <CardBody>
+              <VStack align="stretch" spacing={3} data-testid="task-recovery-panel">
+                {recoverableTasks.length > 0 && (
+                  <Alert status="warning">
+                    <AlertIcon />
+                    <Text fontSize="sm">有 {recoverableTasks.length} 个未完成任务，请按分类处理。不确定窗口不会自动重放模型请求。</Text>
+                  </Alert>
+                )}
+                {recoverableTasks.map((task) => {
+                  const classification = task.recovery_classification ?? 'manual-retry-required'
+                  const label =
+                    classification === 'resumable' ? '可安全收尾'
+                      : classification === 'restartable' ? '可安全重启'
+                        : classification === 'manual-retry-required' ? '需要人工确认'
+                          : '不可恢复'
+                  const colorScheme =
+                    classification === 'resumable' || classification === 'restartable' ? 'green'
+                      : classification === 'manual-retry-required' ? 'orange'
+                        : 'red'
+                  return (
+                    <Stack key={task.id} spacing={1} borderWidth="1px" borderRadius="md" p={2} data-testid={`recovery-task-${task.id}`}>
+                      <HStack justify="space-between" align="flex-start">
+                        <Stack spacing={0} flex="1" minW={0}>
+                          <HStack>
+                            <Badge colorScheme={colorScheme}>{label}</Badge>
+                            <Text fontSize="sm" noOfLines={1}>{task.task_type} · {task.stage || task.execution_phase}</Text>
+                          </HStack>
+                          <Text fontSize="xs" color="ink.600" noOfLines={2}>
+                            {task.recovery_reason ?? '等待分类'}
+                            {` · 尝试 ${task.recovery_attempt_count}/${task.max_recovery_attempts}`}
+                          </Text>
+                        </Stack>
+                        {task.auto_allowed && (
+                          <Button
+                            size="xs"
+                            leftIcon={<FaRedo />}
+                            onClick={() => void resume(task.id)}
+                            isDisabled={busy}
+                            data-testid={`auto-resume-${task.id}`}
+                          >
+                            {classification === 'restartable' ? '安全重启' : '安全恢复'}
+                          </Button>
+                        )}
+                        {!task.auto_allowed && task.manual_retry_allowed && (
+                          <Button
+                            size="xs"
+                            colorScheme="orange"
+                            leftIcon={<FaRedo />}
+                            onClick={() => {
+                              const ok = window.confirm(
+                                '该任务可能处于模型请求不确定窗口。确认后将按当前项目凭据重试，可能产生额外调用费用。是否继续？',
+                              )
+                              if (ok) void manualRetry(task.id)
+                            }}
+                            isDisabled={busy}
+                            data-testid={`manual-retry-${task.id}`}
+                          >
+                            确认重试
+                          </Button>
+                        )}
+                      </HStack>
+                    </Stack>
+                  )
+                })}
+                <Stack maxH="280px" overflowY="auto" spacing={1}>
+                  {logs.map((log, index) => (
+                    <Text key={`${log}-${index}`} fontSize="xs" color="ink.600">{log}</Text>
+                  ))}
+                </Stack>
+              </VStack>
+            </CardBody>
           </Card>
         </SimpleGrid>
 

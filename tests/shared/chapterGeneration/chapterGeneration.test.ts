@@ -225,6 +225,29 @@ describe('chapter generation repositories and domain service', () => {
     })).toThrow('Chapter outline must be confirmed or locked')
   })
 
+  test.each([true, false])('saving checkpoint preserves later user edits (auto_confirm=%s)', async (autoConfirm) => {
+    const { workbench, projectId, chapterOutlineId } = createWorkbench(database)
+    const chapter = workbench.chapters.create({
+      project_id: projectId, chapter_number: 1, title: 'Chapter',
+      content: 'later user edit', synopsis: 'user synopsis', status: 'completed',
+    })
+    const generator = new ScriptedGenerator({ body: [], summary: [], fact_check: [] })
+    await expect(workbench.chapterGeneration.generate(
+      { project_id: projectId, chapter_outline_id: chapterOutlineId, chapter_id: chapter.id, auto_confirm: autoConfirm },
+      generator,
+      {
+        signal: new AbortController().signal,
+        checkpoint: {
+          schema_version: 1, stage: 'saving', body: 'old generated body', summary: 'old summary',
+          fact_check_text: '', fact_check: factCheck(true), version_id: null, source_content: 'original body',
+        },
+      },
+    )).rejects.toThrow(ChapterGenerationBoundaryError)
+    expect(workbench.chapters.getById(chapter.id)).toEqual(chapter)
+    expect(workbench.chapterVersions.listByChapter(chapter.id)).toHaveLength(0)
+    expect(generator.calls).toHaveLength(0)
+  })
+
   test('streams body stages, saves a review version, and requires manual confirmation', async () => {
     const { workbench, projectId, chapterOutlineId } = createWorkbench(database)
     const stages: string[] = []

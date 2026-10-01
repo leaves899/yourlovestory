@@ -233,8 +233,21 @@ interface ElectronAPI {
   cancelTask: (taskId: string) => Promise<any>
   getTask: (taskId: string) => Promise<any>
   listTasks: (projectId: string) => Promise<any>
-  resumeTask: (taskId: string) => Promise<any>
-  listRecoverableTasks: (projectId: string) => Promise<any>
+  resumeTask: (taskId: string) => Promise<{
+    success: boolean
+    data?: { taskId: string }
+    errors?: string[]
+  }>
+  manualRetryTask: (taskId: string, confirmed: true) => Promise<{
+    success: boolean
+    data?: { taskId: string }
+    errors?: string[]
+  }>
+  listRecoverableTasks: (projectId: string) => Promise<{
+    success: boolean
+    data?: import('../shared/taskRecovery').RecoverableTaskView[]
+    errors?: string[]
+  }>
   onTaskStart: (listener: (event: TaskStartEvent) => void) => () => void
   onTaskStage: (listener: (event: TaskStageEvent) => void) => () => void
   onTaskChunk: (listener: (event: TaskChunkEvent) => void) => () => void

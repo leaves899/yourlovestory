@@ -101,12 +101,16 @@ export interface CreateChapterVersionInput {
 export type ChapterGenerationStage = 'body' | 'summary' | 'fact_check' | 'saving' | 'review'
 
 export interface ChapterGenerationCheckpoint {
+  schema_version: number
   stage: ChapterGenerationStage
   body: string
   summary: string
   fact_check_text: string
   fact_check: FactCheckReport | null
   version_id: string | null
+  /** Original chapter text captured before generation for recovery compare-and-apply. */
+  source_content?: string
+  source_chapter_version?: number
   updated_at?: string
 }
 
@@ -165,6 +169,7 @@ export function emptyFactCheckReport(): FactCheckReport {
 
 export function emptyChapterGenerationCheckpoint(): ChapterGenerationCheckpoint {
   return {
+    schema_version: 1,
     stage: 'body',
     body: '',
     summary: '',

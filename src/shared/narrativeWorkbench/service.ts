@@ -187,14 +187,17 @@ function checkpointFor(
   revisionId: string | null,
   error: string | null,
   now: string,
+  applied = false,
 ): NarrativeOperationCheckpoint {
   return {
+    schema_version: 1,
     operation,
     source_content: sourceContent,
     generated_content: generatedContent,
     revision_id: revisionId,
     status,
     error,
+    applied,
     updated_at: now,
   }
 }
@@ -590,6 +593,37 @@ export class NarrativeWorkbenchService {
     return this.options.stores.revisions.listByChapter(chapter.id)
   }
 
+  /** Lookup revision already persisted for a task (idempotent finish path). */
+  public getRevisionByTaskId(taskId: string): ChapterRevision | null {
+    return this.options.stores.revisions.getByTaskId?.(taskId) ?? null
+  }
+
+  public getReportByTaskId(taskId: string): PostprocessReport | null {
+    return this.options.stores.reports.getByTaskId?.(taskId) ?? null
+  }
+
+  /**
+   * Ensure a postprocess report is linked to the task without re-running the model.
+   * Idempotent: returns the existing report when task_id already has one.
+   */
+  public ensureReportForTask(
+    projectId: string,
+    chapterId: string,
+    taskId: string,
+    revisionId: string,
+    reportType: 'chapter-polish' | 'paragraph-revision' = 'chapter-polish',
+  ): PostprocessReport | null {
+    return this.createReport(
+      projectId,
+      chapterId,
+      taskId,
+      reportType,
+      'completed',
+      `${reportType} completed`,
+      { revision_id: revisionId },
+    )
+  }
+
   public getRevision(projectId: string, revisionId: string): ChapterRevision {
     const revision = this.options.stores.revisions.getById(revisionId)
     if (!revision) throw new EntityNotFoundError('Chapter revision', revisionId)
@@ -641,6 +675,14 @@ export class NarrativeWorkbenchService {
   public applyRevision(projectId: string, revisionId: string): Chapter {
     const revision = this.getRevision(projectId, revisionId)
     const chapter = this.requireChapter(projectId, revision.chapter_id)
+    // Idempotent: if chapter already matches the revision and it is current, skip write.
+    if (
+      chapter.content === revision.content
+      && revision.is_current
+      && chapter.status === 'completed'
+    ) {
+      return chapter
+    }
     const updated = this.options.stores.chapters.update(
       chapter.id,
       {
@@ -654,6 +696,40 @@ export class NarrativeWorkbenchService {
     if (!updated) throw new EntityNotFoundError('Chapter', chapter.id)
     this.options.stores.revisions.setCurrent(revision.id)
     return updated
+  }
+
+  /**
+   * Recovery-only compare-and-apply boundary. A task's old auto_apply consent
+   * cannot overwrite chapter text changed after the checkpoint was persisted.
+   */
+  public applyRecoveredRevision(
+    projectId: string,
+    revisionId: string,
+    expectedSourceContent: string | null,
+  ): Chapter {
+    const revision = this.getRevision(projectId, revisionId)
+    const latest = this.options.stores.revisions.listByChapter(revision.chapter_id)[0]
+    if (!revision.is_current || !latest || latest.id !== revision.id) {
+      throw new NarrativeBoundaryError('Recovered revision is no longer latest and current')
+    }
+    const chapter = this.requireChapter(projectId, revision.chapter_id)
+    if (expectedSourceContent === null) {
+      throw new NarrativeBoundaryError(
+        'Recovered revision has no source-content evidence; explicit review is required',
+      )
+    }
+    if (
+      chapter.content === revision.content
+      && chapter.status === 'completed'
+    ) {
+      return chapter
+    }
+    if (chapter.content !== expectedSourceContent) {
+      throw new NarrativeBoundaryError(
+        'Chapter changed after the revision checkpoint; explicit review is required',
+      )
+    }
+    return this.applyRevision(projectId, revisionId)
   }
 
   public async reviseParagraph(
@@ -860,45 +936,85 @@ export class NarrativeWorkbenchService {
   ): ChapterRevisionOperationResult {
     const content = chapterBlocksToContent(blocks)
     const diff = diffChapterBlocks(source.blocks, blocks)
-    const revision = this.options.stores.revisions.create({
-      chapter_id: source.chapter.id,
-      parent_revision_id: source.revision?.id ?? null,
-      content,
-      summary: source.chapter.synopsis,
-      reason,
-      operation,
-      blocks,
-    })
-    const current = this.options.stores.revisions.setCurrent(revision.id) ?? revision
-    const report = this.createReport(
-      projectId,
-      source.chapter.id,
-      options.task_id ?? null,
-      reportType,
-      'completed',
-      `${operation} completed`,
-      { revision_id: current.id, diff: diffToJson(diff) },
-    )
-    notifyCheckpoint(
-      options,
-      checkpointFor(
-        operation === 'polish' ? 'chapter_polish' : 'paragraph_revision',
-        source.content,
+    return this.commit(options, () => {
+      const taskId = options.task_id ?? null
+      if (taskId) {
+        const existing = this.options.stores.revisions.getByTaskId?.(taskId)
+          ?? null
+        if (existing) {
+          const report = this.options.stores.reports.getByTaskId?.(taskId)
+            ?? this.createReport(
+              projectId,
+              source.chapter.id,
+              taskId,
+              reportType,
+              'completed',
+              `${operation} completed`,
+              { revision_id: existing.id, diff: diffToJson(diff) },
+            )
+          notifyCheckpoint(
+            options,
+            checkpointFor(
+              operation === 'polish' ? 'chapter_polish' : 'paragraph_revision',
+              source.content,
+              existing.content,
+              'completed',
+              existing.id,
+              null,
+              this.now(),
+            ),
+          )
+          return {
+            status: 'completed',
+            content: existing.content,
+            revision: existing,
+            diff,
+            report,
+            error: null,
+          }
+        }
+      }
+      const revision = this.options.stores.revisions.create({
+        chapter_id: source.chapter.id,
+        parent_revision_id: source.revision?.id ?? null,
+        task_id: taskId,
         content,
+        summary: source.chapter.synopsis,
+        reason,
+        operation,
+        blocks,
+      })
+      const current = this.options.stores.revisions.setCurrent(revision.id) ?? revision
+      const report = this.createReport(
+        projectId,
+        source.chapter.id,
+        taskId,
+        reportType,
         'completed',
-        current.id,
-        null,
-        this.now(),
-      ),
-    )
-    return {
-      status: 'completed',
-      content,
-      revision: current,
-      diff,
-      report,
-      error: null,
-    }
+        `${operation} completed`,
+        { revision_id: current.id, diff: diffToJson(diff) },
+      )
+      notifyCheckpoint(
+        options,
+        checkpointFor(
+          operation === 'polish' ? 'chapter_polish' : 'paragraph_revision',
+          source.content,
+          content,
+          'completed',
+          current.id,
+          null,
+          this.now(),
+        ),
+      )
+      return {
+        status: 'completed',
+        content,
+        revision: current,
+        diff,
+        report,
+        error: null,
+      }
+    })
   }
 
   private fallbackResult(
@@ -912,14 +1028,17 @@ export class NarrativeWorkbenchService {
     const actualStatus = status === 'cancelled' ? 'cancelled' : 'fallback'
     const fallbackError = error ?? `${reportType} used the original content`
     const report = actualStatus === 'fallback'
-      ? this.createReport(
-          projectId,
-          source.chapter.id,
-          options.task_id ?? null,
-          reportType,
-          'fallback',
-          `${reportType} fell back to the original content`,
-          { error: fallbackError },
+      ? this.commit(
+          options,
+          () => this.createReport(
+            projectId,
+            source.chapter.id,
+            options.task_id ?? null,
+            reportType,
+            'fallback',
+            `${reportType} fell back to the original content`,
+            { error: fallbackError },
+          ),
         )
       : null
     return {
@@ -932,6 +1051,10 @@ export class NarrativeWorkbenchService {
     }
   }
 
+  private commit<T>(options: NarrativeRunOptions, operation: () => T): T {
+    return options.commit ? options.commit(operation) : operation()
+  }
+
   private createReport(
     projectId: string,
     chapterId: string,
@@ -942,6 +1065,10 @@ export class NarrativeWorkbenchService {
     details: JsonObject,
   ): PostprocessReport | null {
     try {
+      if (taskId) {
+        const existing = this.options.stores.reports.getByTaskId?.(taskId) ?? null
+        if (existing) return existing
+      }
       return this.options.stores.reports.create({
         project_id: projectId,
         chapter_id: chapterId,
@@ -952,6 +1079,9 @@ export class NarrativeWorkbenchService {
         details,
       })
     } catch {
+      if (taskId) {
+        return this.options.stores.reports.getByTaskId?.(taskId) ?? null
+      }
       return null
     }
   }

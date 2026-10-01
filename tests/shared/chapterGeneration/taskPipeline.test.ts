@@ -175,7 +175,8 @@ describe('chapter generation task pipeline', () => {
     expect(cancelled.status).toBe('cancelled')
     expect(cancelled.checkpoint).toEqual(expect.objectContaining({ stage: 'body', body: '部分正文' }))
 
-    const resumed = manager.resume(handle.taskId)
+    // Cancelled tasks are not auto-resumable; explicit manual retry is required.
+    const resumed = manager.manualRetry(handle.taskId, true)
     expect(resumed).not.toBeNull()
     const completed = await resumed!.completion
 

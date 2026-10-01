@@ -146,9 +146,8 @@ describe('TaskManager', () => {
     )
   })
 
-  test('re-resolves the current project credential when a failed task resumes', async () => {
+  test('rejects assistant recovery because its prompt is intentionally not persisted', async () => {
     const resolvedCredentialIds: string[] = []
-    let currentCredentialId = 'llm:project:initial'
     let attempts = 0
     const manager = new TaskManager({
       store: new TaskRepository(database),
@@ -172,7 +171,7 @@ describe('TaskManager', () => {
       events: { publish: () => undefined },
       resolveLlmConfig: (_projectId, input) => ({
         ...input,
-        credentialId: currentCredentialId,
+        credentialId: 'llm:project:initial',
       }),
     })
     const first = manager.start({
@@ -184,14 +183,11 @@ describe('TaskManager', () => {
     })
     expect((await first.completion).status).toBe('failed')
 
-    currentCredentialId = 'llm:project:replacement'
-    const resumed = manager.resume(first.taskId)
-    expect(resumed).not.toBeNull()
-    expect((await resumed!.completion).status).toBe('completed')
-    expect(resolvedCredentialIds).toEqual([
-      'llm:project:initial',
-      'llm:project:replacement',
-    ])
+    expect(() => manager.manualRetry(first.taskId, true)).toThrow(/prompt|重新/)
+    expect(manager.listRecoverable(projectId).find((item) => item.id === first.taskId))
+      .toMatchObject({ manual_retry_allowed: false, auto_allowed: false })
+    expect(resolvedCredentialIds).toEqual(['llm:project:initial'])
+    expect(attempts).toBe(1)
   })
 
   test('rejects a second chapter generation while one is running', async () => {
