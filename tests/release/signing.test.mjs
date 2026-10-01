@@ -5,7 +5,7 @@ import { basename, join } from 'node:path'
 import test from 'node:test'
 import { artifactPaths } from '../../scripts/release/artifacts.mjs'
 import { packageRelease } from '../../scripts/release/package.mjs'
-import { REQUIRED_SIGNING_INPUTS, signingBuildEnvironment, validateReleasePolicy,
+import { REQUIRED_SIGNING_INPUTS, ReleaseGateError, signingBuildEnvironment, validateReleasePolicy,
   validateSigningEnvironment } from '../../scripts/release/policy.mjs'
 import { parseMacSigningDetails, refreshMacBlockmap, runCommand, verifyMac,
   verifyWindows } from '../../scripts/release/signing.mjs'
@@ -218,12 +218,53 @@ test('builder is always offline from publishing and unsigned Linux stages its in
         assert.equal(config.forceCodeSigning, false)
         assert.equal(options.env.CSC_IDENTITY_AUTO_DISCOVERY, 'false')
         await mkdir(join(root, 'release'), { recursive: true })
-        await writeFile(paths.installer, 'synthetic installer')
+        await writeFile(join(root, 'release', `yourcrush-${version}-linux.AppImage`), 'synthetic installer')
         return { code: 0 }
       } })
     assert.equal(report.status, 'passed')
     assert.equal(report.releaseCodeSigning, 'not-applicable')
     assert.equal((await readdir(paths.upload)).includes(basename(paths.installer)), true)
+  })
+})
+
+test('unsigned Windows preserves the package when signature observation is unavailable', async () => {
+  await withRoot(async (root) => {
+    const paths = artifactPaths(root, version, 'win32', 'x64')
+    let calls = 0
+    const { report } = await packageRelease({ rootDir: root, mode: 'unsigned-prerelease', platform: 'win32', arch: 'x64',
+      env: {}, run: async () => {
+        calls += 1
+        if (calls === 1) {
+          await mkdir(join(root, 'release', 'win-unpacked'), { recursive: true })
+          await writeFile(paths.application, 'synthetic app')
+          await writeFile(paths.installer, 'synthetic installer')
+          return { code: 0 }
+        }
+        return { code: 1, stdout: '', stderr: '' }
+      } })
+    assert.equal(report.status, 'passed')
+    assert.deepEqual(report.checks.map((check) => check.status), ['unavailable', 'unavailable'])
+    assert.equal((await readdir(paths.upload)).includes(basename(paths.installer)), true)
+  })
+})
+
+test('unsigned Windows records unavailable when the observation tool cannot start', async () => {
+  await withRoot(async (root) => {
+    const paths = artifactPaths(root, version, 'win32', 'x64')
+    let calls = 0
+    const { report } = await packageRelease({ rootDir: root, mode: 'unsigned-prerelease', platform: 'win32', arch: 'x64',
+      env: {}, run: async () => {
+        calls += 1
+        if (calls === 1) {
+          await mkdir(join(root, 'release', 'win-unpacked'), { recursive: true })
+          await writeFile(paths.application, 'synthetic app')
+          await writeFile(paths.installer, 'synthetic installer')
+          return { code: 0 }
+        }
+        throw new ReleaseGateError('SIGNING_TOOL_UNAVAILABLE')
+      } })
+    assert.equal(report.status, 'passed')
+    assert.deepEqual(report.checks.map((check) => check.status), ['unavailable', 'unavailable'])
   })
 })
 

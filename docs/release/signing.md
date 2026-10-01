@@ -17,7 +17,8 @@
 两种模式均拒绝 Stable 版本，只能创建 draft prerelease。普通 CI 运行真实的三平台
 `unsigned-prerelease` 打包、packaged smoke、报告绑定及产物汇总验证，不创建 Release
 或 tag。Windows Electron 原始 EXE 可能带供应商签名，macOS 也可能存在 ad hoc 签名；
-unsigned 状态报告只说明本仓库未配置发布签名，并记录实际观察结果。
+unsigned 状态报告只说明本仓库未配置发布签名，并记录实际观察结果。若 runner 没有可用的
+Authenticode 观察工具，报告会记录 `unavailable` 并继续 unsigned smoke，不会把它升级为签名成功。
 
 ## 受保护环境
 

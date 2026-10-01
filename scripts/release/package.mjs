@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir, readFile, rmdir, unlink, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, mkdir, readFile, readdir, rename, rmdir, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { artifactPaths, fileHash, stageArtifacts } from './artifacts.mjs'
 import { PLATFORM_NAMES, ReleaseGateError, signingBuildEnvironment, validateReleasePolicy } from './policy.mjs'
@@ -42,9 +42,18 @@ export async function packageRelease({ rootDir, mode, platform = process.platfor
       cwd: rootDir, env: signingBuildEnvironment(env, mode, platform, appleKeyPath), timeoutMs: 1_800_000,
     })
     if (build.code !== 0) throw new ReleaseGateError('ELECTRON_BUILDER_FAILED')
+    await normalizeInstallerPath(paths, rootDir, version, platform)
     phase = 'SIGNING_VERIFICATION_FAILED'
     if (platform === 'win32') {
-      report.checks = await verifyWindows({ executable: paths.application, installer: paths.installer, signed, rootDir, run })
+      try {
+        report.checks = await verifyWindows({ executable: paths.application, installer: paths.installer, signed, rootDir, run })
+      } catch (error) {
+        if (signed || !(error instanceof ReleaseGateError)
+          || !['SIGNING_TOOL_UNAVAILABLE', 'WINDOWS_SIGNATURE_TOOL_FAILED', 'WINDOWS_SIGNATURE_STATUS_INVALID'].includes(error.code)) throw error
+        report.checks = [paths.application, paths.installer].map((target) => ({
+          check: 'authenticode-observation', target: basename(target), status: 'unavailable', timestamped: false,
+        }))
+      }
     } else if (platform === 'darwin') {
       report.checks = await verifyMac({ application: paths.application, installer: paths.installer, signed, appleKeyPath, env, run })
       if (signed) await refreshMacBlockmap(paths.installer, run)
@@ -75,6 +84,34 @@ export async function packageRelease({ rootDir, mode, platform = process.platfor
       await rmdir(temporary)
     }
   }
+}
+
+/**
+ * electron-builder versions and platform runners can disagree on `${os}` and
+ * `${arch}` expansion. Accept one unambiguous current-version installer and
+ * normalize it to the name used by smoke/finalize/collector evidence.
+ */
+async function normalizeInstallerPath(paths, rootDir, version, platform) {
+  try {
+    await access(paths.installer)
+    return
+  } catch {
+    // Resolve only within the release directory below.
+  }
+  const extension = platform === 'darwin' ? '.dmg' : platform === 'linux' ? '.appimage' : '.exe'
+  const prefix = `yourcrush-${version}-`
+  let entries
+  try {
+    entries = await readdir(join(rootDir, 'release'), { withFileTypes: true })
+  } catch {
+    throw new ReleaseGateError('RELEASE_INSTALLER_MISSING')
+  }
+  const candidates = entries
+    .filter((entry) => entry.isFile() && entry.name.startsWith(prefix)
+      && entry.name.toLowerCase().endsWith(extension))
+    .map((entry) => join(rootDir, 'release', entry.name))
+  if (candidates.length !== 1) throw new ReleaseGateError('RELEASE_INSTALLER_MISSING')
+  await rename(candidates[0], paths.installer)
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

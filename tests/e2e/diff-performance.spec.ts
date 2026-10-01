@@ -60,7 +60,12 @@ try {
       process.stdout.write(JSON.stringify({ projectId: project.id, chapterId: chapter.id, outlineId: outline.id, versions, revisions }))
 } finally { db.close() }
 `, 'utf8')
-  const electronBinary = path.resolve('node_modules/electron/dist/electron.exe')
+  const electronBinaryName = process.platform === 'win32'
+    ? 'electron.exe'
+    : process.platform === 'darwin'
+      ? path.join('Electron.app', 'Contents', 'MacOS', 'Electron')
+      : 'electron'
+  const electronBinary = path.resolve('node_modules/electron/dist', electronBinaryName)
   fixture = JSON.parse(execFileSync(electronBinary, [fixtureScript], {
     cwd: path.resolve('.'), encoding: 'utf8', env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   })) as typeof fixture
