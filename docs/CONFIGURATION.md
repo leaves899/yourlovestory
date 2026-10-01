@@ -136,9 +136,13 @@ userData/backups/backup-policy.json
 
 当前 **没有** 远端上传诊断、自动发送遥测或完整应用日志收集。
 
-### 尚未覆盖的范围
+### 任务恢复与剩余边界
 
-Issue #19 的崩溃恢复（未完成任务状态迁移与自动 resume）仍由后续 Phase 处理，**当前未实现**。请勿将现有自动备份、项目导入导出或诊断包理解为“数据安全议题已全部完成”。
+Issue #19 已实现任务状态 migration、持久化检查点、恢复分类与受控 resume。
+章节生成和润色只在来源、版本、lease 和幂等门禁通过时自动恢复；模型请求的不确定窗口
+需要人工确认，损坏检查点 fail closed。具体入口、分类和边界见
+[任务恢复契约](features/task-crash-recovery.md)。大纲 runner 由 Issue #22 接入，
+直接记忆提取和伏笔建议不属于可恢复任务；数据库备份不等于所有外部模型请求都可重放。
 
 ## Configuration Summary
 
@@ -151,6 +155,6 @@ crushes/<slug>/.intimate_config
 intimate=true
 ```
 
-The application provides local SQLite backup/restore, project-level secure export/import, an editable backup retention policy, and sanitized diagnostic export. It does **not** provide cloud/incremental/encrypted backups, custom backup directories, remote diagnostic upload, or crash-task recovery yet.
+The application provides local SQLite backup/restore, project-level secure export/import, an editable backup retention policy, sanitized diagnostic export, and checkpoint-based recovery for chapter generation and polish. Uncertain model requests require explicit manual retry. It does **not** provide cloud/incremental/encrypted backups, custom backup directories, or remote diagnostic upload.
 
 The application reads and writes intimate config through `src/shared/persistence/intimateToggle.ts`. Do not commit `settings.json`, SQLite databases, logs or personal character data.
