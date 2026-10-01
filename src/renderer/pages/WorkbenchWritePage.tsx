@@ -21,6 +21,7 @@ import {
 } from '@chakra-ui/react'
 import { FaPlay, FaRedo, FaStop } from 'react-icons/fa'
 import { useNavigate } from 'react-router-dom'
+import { ContextCompilerPanel } from '../components/ContextCompilerPanel'
 import { WorkbenchEmpty, WorkbenchError, WorkbenchPage, outlineStatusLabel, statusColor } from '../components/WorkbenchPrimitives'
 import { WorkflowCheckList } from '../components/WorkflowCheckList'
 import { useFirstChapterWorkflow } from '../hooks/useFirstChapterWorkflow'
@@ -61,6 +62,8 @@ function WorkbenchWritePage() {
   } = useTaskStore()
   const [chapterId, setChapterId] = useState('')
   const [llm, setLlm] = useState<AssistantLlmForm>(defaultLlm)
+  /** Context compiler debug for generation input + final_prompt display. Must default false. */
+  const [contextDebug, setContextDebug] = useState(false)
   const endpointInputRef = useRef<HTMLInputElement>(null)
   const endpointSecurity = inspectLlmEndpoint(llm.baseUrl)
 
@@ -105,6 +108,8 @@ function WorkbenchWritePage() {
       sessionId,
       chapterOutlineId: selectedChapter.id,
       autoConfirm: false,
+      // Explicit boolean: default path always false; only true when user enables Debug.
+      debug: contextDebug === true,
       llm: createLlmConfig(llm),
     })
   }
@@ -234,6 +239,14 @@ function WorkbenchWritePage() {
             </CardBody>
           </Card>
         </SimpleGrid>
+
+        <ContextCompilerPanel
+          tasks={tasks}
+          activeTaskId={activeTaskId}
+          chapterOutlineId={selectedChapter?.id}
+          debug={contextDebug}
+          onDebugChange={setContextDebug}
+        />
 
         <Card>
           <CardHeader><HStack justify="space-between"><Text fontWeight="bold">待审核版本</Text><Badge>{selectedVersions.length}</Badge></HStack></CardHeader>

@@ -124,6 +124,8 @@ export class WorkbenchService extends NovelProjectServiceClass {
       project: this,
       chapters,
       versions: chapterVersions,
+      memories: narrativeMemories,
+      foreshadows,
     })
     this.narrative = new NarrativeWorkbenchService({
       stores: {

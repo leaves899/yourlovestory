@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Context Compiler deterministic token estimation method identifier"
+condition = "AND"
+paths = ['''src/shared/contextCompiler/tokenEstimate\.ts''']
+regexes = ['''cjk1_latin4_utf8_ceil''']

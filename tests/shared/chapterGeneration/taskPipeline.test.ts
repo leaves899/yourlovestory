@@ -10,6 +10,7 @@ import {
 } from '@/main/database'
 import type { AgentFactory, AgentRunResult, ProjectSessionAgent } from '@/agent/agent'
 import { emptyTokenUsage } from '@/agent/llm'
+import { parseStrictGenerationCheckpoint } from '@/shared/taskRecovery'
 import { WorkbenchService } from '@/main/workbench'
 import {
   createChapterGenerationTaskRunner,
@@ -115,7 +116,7 @@ describe('chapter generation task pipeline', () => {
         projectId: outline.projectId,
         sessionId: 'session-pipeline',
         prompt: async (prompt, options = {}) => {
-          if (prompt.startsWith('请生成当前章节')) {
+          if (prompt.includes('续写或生成完整') || prompt.includes('本章正文')) {
             if (runNumber === 1) {
               await emitText(options, '部分正文')
               resolveBodyStarted()
@@ -130,7 +131,7 @@ describe('chapter generation task pipeline', () => {
             await emitText(options, '续写正文')
             return result('续写正文')
           }
-          if (prompt.startsWith('请为以下章节正文')) {
+          if (prompt.includes('生成客观、精炼的章节摘要') || prompt.includes('只输出摘要文本')) {
             await emitText(options, '章节摘要')
             return result('章节摘要')
           }
@@ -166,7 +167,12 @@ describe('chapter generation task pipeline', () => {
       projectId: outline.projectId,
       sessionId: 'session-pipeline',
       chapterOutlineId: outline.chapterOutlineId,
-      llm: { baseUrl: 'https://example.invalid/v1', model: 'test-model' },
+      llm: {
+        baseUrl: 'https://example.invalid/v1',
+        model: 'test-model',
+        contextBudget: 48_000,
+        maxOutputTokens: 2_000,
+      },
     })
     await bodyStarted
     expect(manager.cancel(handle.taskId)).toBe(true)
@@ -174,6 +180,28 @@ describe('chapter generation task pipeline', () => {
 
     expect(cancelled.status).toBe('cancelled')
     expect(cancelled.checkpoint).toEqual(expect.objectContaining({ stage: 'body', body: '部分正文' }))
+    expect(cancelled.checkpoint).toEqual(
+      expect.objectContaining({
+        stage_compiles: expect.objectContaining({
+          body: expect.objectContaining({
+            prompt_version: 'context-compiler/v1',
+            model_params: expect.objectContaining({
+              model: 'test-model',
+              context_budget: 48_000,
+              max_output_tokens: 2_000,
+            }),
+            trace: expect.objectContaining({
+              selected: expect.any(Array),
+              discarded: expect.any(Array),
+            }),
+          }),
+        }),
+      }),
+    )
+    expect(
+      (cancelled.checkpoint as { stage_compiles?: { body?: { trace?: { final_prompt?: string } } } })
+        ?.stage_compiles?.body?.trace?.final_prompt,
+    ).toBeUndefined()
 
     // Cancelled tasks are not auto-resumable; explicit manual retry is required.
     const resumed = manager.manualRetry(handle.taskId, true)
@@ -183,7 +211,16 @@ describe('chapter generation task pipeline', () => {
     expect(completed.status).toBe('completed')
     expect(completed.checkpoint).toEqual(expect.objectContaining({ stage: 'review' }))
     expect(completed.result).toEqual(
-      expect.objectContaining({ review_required: true, fact_check_passed: true }),
+      expect.objectContaining({
+        review_required: true,
+        fact_check_passed: true,
+        prompt_version: 'context-compiler/v1',
+        stage_compiles: expect.objectContaining({
+          body: expect.any(Object),
+          summary: expect.any(Object),
+          fact_check: expect.any(Object),
+        }),
+      }),
     )
     expect(completed.chapter_id).toBe(completed.result?.chapter_id)
     expect(workbench.chapterVersions.listByChapter(workbench.chapters.listByProject(outline.projectId)[0].id)).toHaveLength(1)
@@ -191,5 +228,152 @@ describe('chapter generation task pipeline', () => {
     expect(events.some((event) => event.type === 'task:review')).toBe(true)
     expect(events.some((event) => event.type === 'task:chunk')).toBe(true)
     expect(agentRuns).toBe(2)
+  })
+
+  test.each([false, true])('durable version recovery preserves compiler metadata without replay (debug=%s)', async (debug) => {
+    const workbench = new WorkbenchService(database)
+    const outline = setupOutlines(workbench, 'durable-context-recovery')
+    const store = new TaskRepository(database)
+    const promptMock = jest.fn(async (prompt: string) => result(
+      prompt.includes('严格输出 JSON') ? '{"passed":true,"summary":"ok","findings":[]}' : 'generated text',
+    ))
+    const factory: AgentFactory = { create: async () => ({
+      projectId: outline.projectId, sessionId: 'context-session', prompt: promptMock,
+      abort: jest.fn(), dispose: jest.fn(),
+    }) }
+    const managerOptions = {
+      store, agentFactory: factory, events: { publish: () => undefined },
+      runners: { 'chapter-generation': createChapterGenerationTaskRunner({ service: workbench.chapterGeneration, agentFactory: factory }) },
+    }
+    const manager = new TaskManager(managerOptions)
+    const handle = manager.startChapterGeneration({
+      projectId: outline.projectId, chapterOutlineId: outline.chapterOutlineId,
+      sessionId: 'context-session', debug,
+      llm: { baseUrl: 'https://example.invalid/v1', model: 'test-model' },
+    })
+    const completed = await handle.completion
+    expect(completed.status).toBe('completed')
+    expect(parseStrictGenerationCheckpoint(completed.checkpoint)).not.toBeNull()
+    expect(parseStrictGenerationCheckpoint({ ...completed.checkpoint!, context_source_snapshot: '{broken' })).toBeNull()
+    expect(store.getById(handle.taskId)?.input.request).toEqual(expect.objectContaining({ debug }))
+    store.update(handle.taskId, {
+      status: 'running', execution_phase: 'persisting_result', result: null,
+      checkpoint: { ...completed.checkpoint!, stage: 'saving', version_id: null },
+    })
+    const reopened = new TaskManager(managerOptions)
+    const recovered = reopened.resume(handle.taskId)
+    expect(recovered).not.toBeNull()
+    const finished = await recovered!.completion
+    expect(finished.status).toBe('completed')
+    expect(finished.result?.stage_compiles).toEqual(completed.result?.stage_compiles)
+    expect(finished.checkpoint?.stage_compiles).toEqual(completed.checkpoint?.stage_compiles)
+    expect(promptMock).toHaveBeenCalledTimes(3)
+    expect(workbench.chapterVersions.listByChapter(finished.chapter_id!)).toHaveLength(1)
+    const chapter = workbench.chapters.getById(finished.chapter_id!)!
+    const edited = workbench.chapters.update(chapter.id, { synopsis: 'later user synopsis' }, chapter.version)
+    store.update(handle.taskId, {
+      status: 'running', execution_phase: 'persisting_result',
+      checkpoint: { ...finished.checkpoint!, stage: 'saving', version_id: null },
+    })
+    const stale = reopened.resume(handle.taskId)
+    expect(stale).not.toBeNull()
+    expect((await stale!.completion).recovery_classification).toBe('non-recoverable')
+    expect(workbench.chapters.getById(chapter.id)).toEqual(edited)
+    const corrupt = { ...finished.checkpoint!, stage_compiles: { body: { prompt_version: 'broken' } } }
+    store.update(handle.taskId, { status: 'running', execution_phase: 'persisting_result', checkpoint: corrupt })
+    expect(reopened.resume(handle.taskId)).toBeNull()
+    expect(store.getById(handle.taskId)?.recovery_classification).toBe('non-recoverable')
+    expect(promptMock).toHaveBeenCalledTimes(3)
+    manager.dispose()
+    reopened.dispose()
+  })
+
+  test('budget exceeded fails task but persists stage_compiles body failure trace without agent prompt', async () => {
+    const workbench = new WorkbenchService(database)
+    const outline = setupOutlines(workbench, 'task-pipeline-budget-fail')
+    const events: TaskEvent[] = []
+    const promptMock = jest.fn(async () => result('should-not-run'))
+    const agentFactory: AgentFactory = {
+      create: async () => ({
+        projectId: outline.projectId,
+        sessionId: 'session-budget-fail',
+        prompt: promptMock,
+        abort: jest.fn(),
+        dispose: jest.fn(),
+      }),
+    }
+    const store = new TaskRepository(database)
+    const manager = new TaskManager({
+      store,
+      agentFactory,
+      events: { publish: (event) => events.push(event) },
+      runners: {
+        'chapter-generation': createChapterGenerationTaskRunner({
+          service: workbench.chapterGeneration,
+          agentFactory,
+        }),
+      },
+    })
+
+    const handle = manager.startChapterGeneration({
+      projectId: outline.projectId,
+      sessionId: 'session-budget-fail',
+      chapterOutlineId: outline.chapterOutlineId,
+      llm: {
+        baseUrl: 'https://example.invalid/v1',
+        model: 'test-model',
+        contextBudget: 80,
+        maxOutputTokens: 60,
+      },
+    })
+    const failed = await handle.completion
+    const persisted = store.getById(handle.taskId)
+
+    expect(failed.status).toBe('failed')
+    expect(persisted?.status).toBe('failed')
+    expect(promptMock).not.toHaveBeenCalled()
+
+    const checkpoint = persisted?.checkpoint ?? failed.checkpoint
+    expect(checkpoint).toEqual(
+      expect.objectContaining({
+        stage_compiles: expect.objectContaining({
+          body: expect.objectContaining({
+            prompt_version: 'context-compiler/v1',
+            model_params: expect.objectContaining({
+              model: 'test-model',
+              context_budget: 80,
+              max_output_tokens: 60,
+            }),
+            trace: expect.objectContaining({
+              errors: expect.arrayContaining([expect.stringContaining('超过可用预算')]),
+              discarded: expect.any(Array),
+              metadata: expect.objectContaining({
+                strategy_id: 'chapter_body/v1',
+                prompt_version: 'context-compiler/v1',
+              }),
+            }),
+          }),
+        }),
+      }),
+    )
+    const bodyTrace = (
+      checkpoint as {
+        stage_compiles?: {
+          body?: {
+            trace?: {
+              errors?: unknown[]
+              discarded?: unknown[]
+              final_prompt?: string
+              metadata?: { strategy_id?: string }
+            }
+          }
+        }
+      }
+    ).stage_compiles?.body?.trace
+    expect(bodyTrace?.errors?.length).toBeGreaterThan(0)
+    expect(bodyTrace?.discarded?.length).toBeGreaterThan(0)
+    expect(bodyTrace?.final_prompt).toBeUndefined()
+    expect(bodyTrace?.metadata?.strategy_id).toBe('chapter_body/v1')
+    expect(events.some((event) => event.type === 'task:checkpoint')).toBe(true)
   })
 })

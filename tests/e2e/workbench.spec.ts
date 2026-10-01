@@ -218,6 +218,17 @@ test.describe('长篇创作工作台', () => {
     await expect(page.getByTestId('fragment-page')).toBeVisible()
   })
 
+  test('章节写作页显示上下文来源且 Debug 默认关闭', async ({ page }) => {
+    await page.goto('/#/workbench/write')
+
+    await expect(page.getByTestId('context-compiler-panel')).toBeVisible()
+    await expect(page.getByTestId('context-compiler-empty')).toBeVisible()
+    const debugSwitch = page.getByRole('checkbox', { name: 'Debug' })
+    await expect(debugSwitch).not.toBeChecked()
+    await debugSwitch.locator('..').click()
+    await expect(debugSwitch).toBeChecked()
+  })
+
   test('项目凭据删除失败时保持已配置状态并显示安全错误', async ({ page }) => {
     await page.goto('/#/workbench/config')
     await expect(page.getByText('已安全保存，不会回填或显示完整 API Key。')).toBeVisible()

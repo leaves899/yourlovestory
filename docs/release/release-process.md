@@ -42,4 +42,6 @@ notarization。证书、密码、API Key 和 token 不得进入仓库或日志�
 - draft 可删除后重建，但不得把失败产物标记为 latest。
 - 预发布 Release 设置 prerelease，不成为 latest；Stable 才可由 GitHub 标记 latest。
 - 应用回滚不等于数据库回滚。若 migration 不可逆，发布说明必须禁止直接降级。
-- Issue #19 完成前不声称支持自动备份恢复；Issue #25 完成前不发布 Stable。
+- 自动备份和受控恢复遵循数据安全界面与[任务恢复契约](../features/task-crash-recovery.md)，
+  不承诺模型不确定窗口可自动重放，也不承诺所有生成流程都能恢复。
+- Issue #25 完成前不发布 Stable；源码整合和任务恢复完成不等于发布验证完成。

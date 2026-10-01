@@ -76,12 +76,17 @@ export function parseChapterGenerationStartParams(value: unknown): StartChapterG
   if (autoConfirm !== undefined && typeof autoConfirm !== 'boolean') {
     throw new Error('auto_confirm must be a boolean')
   }
+  const debug = value.debug
+  if (debug !== undefined && typeof debug !== 'boolean') {
+    throw new Error('debug must be a boolean')
+  }
   return {
     projectId: readString(value.project_id, 'project_id'),
     sessionId: readString(value.session_id, 'session_id'),
     chapterOutlineId: readString(value.chapter_outline_id, 'chapter_outline_id'),
     chapterId: typeof chapterId === 'string' ? chapterId : undefined,
     autoConfirm,
+    ...(debug === undefined ? {} : { debug }),
     llm: parseLlmConfig(value.llm),
   }
 }

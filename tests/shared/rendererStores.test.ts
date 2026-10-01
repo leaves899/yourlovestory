@@ -207,3 +207,32 @@ test('任务 store 订阅阶段、流式内容和错误事件', () => {
   expect(useTaskStore.getState().error).toBe('网络暂时不可用')
   unsubscribe()
 })
+
+test('startGeneration 透传 debug=false 默认与 debug=true', async () => {
+  mockTaskService.startChapterGeneration.mockResolvedValue('task-debug')
+  useTaskStore.setState({ projectId: projectOne.id })
+
+  await useTaskStore.getState().startGeneration({
+    projectId: projectOne.id,
+    sessionId: 'session-1',
+    chapterOutlineId: 'outline-1',
+    autoConfirm: false,
+    debug: false,
+    llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+  })
+  expect(mockTaskService.startChapterGeneration).toHaveBeenCalledWith(
+    expect.objectContaining({ debug: false }),
+  )
+
+  await useTaskStore.getState().startGeneration({
+    projectId: projectOne.id,
+    sessionId: 'session-1',
+    chapterOutlineId: 'outline-1',
+    autoConfirm: false,
+    debug: true,
+    llm: { baseUrl: 'https://example.invalid/v1', model: 'm' },
+  })
+  expect(mockTaskService.startChapterGeneration).toHaveBeenLastCalledWith(
+    expect.objectContaining({ debug: true }),
+  )
+})

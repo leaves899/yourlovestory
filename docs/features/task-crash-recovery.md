@@ -127,12 +127,17 @@ drain 超时时不得提前结束 runtime session，也不得关闭仍可能被�
 - `manual_retry_allowed` 显示“确认重试”，必须 `window.confirm`（或等价明确意图）且 IPC `confirmed: true`
 - 不得盲目 `resume()` 所有失败任务
 
-## 结果落库前的来源保护
+## Context Compiler 交叉边界
 
-`saving` 检查点尚无最终版本时，恢复前也核对原始正文和已记录的章节版本，
-结果落库前再次核对当前版本与正文。用户后来的正文、摘要或采用状态不会被旧结果覆盖。
-已有版本的收尾保留来源证据；只有可识别为本任务自身的 review 更新才允许继续收尾。
-`saving` 检查点的无模型收尾不创建 Agent，也不要求重新解析模型凭据。
+- 生成前记录原始正文与章节版本，恢复前核对；持久化结果前再次核对当前版本和正文。
+- `saving` 检查点尚无最终版本时也受来源 fencing 保护，不覆盖用户正文、摘要或采用状态。
+- `context_source_snapshot` 保存编译输入来源与模型参数的序列化证据，不保存最终 Prompt。
+  阶段正文与续写片段不参与此快照，来源、参数、Prompt 版本与 Debug 授权参与。
+- 来源不变时确定性编译可重现，完成阶段的 trace 保留；来源变化时终止旧任务，要求新建生成任务。
+- 损坏 compiler metadata 不得被默默丢弃后恢复；缺失来源证据的新 compiler 检查点也 fail closed。
+- 已有 task-bound version 的收尾保留 `stage_compiles`、来源证据、模型参数和 Prompt 版本。
+- `saving` 检查点和最终版本的无模型收尾不创建 Agent，也不要求重新解析模型凭据。
+- Debug 标志随非秘密请求字段保存，只有明确启用时 trace 才含 `final_prompt`。
 
 ## 已知限制
 

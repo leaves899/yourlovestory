@@ -1,4 +1,5 @@
 import type { JsonObject, JsonValue } from '../novelProject'
+import { hasValidStageCompileMetadata } from '../chapterGeneration/service'
 import {
   CHAPTER_GENERATION_CHECKPOINT_SCHEMA_VERSION,
   CHAPTER_POLISH_CHECKPOINT_SCHEMA_VERSION,
@@ -47,6 +48,20 @@ function readString(value: JsonValue | undefined, fallback = ''): string {
   return typeof value === 'string' ? value : fallback
 }
 
+function validCompilerSourceSnapshot(value: JsonValue | undefined): boolean {
+  if (value === undefined) return true
+  if (typeof value !== 'string') return false
+  try {
+    const parsed: JsonValue = JSON.parse(value)
+    return isRecord(parsed) && parsed.task_kind === 'chapter_body'
+      && typeof parsed.prompt_version === 'string'
+      && isRecord(parsed.project) && typeof parsed.project.id === 'string'
+      && isRecord(parsed.budget) && isRecord(parsed.model_params)
+  } catch {
+    return false
+  }
+}
+
 /**
  * Strict generation checkpoint parser shared by classifier and runner.
  * Returns null when the payload is missing required fields or has invalid enums/schema.
@@ -69,6 +84,9 @@ export function parseStrictGenerationCheckpoint(
   if (value.fact_check_text !== undefined && typeof value.fact_check_text !== 'string') return null
   if (value.source_content !== undefined && typeof value.source_content !== 'string') return null
   if (value.source_chapter_version !== undefined && (typeof value.source_chapter_version !== 'number' || !Number.isInteger(value.source_chapter_version) || value.source_chapter_version < 1)) return null
+  if (!validCompilerSourceSnapshot(value.context_source_snapshot)) return null
+  if (!hasValidStageCompileMetadata(value.stage_compiles)) return null
+  if (isRecord(value.stage_compiles) && Object.keys(value.stage_compiles).length > 0 && typeof value.context_source_snapshot !== 'string') return null
   if (
     value.version_id !== undefined
     && value.version_id !== null

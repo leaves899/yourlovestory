@@ -67,6 +67,8 @@ export interface StartChapterGenerationInput {
   chapterOutlineId: string
   chapterId?: string | null
   autoConfirm?: boolean
+  /** When true, persisted compiler traces include final_prompt. */
+  debug?: boolean
   llm: LlmConfigInput
 }
 
@@ -199,6 +201,7 @@ function minimizePersistedRequest(
     }
     if (typeof request.chapter_id === 'string') out.chapter_id = request.chapter_id
     if (typeof request.auto_confirm === 'boolean') out.auto_confirm = request.auto_confirm
+    if (typeof request.debug === 'boolean') out.debug = request.debug
     return out
   }
   if (taskType === 'chapter-polish') {
@@ -316,6 +319,7 @@ function chapterRequest(input: StartChapterGenerationInput): JsonObject {
     chapter_outline_id: input.chapterOutlineId,
     ...(input.chapterId ? { chapter_id: input.chapterId } : {}),
     ...(input.autoConfirm === undefined ? {} : { auto_confirm: input.autoConfirm }),
+    ...(input.debug === undefined ? {} : { debug: input.debug }),
   }
 }
 
