@@ -14,6 +14,7 @@ interface RunRecord {
   stdoutFile: string
   stderrFile: string
   mainLogFile: string
+  electronLogFile: string
   crashLogFile: string
   screenshotFile: string
   traceFile: string
@@ -28,6 +29,8 @@ interface SmokeReport {
   executable: string
   isPackaged?: boolean
   appPath?: string
+  appVersion?: string
+  electronVersion?: string
   userDataPath: string
   databasePath: string
   nativeSqliteLoaded: boolean
@@ -119,7 +122,6 @@ test('真实 packaged Electron 启动、IPC、native SQLite、持久化和退出
     report.checks.ipc = true
 
     await closePackaged(first)
-    report.checks.gracefulExit = true
     expect(fs.existsSync(databasePath), `database was not created at ${databasePath}`).toBe(true)
 
     const second = await launchPackaged(2)
@@ -134,6 +136,8 @@ test('真实 packaged Electron 启动、IPC、native SQLite、持久化和退出
     expect(persisted.found).toBe(true)
     report.checks.persistedAfterRestart = true
     await closePackaged(second)
+    report.checks.gracefulExit = report.runs.every((run) => run.exitCode === 0 && run.exitSignal === null && !run.crashed)
+    expect(report.checks.gracefulExit).toBe(true)
   } catch (error) {
     const message = error instanceof Error ? error.stack ?? error.message : String(error)
     report.errors.push(message)
@@ -159,15 +163,20 @@ async function launchPackaged(runNumber: number): Promise<{ application: Electro
     stdoutFile: path.join(artifactDir, `run-${runNumber}.stdout.log`),
     stderrFile: path.join(artifactDir, `run-${runNumber}.stderr.log`),
     mainLogFile: path.join(artifactDir, `run-${runNumber}.main.log`),
+    electronLogFile: path.join(artifactDir, `run-${runNumber}.electron.log`),
     crashLogFile: path.join(artifactDir, `run-${runNumber}.crash.log`),
     screenshotFile: path.join(artifactDir, `run-${runNumber}.png`),
     traceFile: path.join(artifactDir, `run-${runNumber}.trace.zip`),
   }
   report.runs.push(run)
+  const stdout: string[] = []
+  const stderr: string[] = []
+  const mainLog: string[] = []
+  runBuffers.set(runNumber, { stdout, stderr, mainLog })
   const application = await electron.launch({
     executablePath: executable,
     cwd: path.dirname(executable),
-    args: ['--disable-gpu'],
+    args: ['--disable-gpu', '--enable-logging=file', `--log-file=${run.electronLogFile}`],
     env: {
       ...process.env,
       NODE_ENV: 'test',
@@ -176,12 +185,14 @@ async function launchPackaged(runNumber: number): Promise<{ application: Electro
       ELECTRON_ENABLE_LOGGING: 'true',
     },
     artifactsDir: artifactDir,
+  }).catch((error: unknown) => {
+    run.crashed = true
+    run.crashMessage = error instanceof Error ? error.stack ?? error.message : String(error)
+    run.endedAt = new Date().toISOString()
+    stderr.push(run.crashMessage)
+    throw error
   })
   const child = application.process()
-  const stdout: string[] = []
-  const stderr: string[] = []
-  const mainLog: string[] = []
-  runBuffers.set(runNumber, { stdout, stderr, mainLog })
   child.stdout?.on('data', (chunk: Buffer | string) => stdout.push(String(chunk)))
   child.stderr?.on('data', (chunk: Buffer | string) => stderr.push(String(chunk)))
   child.once('exit', (code, signal) => {
@@ -200,6 +211,20 @@ async function launchPackaged(runNumber: number): Promise<{ application: Electro
     run.endedAt ??= new Date().toISOString()
   })
   liveApplications.push({ application, run })
+  const metadata = await application.evaluate(({ app }) => ({
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    userData: app.getPath('userData'),
+  }))
+  report.isPackaged = metadata.isPackaged
+  report.appPath = metadata.appPath
+  report.appVersion = metadata.version
+  report.electronVersion = metadata.electron
+  expect(metadata.isPackaged, 'smoke must launch an electron-builder packaged app').toBe(true)
+  expect(metadata.appPath).toMatch(/app\.asar$/)
+  expect(path.resolve(metadata.userData)).toBe(path.resolve(userDataPath))
   await application.context().tracing.start({ screenshots: true, snapshots: true, sources: true })
   const page = await application.firstWindow({ timeout: 60_000 })
   page.on('crash', () => {
@@ -219,6 +244,7 @@ async function launchPackaged(runNumber: number): Promise<{ application: Electro
 
 async function verifyWindowAndBridge(page: Page): Promise<void> {
   await page.waitForLoadState('domcontentloaded')
+  await expect(page.locator('body')).toBeVisible()
   report.checks.window = true
   const url = page.url()
   report.checks.fileProtocol = url.startsWith('file://')
@@ -252,6 +278,9 @@ async function closePackaged(target: { application: ElectronApplication; page?: 
   await target.application.close()
   const index = liveApplications.findIndex((entry) => entry.application === target.application)
   if (index >= 0) liveApplications.splice(index, 1)
+  await expect.poll(() => target.run.exitCode).toBe(0)
+  expect(target.run.exitSignal).toBeNull()
+  expect(target.run.crashed, target.run.crashMessage).toBe(false)
 }
 
 async function closeLiveApplications(): Promise<void> {

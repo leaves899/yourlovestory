@@ -17,11 +17,15 @@ release workflow 的 Windows、macOS 和 Linux package job 会先构建各自平
 
 每次执行使用独立临时 `userData`，并在同一目录中启动两次应用。第一轮断言真实
 `file://` 页面、preload bridge、关键 IPC、SQLite ready 状态、项目创建和正常退出；
-第二轮断言数据库中的项目仍存在并再次正常退出。`better-sqlite3` 通过真实数据库
+第二轮断言数据库中的项目仍存在并再次正常退出。每轮还验证 `app.isPackaged`、
+`app.asar` 路径、隔离 profile 和进程 `exitCode=0`，并拒绝任何 renderer/process crash。
+`better-sqlite3` 通过真实数据库
 初始化和 IPC 写入路径验证，不能以 mock API 替代。
 
 结果保存在 `test-results/packaged-smoke/`：JSON smoke report、Playwright JSON、
-每轮 stdout/stderr、Electron main/renderer 日志、crash log、截图和 trace。失败时
+每轮 stdout/stderr、Electron main/renderer 日志、Electron 原生日志、crash log、截图和 trace。
+报告记录应用和 Electron 版本。找不到 executable 和启动失败同样生成 failed report，
+启动错误保留 Playwright 的进程日志；没有启动成功时截图和 trace 不适用。失败时
 这些目录作为 workflow artifact 上传，供发布前排查启动崩溃和 native dependency
 问题。
 
