@@ -1,4 +1,6 @@
 import type { NarrativeWorkbenchService } from '../../shared/narrativeWorkbench'
+import { NarrativeBoundaryError } from '../../shared/narrativeWorkbench/errors'
+import { ComputeWorkerClient } from '../workers/computeWorkerClient'
 import {
   isRecord,
   parseProjectChapterParams,
@@ -47,6 +49,7 @@ export function registerRevisionIPC(
   ipc: IpcRegistry,
   service?: NarrativeWorkbenchService,
 ): void {
+  const computeWorker = new ComputeWorkerClient()
   ipc.register('chapter:blocks', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseProjectChapterParams(params)
@@ -86,13 +89,23 @@ export function registerRevisionIPC(
   ipc.register('chapter:diff:revisions', async (_, params: unknown) => {
     if (!service) throw new Error('NarrativeWorkbenchService is not initialized')
     const parsed = parseRevisionDiffParams(params)
+    const from = service.getRevision(parsed.projectId, parsed.fromRevisionId)
+    const to = service.getRevision(parsed.projectId, parsed.toRevisionId)
+    if (from.chapter_id !== to.chapter_id) {
+      throw new NarrativeBoundaryError('Chapter revisions must belong to the same chapter')
+    }
+    const diff = await computeWorker.run('chapter-diff', {
+      mode: 'blocks',
+      before: from.blocks,
+      after: to.blocks,
+    })
     return {
       success: true,
-      data: service.diffRevisions(
-        parsed.projectId,
-        parsed.fromRevisionId,
-        parsed.toRevisionId,
-      ),
+      data: {
+        from_revision_id: from.id,
+        to_revision_id: to.id,
+        diff,
+      },
     }
   })
 

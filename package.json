@@ -23,6 +23,8 @@
     "test:coverage": "npm run rebuild:node && jest --coverage",
     "test:release": "node --test tests/release/version-check.test.mjs tests/release/checksums.test.mjs",
     "test:e2e": "npm run rebuild:native && npm run build:main && playwright test",
+    "benchmark:baseline": "npm run build:main && node scripts/performance/benchmark.mjs",
+    "benchmark:worker": "npm run build:main && node scripts/performance/benchmark-worker.mjs",
     "check:version": "node scripts/check-version.mjs",
     "release:checksums": "node scripts/generate-checksums.mjs",
     "lint": "eslint src --ext .ts,.tsx",
