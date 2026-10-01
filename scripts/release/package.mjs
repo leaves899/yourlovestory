@@ -111,7 +111,23 @@ async function normalizeInstallerPath(paths, rootDir, version, platform) {
       && entry.name.toLowerCase().endsWith(extension))
     .map((entry) => join(rootDir, 'release', entry.name))
   if (candidates.length !== 1) throw new ReleaseGateError('RELEASE_INSTALLER_MISSING')
+  const sourceName = basename(candidates[0])
+  const installerName = basename(paths.installer)
   await rename(candidates[0], paths.installer)
+  if (sourceName !== installerName) await normalizeManifestNames(rootDir, sourceName, installerName)
+}
+
+async function normalizeManifestNames(rootDir, sourceName, installerName) {
+  const releaseDir = join(rootDir, 'release')
+  const entries = await readdir(releaseDir, { withFileTypes: true })
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.yml')) continue
+    const manifestPath = join(releaseDir, entry.name)
+    const contents = await readFile(manifestPath, 'utf8')
+    if (contents.includes(sourceName)) {
+      await writeFile(manifestPath, contents.split(sourceName).join(installerName), 'utf8')
+    }
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

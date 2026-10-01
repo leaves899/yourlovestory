@@ -218,12 +218,19 @@ test('builder is always offline from publishing and unsigned Linux stages its in
         assert.equal(config.forceCodeSigning, false)
         assert.equal(options.env.CSC_IDENTITY_AUTO_DISCOVERY, 'false')
         await mkdir(join(root, 'release'), { recursive: true })
-        await writeFile(join(root, 'release', `yourcrush-${version}-linux.AppImage`), 'synthetic installer')
+        const builderName = `yourcrush-${version}-linux.AppImage`
+        await writeFile(join(root, 'release', builderName), 'synthetic installer')
+        await writeFile(join(root, 'release', 'latest-linux.yml'), [
+          `version: ${version}`, 'files:', `  - url: ${builderName}`, '    sha512: stale', '    size: 1',
+          `path: ${builderName}`, ''].join('\n'))
         return { code: 0 }
       } })
     assert.equal(report.status, 'passed')
     assert.equal(report.releaseCodeSigning, 'not-applicable')
     assert.equal((await readdir(paths.upload)).includes(basename(paths.installer)), true)
+    const manifest = await readFile(join(paths.upload, 'latest-linux.yml'), 'utf8')
+    assert.match(manifest, new RegExp(basename(paths.installer)))
+    assert.doesNotMatch(manifest, /yourcrush-0\.2\.0-alpha\.1-linux\.AppImage/)
   })
 })
 
