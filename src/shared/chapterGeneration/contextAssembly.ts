@@ -5,6 +5,9 @@ import type {
   Relation,
   SourceMaterial,
   WorldviewEntry,
+  OutlineContext,
+  Volume,
+  VolumeOutline,
 } from '../novelProject'
 import type { Foreshadow, NarrativeMemory } from '../narrativeWorkbench'
 import type {
@@ -147,6 +150,41 @@ function mapSourceMaterials(
     explicitly_selected: true,
   }))
 }
+
+/** Shared domain mapping; selection, budget and prompt serialization stay in the compiler. */
+export function assembleOutlineCompilerInput(
+  context: OutlineContext,
+  volume: Volume,
+  outline: VolumeOutline,
+  modelParams: ChapterGenerationModelParams,
+  debug: boolean,
+): ContextCompilerInput {
+  return {
+    task_kind: 'outline',
+    project: {
+      id: context.project.id, name: context.project.name, description: context.project.description,
+      genre: context.config.genre, tone: context.config.tone, target_words: context.config.target_words,
+    },
+    volume: { id: volume.id, title: volume.title, synopsis: volume.synopsis, volume_number: volume.volume_number },
+    volume_outline: {
+      id: outline.id, summary: outline.summary, theme: outline.theme, main_conflict: outline.main_conflict,
+      key_turning_points: outline.key_turning_points, ending: outline.ending,
+    },
+    characters: mapCharacters(context.characters),
+    relations: mapRelations(context.relations, context.characters),
+    worldview_entries: mapWorldview(context.worldview_entries),
+    source_materials: mapSourceMaterials(context.selected_source_materials),
+    budget: {
+      total: modelParams.context_budget, max_output_tokens: modelParams.max_output_tokens,
+      system_prompt: OUTLINE_GENERATION_SYSTEM_PROMPT,
+    },
+    model_params: modelParams,
+    debug,
+    extra_instruction: '只输出卷大纲 JSON，字段为 summary、theme、main_conflict、key_turning_points（字符串数组）、ending。不要输出正文、Markdown 或解释。结果仅为待审核草稿。',
+  }
+}
+
+export const OUTLINE_GENERATION_SYSTEM_PROMPT = '你负责根据项目来源拟定卷大纲草稿，不执行写入、确认或锁定。'
 
 /**
  * Only adopted (completed) chapters may feed prior summaries / recent body.

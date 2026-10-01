@@ -22,7 +22,7 @@
 | 章节生成 `chapter-generation` | 是 | 条件允许 | 有 schema versioned checkpoint；`chapter_versions.task_id` 唯一索引防重复版本 |
 | 章节润色 `chapter-polish` | 是 | 条件允许 | checkpoint schema version；`chapter_revisions.task_id` / `postprocess_reports.task_id` 唯一；auto_apply 幂等 |
 | Generic assistant | 是（无业务 checkpoint） | 否 | prompt 不持久化，旧任务不可重放；请重新发送请求 |
-| 大纲生成 | 无持久化 runner | 否 | 未实现为可恢复任务 |
+| 卷大纲生成 `outline-generation` | 是 | 条件允许 | schema 1；ready 无模型采用，草稿更新与 applied 检查点原子提交；来源/版本严格核验 |
 | 章节摘要 | 章节生成内部阶段 | 随章节生成 | 不独立恢复 |
 | 事实核查 | 章节生成内部阶段 | 随章节生成 | 不独立恢复 |
 | 叙事记忆提取 | 直接 service/IPC | 否 | 非 TaskManager 任务 |
@@ -138,10 +138,13 @@ drain 超时时不得提前结束 runtime session，也不得关闭仍可能被�
 - 已有 task-bound version 的收尾保留 `stage_compiles`、来源证据、模型参数和 Prompt 版本。
 - `saving` 检查点和最终版本的无模型收尾不创建 Agent，也不要求重新解析模型凭据。
 - Debug 标志随非秘密请求字段保存，只有明确启用时 trace 才含 `final_prompt`。
+- 卷大纲的 `model` 检查点代表不确定调用窗口，只允许确认重试；`ready` / `applied`
+  可无凭据、无模型恢复。`applied` 必须仍匹配任务标识、精确大纲版本和提案字段。
+  任意来源、参数或用户版本变化均拒绝采用和回写，确认/锁定后的大纲不被任务覆盖。
 
 ## 已知限制
 
 - Generic assistant 无业务 checkpoint 且 prompt 不持久化，自动与人工重放都 fail closed
-- 大纲生成、记忆提取、伏笔建议不在 TaskManager 恢复范围内
+- 直接记忆提取、伏笔建议不在 TaskManager 恢复范围内
 - 模型中断窗口无法由数据库单独证明“未计费”，一律人工确认
 - 旧任务（`recovery_metadata_version < 1`）默认 fail closed 到人工

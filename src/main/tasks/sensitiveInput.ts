@@ -64,6 +64,7 @@ const SUPPORTED_PERSISTED_TASK_TYPES = new Set([
   'assistant',
   'chapter-generation',
   'chapter-polish',
+  'outline-generation',
 ])
 
 const SUPPORTED_PERSISTED_PROVIDERS = new Set([

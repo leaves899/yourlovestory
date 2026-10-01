@@ -208,4 +208,26 @@ describe('ContextCompilerPanel pure helpers', () => {
       'task-other',
     )
   })
+
+  test('大纲 trace 从结果读取并沿用相同预算和 Debug 门禁', () => {
+    const task = makeTask({
+      task_type: 'outline-generation', chapter_id: null,
+      input: { request: { outline_id: 'volume-outline-1' } },
+      checkpoint: null, result: { stage_compiles: { outline: sampleStageCompile(true) } },
+    })
+    const hidden = buildStageCompileViews(task, false)
+    expect(hidden).toHaveLength(1)
+    expect(hidden[0].stage).toBe('outline')
+    expect(hidden[0].budget?.total_budget).toBe(32_000)
+    expect(hidden[0].final_prompt).toBeNull()
+    expect(buildStageCompileViews(task, true)[0].final_prompt).toBe('SECRET_FINAL_PROMPT_BODY')
+  })
+
+  test('大纲来源面板只选择目标卷的任务，不借用另一卷或章节的 trace', () => {
+    const chapter = makeTask()
+    const target = makeTask({ id: 'outline-task', task_type: 'outline-generation', input: { request: { outline_id: 'target-outline' } } })
+    const other = makeTask({ id: 'other-task', task_type: 'outline-generation', input: { request: { outline_id: 'other-outline' } }, updated_at: '2026-01-03T00:00:00.000Z' })
+    expect(selectContextCompilerTask([chapter, target, other], 'other-task', 'target-outline', 'outline-generation')?.id).toBe('outline-task')
+    expect(selectContextCompilerTask([chapter, other], 'other-task', 'target-outline', 'outline-generation')).toBeNull()
+  })
 })

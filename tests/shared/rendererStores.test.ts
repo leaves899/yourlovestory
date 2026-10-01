@@ -55,6 +55,7 @@ const mockTaskService = {
   listRecoverable: jest.fn(),
   startChapterGeneration: jest.fn(),
   startChapterPolish: jest.fn(),
+  startOutlineGeneration: jest.fn(),
   cancel: jest.fn(),
   resume: jest.fn(),
   listVersions: jest.fn(),
@@ -235,4 +236,31 @@ test('startGeneration 透传 debug=false 默认与 debug=true', async () => {
   expect(mockTaskService.startChapterGeneration).toHaveBeenLastCalledWith(
     expect.objectContaining({ debug: true }),
   )
+})
+
+test('大纲任务提交和重新加载保持运行态，允许刷新后取消', async () => {
+  const task = {
+    id: 'outline-task', project_id: projectOne.id, chapter_id: null, parent_task_id: null,
+    task_type: 'outline-generation', status: 'running' as const, stage: 'outline', progress: 0.5,
+    input: { request: { outline_id: 'volume-outline-1', debug: false } }, checkpoint: null,
+    result: null, error_message: null, cancel_requested: false, started_at: '', finished_at: null,
+    created_at: '', updated_at: '',
+  }
+  mockTaskService.startOutlineGeneration.mockResolvedValue(task.id)
+  mockTaskService.list.mockResolvedValue([task])
+  mockTaskService.listRecoverable.mockResolvedValue([])
+  mockTaskService.cancel.mockResolvedValue(undefined)
+  useTaskStore.setState({ projectId: projectOne.id })
+  const input = {
+    projectId: projectOne.id, sessionId: 'session-1', taskType: 'outline-generation',
+    prompt: '生成卷大纲草稿', llm: { model: 'test-model', baseUrl: 'https://example.invalid/v1' },
+    input: { project_id: projectOne.id, outline_id: 'volume-outline-1', debug: false },
+  }
+  await expect(useTaskStore.getState().startOutlineGeneration(input)).resolves.toBe(task.id)
+  expect(mockTaskService.startOutlineGeneration).toHaveBeenCalledWith(input)
+  await useTaskStore.getState().load(projectOne.id)
+  expect(useTaskStore.getState().busy).toBe(true)
+  expect(useTaskStore.getState().activeTaskId).toBe(task.id)
+  await useTaskStore.getState().cancel()
+  expect(mockTaskService.cancel).toHaveBeenCalledWith(task.id)
 })

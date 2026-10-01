@@ -337,23 +337,27 @@ function parseStageCompile(value: JsonValue | undefined): ChapterGenerationStage
   return { prompt_version: value.prompt_version, model_params, trace }
 }
 
+export function hasValidContextStageCompile(value: JsonValue | undefined, taskKind: ContextCompileTrace['task_kind']): boolean {
+  const parsed = parseStageCompile(value)
+  return parsed !== null
+    && parsed.trace.task_kind === taskKind
+    && parsed.trace.metadata.task_kind === taskKind
+    && parsed.prompt_version === parsed.trace.metadata.prompt_version
+    && parsed.model_params.model === parsed.trace.metadata.model
+    && parsed.model_params.temperature === parsed.trace.metadata.temperature
+    && parsed.model_params.max_output_tokens === parsed.trace.metadata.max_output_tokens
+    && parsed.model_params.context_budget === parsed.trace.metadata.context_budget
+    && Object.values(parsed.model_params).every((field) => typeof field !== 'number' || Number.isFinite(field))
+    && Object.values(parsed.trace.budget).every((field) => typeof field !== 'number' || (Number.isFinite(field) && field >= 0))
+}
+
 export function hasValidStageCompileMetadata(value: JsonValue | undefined): boolean {
   if (value === undefined) return true
   if (!isRecord(value)) return false
   const kinds = { body: 'chapter_body', summary: 'summary', fact_check: 'fact_check' } as const
   return Object.entries(value).every(([stage, item]) => {
     if (stage !== 'body' && stage !== 'summary' && stage !== 'fact_check') return false
-    const parsed = parseStageCompile(item)
-    return parsed !== null
-      && parsed.trace.task_kind === kinds[stage]
-      && parsed.trace.metadata.task_kind === kinds[stage]
-      && parsed.prompt_version === parsed.trace.metadata.prompt_version
-      && parsed.model_params.model === parsed.trace.metadata.model
-      && parsed.model_params.temperature === parsed.trace.metadata.temperature
-      && parsed.model_params.max_output_tokens === parsed.trace.metadata.max_output_tokens
-      && parsed.model_params.context_budget === parsed.trace.metadata.context_budget
-      && Object.values(parsed.model_params).every((field) => typeof field !== 'number' || Number.isFinite(field))
-      && Object.values(parsed.trace.budget).every((field) => typeof field !== 'number' || (Number.isFinite(field) && field >= 0))
+    return hasValidContextStageCompile(item, kinds[stage])
   })
 }
 
